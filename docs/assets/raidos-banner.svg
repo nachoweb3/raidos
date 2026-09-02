@@ -1,0 +1,60 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#161d3a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f97316"/>
+      <stop offset="0.5" stop-color="#f43f5e"/>
+      <stop offset="1" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="chipstroke" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f97316" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0.85"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="glow1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f97316" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#f97316" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#a855f7" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="320" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="320" rx="18" fill="url(#grid)"/>
+  <circle cx="150" cy="40" r="220" fill="url(#glow1)"/>
+  <circle cx="1080" cy="300" r="240" fill="url(#glow2)"/>
+
+  <!-- wordmark -->
+  <text x="600" y="150" text-anchor="middle" font-size="104" font-weight="800" letter-spacing="2" fill="#f8fafc">Raid<tspan fill="url(#accent)">OS</tspan></text>
+
+  <!-- tagline -->
+  <text x="600" y="196" text-anchor="middle" font-size="21" font-weight="600" letter-spacing="7" fill="#94a3b8">THE OPERATING SYSTEM FOR WEB3 COMMUNITIES</text>
+
+  <!-- module chips -->
+  <g font-size="17" font-weight="700" fill="#e2e8f0">
+    <rect x="243" y="232" width="110" height="40" rx="20" fill="#ffffff" fill-opacity="0.04" stroke="url(#chipstroke)" stroke-opacity="0.9"/>
+    <text x="298" y="258" text-anchor="middle">🧠 BRAIN</text>
+
+    <rect x="369" y="232" width="132" height="40" rx="20" fill="#ffffff" fill-opacity="0.04" stroke="url(#chipstroke)" stroke-opacity="0.9"/>
+    <text x="435" y="258" text-anchor="middle">📊 VOLUME</text>
+
+    <rect x="517" y="232" width="112" height="40" rx="20" fill="#ffffff" fill-opacity="0.04" stroke="url(#chipstroke)" stroke-opacity="0.9"/>
+    <text x="573" y="258" text-anchor="middle">⚡ RAIDS</text>
+
+    <rect x="645" y="232" width="152" height="40" rx="20" fill="#ffffff" fill-opacity="0.04" stroke="url(#chipstroke)" stroke-opacity="0.9"/>
+    <text x="721" y="258" text-anchor="middle">🎮 XP / QUESTS</text>
+
+    <rect x="813" y="232" width="144" height="40" rx="20" fill="#ffffff" fill-opacity="0.04" stroke="url(#chipstroke)" stroke-opacity="0.9"/>
+    <text x="885" y="258" text-anchor="middle">🔥 TRENDING</text>
+  </g>
+
+  <!-- footer strip -->
+  <text x="600" y="303" text-anchor="middle" font-size="15" font-weight="500" letter-spacing="2" fill="#64748b">TELEGRAM-NATIVE · SELF-HOSTED · PRIVACY-FIRST · AI VIA OLLAMA</text>
+</svg>

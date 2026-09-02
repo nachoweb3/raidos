@@ -1,0 +1,28 @@
+{
+  "_docs": "Words the bot reacts to and uses when generating content. Add one word per entry. 'triggers' = messages containing any of these can get an AI/canned reply. Category lists feed the Content Factory.",
+  "triggers": [
+    "wagmi",
+    "gm",
+    "ser",
+    "fren",
+    "moon",
+    "pump",
+    "hodl",
+    "based",
+    "alpha",
+    "ape",
+    "degen"
+  ],
+  "categories": {
+    "bullish": ["early", "conviction", "inevitable", "building", "breakout"],
+    "community": ["pack", "fam", "community", "family", "together", " raid"],
+    "meme": ["meme", "lol", "lmao", "fud", "copium", "hopium"],
+    "launch": ["launch", "listing", "stealth", "fair launch", "presale"],
+    "engagement": ["gm", "wagmi", "gm fam", "who is up", "check in"],
+    "priceAction": ["chart", "candle", "green", "red", "dip", "pump", "dump"],
+    "lore": ["legend", "story", "origin", "myth", "history"],
+    "trending": ["trending", "viral", "timeline", "alpha"],
+    "custom": []
+  },
+  "hashtags": ["#memecoin", "#community", "#web3", "#AI"]
+}

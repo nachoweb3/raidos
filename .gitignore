@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Databases & logs (SQLite state never belongs in git)
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Tooling/session metadata
+.freebuff/

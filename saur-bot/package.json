@@ -1,0 +1,25 @@
+{
+  "name": "saur-bot",
+  "version": "1.0.0",
+  "description": "🦖 SAUR BOT — Hype Engine + smart replies + campaigns + admin panel + analytics for Telegram",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.30.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.0",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.6.2"
+  }
+}

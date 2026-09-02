@@ -1,0 +1,11 @@
+{
+  "_docs": "Canned replies used when the AI provider is offline. $TICKER is replaced with your token's ticker at runtime.",
+  "replies": [
+    "🚀 $TICKER is the community-powered meme.\nIf you're early, you're early. 👀\nCheck the links in /start.",
+    "🚀 We hear you. Stay loud, stay early. 👀",
+    "🚀 One meme, one mission. /lore for the story.",
+    "🚀 Energy detected. The community is listening. 🔥",
+    "🚀 Questions? /start has answers. The timeline has rumors."
+  ],
+  "welcome": "🚀 Welcome to the community, {name}! /start to begin."
+}
