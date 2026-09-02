@@ -9,6 +9,10 @@
   Telegram-native · Self-hosted · Privacy-first · AI via Ollama
 </p>
 
+<p align="center">
+  <sub>Created by <strong>@nacho_web3</strong> — <a href="https://instagram.com/nacho_web3">Instagram</a> · <a href="https://x.com/nacho_web3_">X</a> · <a href="https://youtube.com/@nacho_web3">YouTube</a></sub>
+</p>
+
 ---
 
 RaidOS is not "another Telegram raid bot". It is a complete operating system for
@@ -262,3 +266,13 @@ purged after the retention window.
 **Can I use it without the market features?**
 Yes — everything except `/volume` works out of the box. Set a token whenever
 you're ready.
+
+## 👤 Creator
+
+RaidOS is built and maintained by **@nacho_web3**.
+
+| Platform | Handle |
+|---|---|
+| 📸 Instagram | [@nacho_web3](https://instagram.com/nacho_web3) |
+| 🐦 X (Twitter) | [@nacho_web3_](https://x.com/nacho_web3_) |
+| ▶️ YouTube | [@nacho_web3](https://youtube.com/@nacho_web3) |

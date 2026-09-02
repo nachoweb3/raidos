@@ -56,5 +56,5 @@
   </g>
 
   <!-- footer strip -->
-  <text x="600" y="303" text-anchor="middle" font-size="15" font-weight="500" letter-spacing="2" fill="#64748b">TELEGRAM-NATIVE · SELF-HOSTED · PRIVACY-FIRST · AI VIA OLLAMA</text>
+  <text x="600" y="303" text-anchor="middle" font-size="15" font-weight="500" letter-spacing="2" fill="#64748b">BY <tspan fill="#f97316">@NACHO_WEB3</tspan> · IG <tspan fill="#94a3b8">@NACHO_WEB3</tspan> · X <tspan fill="#94a3b8">@NACHO_WEB3_</tspan> · YT <tspan fill="#94a3b8">@NACHO_WEB3</tspan> · TELEGRAM-NATIVE · PRIVACY-FIRST</text>
 </svg>

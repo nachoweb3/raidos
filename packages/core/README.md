@@ -110,3 +110,7 @@ Trending engine (organic vs. sponsored), post-raid reports & brain insights,
 unified market+social momentum alerts, web dashboard, content engine ("you
 should post this"), onboarding autopilot, scam/impersonation detection, meme
 image generation and template rendering.
+
+---
+
+Created by **@nacho_web3** — [Instagram](https://instagram.com/nacho_web3) · [X](https://x.com/nacho_web3_) · [YouTube](https://youtube.com/@nacho_web3)
