@@ -45,7 +45,9 @@ COMMUNITY → CONVERSATION → BRAIN → INTELLIGENCE → CONTENT / RAID
 ### Requirements
 
 - **Node.js 22+** — [nodejs.org](https://nodejs.org)
-- **Ollama** — [ollama.com](https://ollama.com) (all AI runs locally on your machine)
+- **AI backend — pick one:**
+  - **Ollama (local, default)** — [ollama.com](https://ollama.com); all AI runs on your machine
+  - **Any OpenAI-compatible API** (OpenAI, Groq, OpenRouter, DeepSeek…) — no local models needed
 - A **Telegram bot token** from [@BotFather](https://t.me/BotFather)
 
 ### 1. Install Ollama and pull the models
@@ -83,6 +85,19 @@ CHAT_MODEL=llama3.2:3b
 EMBED_MODEL=nomic-embed-text
 DB_PATH=./brain.db                   # SQLite, created automatically
 ```
+
+**No local models / hosting for others?** Switch to cloud AI instead of Ollama:
+
+```ini
+AI_MODE=cloud
+OPENAI_BASE_URL=https://api.openai.com/v1   # or Groq / OpenRouter / DeepSeek
+OPENAI_API_KEY=sk-...
+CHAT_MODEL=gpt-4o-mini
+EMBED_MODEL=text-embedding-3-small
+```
+
+> Switched AI backends on an existing community? Run **`/reembed`** in that
+> chat once, to rebuild knowledge-base vectors for the new embedding model.
 
 ### 4. Run
 
@@ -140,8 +155,10 @@ deflects the same question before you answer it 50 times.**
 | `/stats` | admin | Activity numbers |
 | `/config` | admin | Toggle the brain / alerts per chat |
 
-> **Privacy:** message text never leaves the machine (Ollama runs locally) and
-> message bodies are purged after `retentionDays` — only aggregates survive.
+> **Privacy:** in local mode (default) message text never leaves the machine
+> (Ollama runs locally) and message bodies are purged after `retentionDays` —
+> only aggregates survive. In cloud mode, prompts go to the AI provider you
+> configure.
 
 ### 🎮 Retention commands
 
@@ -224,12 +241,14 @@ packages/core/            RaidOS core (Telegram bot + intelligence)
 │   ├── database/db.ts    SQLite (better-sqlite3): 17 tables, one per-tenant DB file
 │   ├── modules/          brain logic: kb, analyzer, xp, quests, badges, memes, raids…
 │   ├── market/           Volume Intelligence: providers (DexScreener, mock), alerts
-│   ├── ai/               Ollama provider (chat + embeddings), local only
+│   ├── ai/               Providers: Ollama (local), cloud (OpenAI-compatible), mock
 │   └── config.panel.ts   /config settings panel
-├── tests/                57 unit + integration tests (vitest)
+├── tests/                63 unit + integration tests (vitest)
 └── .env.example
+site/                     Landing page (pricing & positioning)
 docs/
 ├── assets/               Banner & brand assets
+├── sales/                Outreach & pitch kit
 └── superpowers/          Design specs & plans
 ```
 
@@ -260,8 +279,8 @@ No. By design. It detects and amplifies real activity, and every engagement
 number it shows is either measured or explicitly labeled `SELF-REPORTED`.
 
 **Does my community's data leave my server?**
-No. AI runs through local Ollama; there are no cloud API calls. Message text is
-purged after the retention window.
+In local mode, no. In cloud mode, prompts go to the AI provider you configure —
+pick a provider you trust, or stay on Ollama.
 
 **Can I use it without the market features?**
 Yes — everything except `/volume` works out of the box. Set a token whenever

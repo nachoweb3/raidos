@@ -764,6 +764,12 @@ export class BrainDb {
       .all(chatId, userId) as BadgeRow[];
   }
 
+  updateKbEmbedding(id: number, embedding: Buffer): void {
+    this.db
+      .prepare("UPDATE kb_entries SET embedding = ? WHERE id = ?")
+      .run(embedding, id);
+  }
+
   // ── Market snapshots ─────────────────────────────────────────────────
 
   addMarketSnapshot(chatId: number, payload: string): void {

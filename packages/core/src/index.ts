@@ -4,6 +4,7 @@ import { BrainDb } from "./database/db.js";
 import { ChatSettings } from "./settings.js";
 import { ConfigPanel } from "./config.panel.js";
 import { OllamaProvider } from "./ai/ollama.js";
+import { CloudProvider } from "./ai/cloud.js";
 import type { AiProvider } from "./ai/provider.js";
 import { MockProvider } from "./ai/mock.js";
 import { isQuestion } from "./modules/questions.js";
@@ -28,7 +29,8 @@ import { topUsers, leaderboardText } from "./modules/leaderboard.js";
 /**
  * 🧠 COMMUNITY BRAIN
  * Your community talks. We turn the conversation into intelligence and action.
- * Ollama-only: message text never leaves the host machine.
+ * AI_MODE=cloud: AI runs via an OpenAI-compatible API (OpenAI/Groq/OpenRouter/…).
+ * AI_MODE=local (default): AI runs locally via Ollama — message text never leaves the host.
  */
 
 const TOKEN = process.env.BOT_TOKEN;
@@ -42,7 +44,27 @@ const GROUP_ID = process.env.GROUP_ID ? Number(process.env.GROUP_ID) : undefined
 const CHAT_MODEL = process.env.CHAT_MODEL ?? "llama3.2:3b";
 const EMBED_MODEL = process.env.EMBED_MODEL ?? "nomic-embed-text";
 const DB_PATH = process.env.DB_PATH ?? "./brain.db";
-const AI = process.env.AI_MOCK === "1" ? new MockProvider() : new OllamaProvider(CHAT_MODEL, EMBED_MODEL, process.env.OLLAMA_BASE_URL);
+const AI = process.env.AI_MOCK === "1" ? new MockProvider() : makeAi();
+
+function makeAi(): AiProvider {
+  if ((process.env.AI_MODE ?? "local").toLowerCase() === "cloud") {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("❌ AI_MODE=cloud but OPENAI_API_KEY is missing.");
+      process.exit(1);
+    }
+    if (!process.env.CHAT_MODEL || !process.env.EMBED_MODEL) {
+      console.error("❌ AI_MODE=cloud requires CHAT_MODEL and EMBED_MODEL (e.g. gpt-4o-mini / text-embedding-3-small).");
+      process.exit(1);
+    }
+    return new CloudProvider(
+      CHAT_MODEL,
+      EMBED_MODEL,
+      process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+      process.env.OPENAI_API_KEY
+    );
+  }
+  return new OllamaProvider(CHAT_MODEL, EMBED_MODEL, process.env.OLLAMA_BASE_URL);
+}
 
 const db = new BrainDb(DB_PATH);
 const settings = new ChatSettings(db);
@@ -191,6 +213,23 @@ bot.command("ask", async (ctx) => {
   const res = await ask(db, AI, ctx.chat.id, q, s.tone);
   if (res.grounded) db.addInsight(ctx.chat.id, "briefing", JSON.stringify({ kind: "ask", q }));
   return ctx.reply(res.answer);
+});
+
+bot.command("reembed", async (ctx) => {
+  if (!(await isAdmin(ctx))) return ctx.reply("👑 Admins only.");
+  if (process.env.AI_MOCK === "1") return ctx.reply("Mock AI active — nothing to re-embed.");
+  await ctx.reply("🔄 Re-embedding the knowledge base for the current AI model… this may take a minute.");
+  const chatId = ctx.chat.id;
+  const entries = db.listKbEntries(chatId);
+  let ok = 0;
+  for (const e of entries) {
+    const emb = await AI.embed(e.content.slice(0, 4000));
+    if (emb.length > 0) {
+      db.updateKbEmbedding(e.id, packEmbedding(emb));
+      ok++;
+    }
+  }
+  return ctx.reply(`✅ Re-embedded ${ok}/${entries.length} knowledge base entries for “${AI.name}”.`);
 });
 
 bot.command("learn", async (ctx) => {
@@ -793,7 +832,7 @@ bot.catch((err) => console.error("Bot error:", err.error));
 async function main(): Promise<void> {
   await bot.init();
   console.log(`🧠 Community Brain online as @${bot.botInfo.username}`);
-  console.log(`   AI: ${AI.name} (embed: ${EMBED_MODEL}) · mock=${AI instanceof MockProvider}`);
+  console.log(`   AI: ${AI.name} (embed: ${EMBED_MODEL}) · mode=${process.env.AI_MOCK === "1" ? "mock" : (process.env.AI_MODE ?? "local")}`);
   console.log(`   Owner: ${OWNER_ID ?? "(not set)"} · DB: ${DB_PATH}`);
 
   setInterval(() => void analyzerCycle(), DEFAULT_ANALYZER_OPTIONS.cycleMs).unref?.();

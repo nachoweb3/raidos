@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RaidOS — The Operating System for Web3 Communities</title>
+<meta name="description" content="RaidOS gives your token community a brain, market intelligence, raids and rewards — installed and managed for you. Setup from $300, managed hosting from $49/mo.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<style>
+  :root {
+    --bg: #0b1020; --bg2: #111832; --card: #151d3b; --line: #232c52;
+    --text: #e8edf7; --muted: #94a3b8; --accent: #f97316; --accent2: #a855f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; line-height: 1.6; }
+  a { color: #fb923c; text-decoration: none; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  header { position: sticky; top: 0; background: rgba(11,16,32,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); z-index: 10; }
+  .nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: .5px; }
+  .logo span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .nav a.pill { border: 1px solid var(--line); border-radius: 999px; padding: 8px 18px; font-size: 14px; color: var(--text); }
+  .nav a.pill:hover { border-color: var(--accent); }
+
+  .hero { text-align: center; padding: 84px 0 64px; background:
+    radial-gradient(600px 300px at 15% 0%, rgba(249,115,22,.18), transparent),
+    radial-gradient(600px 300px at 85% 20%, rgba(168,85,247,.18), transparent); }
+  .hero h1 { font-size: clamp(38px, 6vw, 64px); font-weight: 800; line-height: 1.1; }
+  .hero h1 span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.sub { color: var(--muted); font-size: 19px; max-width: 640px; margin: 18px auto 30px; }
+  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 34px; }
+  .badge { font-size: 12.5px; letter-spacing: 1px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 14px 28px; border-radius: 12px; font-weight: 700; font-size: 16px; }
+  .btn.primary { background: linear-gradient(90deg, var(--accent), #f43f5e); color: #fff; }
+  .btn.ghost { border: 1px solid var(--line); color: var(--text); }
+  .btn.ghost:hover { border-color: var(--accent); }
+
+  section { padding: 64px 0; }
+  .kicker { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; }
+  h2 { font-size: clamp(26px, 4vw, 36px); margin: 8px 0 30px; }
+  .muted { color: var(--muted); }
+
+  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+  .layer { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .layer b { display: block; margin-bottom: 6px; }
+  .layer small { color: var(--muted); }
+
+  .demo { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; font-family: 'Consolas', monospace; font-size: 14.5px; color: #cbd5e1; max-width: 560px; margin: 26px auto 0; text-align: left; }
+  .demo .u { color: #7dd3fc; } .demo .b { color: #fca5a5; }
+
+  .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 18px; align-items: stretch; }
+  .plan { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; }
+  .plan.hot { border: 1.5px solid var(--accent); position: relative; }
+  .plan.hot::before { content: "MOST POPULAR"; position: absolute; top: -11px; left: 24px; background: var(--accent); color: #1a1005; font-size: 11px; font-weight: 800; letter-spacing: 1px; padding: 3px 10px; border-radius: 999px; }
+  .plan h3 { font-size: 18px; }
+  .price { font-size: 38px; font-weight: 800; margin: 10px 0 2px; }
+  .price small { font-size: 15px; color: var(--muted); font-weight: 500; }
+  .plan ul { list-style: none; margin: 18px 0 24px; flex: 1; }
+  .plan li { padding: 7px 0; font-size: 15px; color: #cbd5e1; }
+  .plan li::before { content: "✓ "; color: #4ade80; font-weight: 700; }
+  .plan .btn { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  th { color: var(--muted); font-weight: 600; }
+  code { background: #1c2447; border-radius: 6px; padding: 2px 8px; font-size: 13.5px; }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0; text-align: center; color: var(--muted); font-size: 14px; }
+  .socials a { margin: 0 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <div class="logo">Raid<span>OS</span></div>
+    <a class="pill" href="#pricing">Get it installed</a>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">TELEGRAM-NATIVE</span>
+      <span class="badge">AI-POWERED</span>
+      <span class="badge">DONE-FOR-YOU</span>
+    </div>
+    <h1>Your community gets a <span>brain</span>.</h1>
+    <p class="sub">RaidOS answers your members' questions from official info, tracks your token's market,
+       runs raids and rewards your community with XP, quests and badges — <strong>installed and managed for you</strong>.
+       You never touch a server.</p>
+    <div class="cta-row">
+      <a class="btn primary" href="#pricing">See pricing</a>
+      <a class="btn ghost" href="https://github.com/nachoweb3/raidos">View the code</a>
+    </div>
+
+    <div class="demo">
+      <div class="u">@newbie:</div> when was fair launch? was I too late?<br><br>
+      <div class="b">🧠 Community Brain:</div> Fair launch was <b>12:00 UTC, March 3</b> — and no,
+      the community keeps building every day. Anything else? 🦖<br><br>
+      <div class="u">@degen:</div> /volume<br><br>
+      <div class="b">📊 $TOKEN MARKET INTELLIGENCE</div><br>
+      Price $0.000042 · 24H Vol $182K · Liq $74K<br>
+      Buys 1,284 · Sells 917 (B/S 1.40) · <b>Trend: 🔥 ACCELERATING</b>
+    </div>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">Five layers, one bot</div>
+    <h2>What your community gets</h2>
+    <div class="layers">
+      <div class="layer"><b>🧠 Brain</b><small>Answers from your official info only. Never invents. Learns from pinned messages.</small></div>
+      <div class="layer"><b>📊 Volume</b><small>Live price, volume, liquidity and holder stats plus automatic spike &amp; whale alerts.</small></div>
+      <div class="layer"><b>⚡ Raids</b><small>Coordinate X/Twitter pushes with goals, timers and XP rewards. Honest tracking.</small></div>
+      <div class="layer"><b>🎮 XP &amp; Quests</b><small>Levels, streaks, missions and badges that keep members coming back daily.</small></div>
+      <div class="layer"><b>😹 Meme contests</b><small>Submissions, community voting, crowned winners. Culture on autopilot.</small></div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing" style="background: var(--bg2);">
+  <div class="wrap">
+    <div class="kicker">Pricing</div>
+    <h2>Two ways to get RaidOS</h2>
+    <div class="pricing">
+
+      <div class="plan">
+        <h3>🚀 Launch Setup</h3>
+        <div class="price">$300–$1,000 <small>one-time</small></div>
+        <p class="muted" style="font-size:14px;">Final price depends on group size and how much official content we train the brain on.</p>
+        <ul>
+          <li>Full install on our infrastructure — zero servers for you</li>
+          <li>Brain trained on your official answers (website, docs, pinned msgs)</li>
+          <li>Token wired into <code>/volume</code> with live market alerts</li>
+          <li>Starter quests + badges configured</li>
+          <li>Your first launch raid planned with your mods</li>
+          <li>Admin walkthrough for your team</li>
+        </ul>
+        <a class="btn primary" href="https://instagram.com/nacho_web3">DM to book</a>
+      </div>
+
+      <div class="plan hot">
+        <h3>🧠 Managed Hosting</h3>
+        <div class="price">$49–$299 <small>/month</small></div>
+        <p class="muted" style="font-size:14px;">Tiered by community size and features. Cancel anytime.</p>
+        <ul>
+          <li>Everything in Launch Setup</li>
+          <li>24/7 uptime — we host, monitor and update</li>
+          <li>Market alerts watched around the clock</li>
+          <li>Monthly community health report</li>
+          <li>Branded commands &amp; custom personality</li>
+          <li>Priority support on Telegram</li>
+        </ul>
+        <a class="btn primary" href="https://x.com/nacho_web3_">DM to subscribe</a>
+      </div>
+
+      <div class="plan">
+        <h3>🛠 Self-hosted</h3>
+        <div class="price">Free <small>open source</small></div>
+        <p class="muted" style="font-size:14px;">For technical teams. Runs on your machine, your data stays yours.</p>
+        <ul>
+          <li>Complete source code on GitHub</li>
+          <li>Local AI via Ollama — privacy-first</li>
+          <li>Cloud AI mode also supported</li>
+          <li>57+ automated tests, MIT-friendly stack</li>
+          <li>Community support via GitHub issues</li>
+        </ul>
+        <a class="btn ghost" href="https://github.com/nachoweb3/raidos">Read the install guide</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="kicker">Onboarding</div>
+    <h2>Live in 48 hours</h2>
+    <table>
+      <tr><th>Day</th><th>What happens</th></tr>
+      <tr><td><b>Day 1</b></td><td>You send your links, token contract and official answers. We deploy and train the brain.</td></tr>
+      <tr><td><b>Day 2</b></td><td>Bot joins your group, quests and badges go live, your first raid is scheduled. You get the admin walkthrough.</td></tr>
+      <tr><td><b>Week 1</b></td><td>We tune answers and alert thresholds with your mods until it feels like your best moderator.</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><b>RaidOS</b> — The operating system for Web3 communities.</p>
+    <p class="socials" style="margin-top:10px;">
+      <a href="https://instagram.com/nacho_web3">📸 @nacho_web3</a>
+      <a href="https://x.com/nacho_web3_">🐦 @nacho_web3_</a>
+      <a href="https://youtube.com/@nacho_web3">▶️ @nacho_web3</a>
+    </p>
+    <p style="margin-top:10px;">Created by @nacho_web3 · <a href="https://github.com/nachoweb3/raidos">github.com/nachoweb3/raidos</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

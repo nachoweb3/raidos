@@ -42,9 +42,11 @@ the community needs — before anyone asks twice.
 
 ## Privacy first
 
-All AI runs locally through [Ollama](https://ollama.com). **Message text never
-leaves the host machine.** Message bodies are also purged after `retentionDays`
-(default 14) — only aggregates and clusters survive.
+By default all AI runs locally through [Ollama](https://ollama.com) — message
+text never leaves the host machine, and message bodies are purged after
+`retentionDays` (default 14); only aggregates and clusters survive.
+`AI_MODE=cloud` routes AI through an OpenAI-compatible API instead, for
+server-hosted deployments.
 
 ## Quick start
 
