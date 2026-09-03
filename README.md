@@ -10,7 +10,11 @@
 </p>
 
 <p align="center">
-  <sub>Created by <strong>@nacho_web3</strong> — <a href="https://instagram.com/nacho_web3">Instagram</a> · <a href="https://x.com/nacho_web3_">X</a> · <a href="https://youtube.com/@nacho_web3">YouTube</a></sub>
+  <sub>Created by <strong>@nacho_web3</strong> — <a href="https://instagram.com/nacho_web3">Instagram</a> · <a href="https://x.com/nacho_web3_">X</a> · <a href="https://youtube.com/@nacho_web3">YouTube</a> · <a href="https://inusaur.online">Live site</a></sub>
+</p>
+
+<p align="center">
+  <a href="README.md">🇬🇧 English</a> · <a href="README.es.md">🇪🇸 Español</a>
 </p>
 
 ---
@@ -25,6 +29,8 @@ token communities, built on five layers that feed each other:
 | ⚡ **Activation** | Raid Engine | Coordinates real community engagement with honest, self-reported tracking |
 | 🎮 **Retention** | XP · Quests · Badges | Rewards genuine contribution with XP, levels, streaks, missions and badges |
 | 🔥 **Discovery** | Trending *(planned)* | Ranks what is gaining real momentum, organic vs. sponsored |
+
+🌐 **Live site & pricing:** [inusaur.online](https://inusaur.online)
 
 Everything feeds the intelligence layer — the product loop:
 
