@@ -100,7 +100,6 @@ export type CheckinResult =
 export class RaidEngine {
   constructor(
     private db: BrainDb,
-    private grantXp: (chatId: number, userId: number, xp: number, reason: string) => void,
     private cfg: RaidConfig = DEFAULT_RAID_CONFIG
   ) {}
 
@@ -132,63 +131,35 @@ export class RaidEngine {
     });
   }
 
-  join(raidId: number, userId: number, username: string | null): JoinResult {
-    const r = this.db.getRaid(raidId);
-    if (!r || r.status !== "active") return "raid_closed";
-    const now = Math.floor(Date.now() / 1000);
-    if (r.ends_at <= now) return "raid_closed";
-    if (this.db.getRaidParticipant(raidId, userId)) return "already";
-    if (r.max_participants !== null && this.db.listRaidParticipants(raidId).length >= r.max_participants) return "full";
-    this.db.addRaidParticipant(raidId, userId, username);
-    return "ok";
+  join(raidId: number, userId: number, username: string | null, expectedChatId?: number): JoinResult {
+    return this.db.joinRaidParticipant(raidId, userId, username, expectedChatId);
   }
 
   /**
    * Self-reported action check-in. Awards XP with diminishing returns and a
    * daily cap. Always labeled SELF-REPORTED in the UI layer.
    */
-  checkin(raidId: number, userId: number): CheckinResult {
+  checkin(raidId: number, userId: number, expectedChatId?: number): CheckinResult {
     const r = this.db.getRaid(raidId);
-    if (!r || r.status !== "active" || r.ends_at <= Math.floor(Date.now() / 1000)) return { status: "raid_closed" };
-    const now = Math.floor(Date.now() / 1000);
-    const p = this.db.getRaidParticipant(raidId, userId);
-    const allowed = checkinAllowed(p, this.cfg, now);
-    if (!allowed.ok) {
-      if (allowed.reason === "cooldown" && p) {
-        return { status: "cooldown", waitSeconds: this.cfg.checkinCooldownSeconds - (now - p.last_checkin_at) };
-      }
-      return { status: allowed.reason ?? "not_joined" } as CheckinResult;
-    }
-    const prevCheckins = p!.checkins;
-    let xp = checkinXp(r.xp_reward, prevCheckins, this.cfg.checkinXpDecay);
-
-    // Daily raid-XP cap (anti-spam).
-    const today = new Date().toISOString().slice(0, 10);
-    const earnedToday = this.db
-      .listRaids(r.chat_id, "finished")
-      .concat(this.db.listRaids(r.chat_id, "active"))
-      .reduce((acc, raid) => {
-        const part = this.db.getRaidParticipant(raid.id, userId);
-        if (!part) return acc;
-        return acc + part.xp_awarded;
-      }, 0);
-    // Note: per-day precision would need a ledger query; V1 approximates with
-    // total raid XP earned vs cap, resetting only via the xp engine's own caps.
-    if (earnedToday >= this.cfg.dailyXpCap) return { status: "daily_cap" };
-    xp = Math.min(xp, this.cfg.dailyXpCap - earnedToday);
-
-    this.db.touchRaidParticipant(raidId, userId);
-    if (xp > 0) {
-      this.grantXp(r.chat_id, userId, xp, `raid:${raidId}`);
-      this.db.setRaidParticipantXp(raidId, userId, (p?.xp_awarded ?? 0) + xp);
-    }
-    return { status: "ok", xp, totalXp: (p?.xp_awarded ?? 0) + xp, checkins: prevCheckins + 1 };
+    if (!r) return { status: "raid_closed" };
+    const result = this.db.checkinRaidParticipant({
+      raidId,
+      userId,
+      expectedChatId,
+      now: Math.floor(Date.now() / 1000),
+      cooldownSeconds: this.cfg.checkinCooldownSeconds,
+      maxCheckins: this.cfg.maxCheckinsPerRaid,
+      baseXp: r.xp_reward,
+      decay: this.cfg.checkinXpDecay,
+      dailyXpCap: this.cfg.dailyXpCap,
+    });
+    return result;
   }
 
-  finish(raidId: number): { score: RaidScore; top: { user_id: number; username: string | null; checkins: number } | null } | null {
+  finish(raidId: number, expectedChatId?: number): { score: RaidScore; top: { user_id: number; username: string | null; checkins: number } | null } | null {
     const r = this.db.getRaid(raidId);
-    if (!r || r.status !== "active") return null;
-    this.db.finishRaidRow(raidId);
+    if (!r || (expectedChatId !== undefined && r.chat_id !== expectedChatId) || r.status !== "active") return null;
+    if (!this.db.finishRaidRow(raidId)) return null;
     const parts = this.db.listRaidParticipants(raidId);
     const trackedActions = parts.reduce((a, p) => a + p.checkins, 0);
     const score = raidScore(r, parts.length, trackedActions);
@@ -196,9 +167,9 @@ export class RaidEngine {
     return { score, top: top ? { user_id: top.user_id, username: top.username, checkins: top.checkins } : null };
   }
 
-  score(raidId: number): RaidScore | null {
+  score(raidId: number, expectedChatId?: number): RaidScore | null {
     const r = this.db.getRaid(raidId);
-    if (!r) return null;
+    if (!r || (expectedChatId !== undefined && r.chat_id !== expectedChatId)) return null;
     const parts = this.db.listRaidParticipants(raidId);
     const trackedActions = parts.reduce((a, p) => a + p.checkins, 0);
     return raidScore(r, parts.length, trackedActions);

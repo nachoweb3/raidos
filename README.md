@@ -28,6 +28,7 @@ token communities, built on five layers that feed each other:
 | 📊 **Market** | Volume Intelligence | Turns real on-chain activity into readable cards and alerts — never fabricated |
 | ⚡ **Activation** | Raid Engine | Coordinates real community engagement with honest, self-reported tracking |
 | 🎮 **Retention** | XP · Quests · Badges | Rewards genuine contribution with XP, levels, streaks, missions and badges |
+| 📝 **Content** | Content Engine | Turns measured signals into post suggestions the admin approves, edits or schedules |
 | 🔥 **Discovery** | Trending *(planned)* | Ranks what is gaining real momentum, organic vs. sponsored |
 
 🌐 **Live site & pricing:** [inusaur.online](https://inusaur.online)
@@ -222,8 +223,10 @@ Source: dexscreener
 
 With alerts on, a background poller (5 min) fires threshold-based alerts:
 🔥 volume spike · 📈 breakout · 📉 drop · 💧 liquidity change · 🚨 drain.
-Providers are pluggable (`MarketDataProvider` interface): DexScreener ships
-keyless, more chains/providers plug in without touching the app.
+Providers are pluggable (`MarketDataProvider` interface): **DexScreener** and
+**GeckoTerminal** ship keyless (GeckoTerminal covers 200+ networks, pick yours
+with `GECKO_NETWORK`), **Birdeye** adds holder data with an API key — more
+chains/providers plug in without touching the app.
 
 ### 😹 Meme contests
 
@@ -236,6 +239,27 @@ keyless, more chains/providers plug in without touching the app.
 /meme list                     ← current contest and scores
 ```
 
+### 📝 Content Engine
+
+Your brain tells you what to post. The engine watches the same signals the
+brain already measures and proposes posts only when there is a real reason:
+
+```text
+/content on                    ← admin: enable the engine for this chat
+/content suggest               ← 0–3 proposed posts, each showing its signal
+/content publish <id>          ← publish an approved suggestion
+/content skip <id>             ← dismiss one
+/content autopublish           ← optional auto-publish (opt-in, default off)
+/content stats                 ← what was published and how it performed
+```
+
+Proposals come with inline buttons (Approve · Skip · Schedule 1h · Publish
+now). Signals include recurring unanswered questions, knowledge-base gaps
+(admin-only nudge), weekly pulse recaps, market alerts, finished raids, quest
+completions and new-member spikes — each with a per-chat cooldown so nothing
+spams. Every published post is traceable to the signal that produced it, and
+`/content stats` shows the measured window afterwards (labeled SELF-REPORTED).
+
 ---
 
 ## 🗂 Repository layout
@@ -244,12 +268,13 @@ keyless, more chains/providers plug in without touching the app.
 packages/core/            RaidOS core (Telegram bot + intelligence)
 ├── src/
 │   ├── index.ts          Bot wiring: commands, listeners, background jobs
-│   ├── database/db.ts    SQLite (better-sqlite3): 17 tables, one per-tenant DB file
+│   ├── database/db.ts    SQLite (better-sqlite3): 21 tables, one per-tenant DB file
 │   ├── modules/          brain logic: kb, analyzer, xp, quests, badges, memes, raids…
 │   ├── market/           Volume Intelligence: providers (DexScreener, mock), alerts
+│   ├── content/          Content Engine: signals, templates, suggest, approval, scheduler, trail
 │   ├── ai/               Providers: Ollama (local), cloud (OpenAI-compatible), mock
 │   └── config.panel.ts   /config settings panel
-├── tests/                63 unit + integration tests (vitest)
+├── tests/                96 unit + integration tests (vitest)
 └── .env.example
 site/                     Landing page (pricing & positioning)
 docs/
@@ -266,17 +291,19 @@ startup, so upgrading never loses your community's history.
 ```bash
 cd packages/core
 npm run dev        # build + run locally
-npm test           # 57 tests
+npm test           # 96 tests
 npm run typecheck  # strict TypeScript
 ```
 
 ## 🗺 Roadmap
 
-- **Trending engine** — rank tokens/topics by real, measurable signals; sponsored slots always labeled `SPONSORED`
-- **Raid analytics** — post-raid reports + Community Brain post-raid insights (confusion delta, message velocity)
-- **Unified momentum alerts** — market + social signals in one data-driven alert
+- **Trending engine** — rank tokens/topics by real, measurable signals; sponsored slots always labeled `SPONSORED`; paid placements are the first recurring revenue line beyond setups and hosting
+- ~~**Content engine**~~ ✅ — `/content suggest` proposes 0–3 posts grounded in measured signals (recurring questions, KB gaps, pulse recaps, market alerts, finished raids, quest completions, join spikes); admin approves/edits/schedules via inline buttons, optional auto-publish, and `/content stats` reports the measured post-publish window
+- ~~**Raid analytics**~~ ✅ — every `/raid end` now ships a measured post-raid report: message velocity, confusion delta (questions vs. the previous window), join rate, and one AI narrative that may only narrate the real numbers
+- ~~**Unified momentum alerts**~~ ✅ — when a market alert fires while measured social signals surge (messages, questions, new members, active raids/quests), the poller sends one combined 🔔 UNIFIED MOMENTUM alert instead of separate, contextless pings
 - **Web dashboard** — community, token, raids, trending and gamification in one command center
-- **More chains & providers** — Birdeye, GeckoTerminal, configurable RPC behind the same interface
+- **More chains & providers** — configurable RPC behind the same interface (DexScreener, GeckoTerminal and Birdeye already shipped)
+- **Multi-community hosting** — one run, multiple groups side-by-side with isolated per-chat brains, so managed hosting scales past one token per server
 
 ## ❓ FAQ
 

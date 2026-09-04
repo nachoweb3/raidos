@@ -23,6 +23,9 @@ export interface ChatSettingsShape {
   tokenAddress: string;
   tokenSymbol: string;
   marketAlerts: boolean;
+  // ── RaidOS: content engine ──
+  contentEnabled: boolean;
+  contentAutoPublish: boolean;
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -44,6 +47,8 @@ const DEFAULTS: ChatSettingsShape = {
   tokenAddress: "",
   tokenSymbol: "SAUR",
   marketAlerts: false,
+  contentEnabled: false,
+  contentAutoPublish: false,
 };
 
 export class ChatSettings {
@@ -68,6 +73,8 @@ export class ChatSettings {
       tokenAddress: g("tokenAddress", DEFAULTS.tokenAddress),
       tokenSymbol: g("tokenSymbol", DEFAULTS.tokenSymbol),
       marketAlerts: g("marketAlerts", DEFAULTS.marketAlerts ? "1" : "0") === "1",
+      contentEnabled: g("contentEnabled", DEFAULTS.contentEnabled ? "1" : "0") === "1",
+      contentAutoPublish: g("contentAutoPublish", DEFAULTS.contentAutoPublish ? "1" : "0") === "1",
     };
   }
 

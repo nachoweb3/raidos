@@ -21,6 +21,7 @@ para comunidades de tokens, construido sobre cinco capas que se alimentan entre 
 | 📊 **Mercado** | Volume Intelligence | Convierte la actividad on-chain real en tarjetas legibles y alertas — nunca inventadas |
 | ⚡ **Activación** | Raid Engine | Coordina engagement real y medible de la comunidad con seguimiento honesto y auto-declarado |
 | 🎮 **Retención** | XP · Misiones · Insignias | Premia la contribución genuina con XP, niveles, rachas, misiones e insignias |
+| 📝 **Contenido** | Content Engine | Convierte señales medidas en propuestas de posts que el admin aprueba, edita o programa |
 | 🔥 **Descubrimiento** | Trending *(planificado)* | Ranura lo que gana momentum real, orgánico vs. patrocinado |
 
 Todo alimenta a la capa de inteligencia — el bucle del producto:
@@ -204,7 +205,9 @@ Trackea tu token y convierte la actividad de mercado en inteligencia legible:
 Con las alertas activadas, un poller en segundo plano (5 min) dispara alertas
 por umbrales: 🔥 pico de volumen · 📈 ruptura · 📉 caída · 💧 cambio de
 liquidez · 🚨 drenaje. Los proveedores son enchufables (interfaz
-`MarketDataProvider`): DexScreener viene sin API key, se pueden añadir más
+`MarketDataProvider`): **DexScreener** y **GeckoTerminal** vienen sin API key
+(GeckoTerminal cubre más de 200 redes, elige la tuya con `GECKO_NETWORK`),
+**Birdeye** añade datos de holders con una API key — se pueden añadir más
 cadenas/proveedores sin tocar la app.
 
 ### 😹 Concursos de memes
@@ -218,6 +221,28 @@ cadenas/proveedores sin tocar la app.
 /meme list                     ← concurso actual y puntuaciones
 ```
 
+### 📝 Content Engine
+
+Tu cerebro te dice qué publicar. El motor observa las mismas señales que ya
+mide el brain y propone posts solo cuando hay una razón real:
+
+```text
+/content on                    ← admin: activa el motor en este chat
+/content suggest               ← 0–3 posts propuestos, cada uno muestra su señal
+/content publish <id>          ← publica una sugerencia aprobada
+/content skip <id>             ← descarta una
+/content autopublish           ← auto-publicación opcional (opt-in, apagado)
+/content stats                 ← qué se publicó y cómo funcionó
+```
+
+Las propuestas llegan con botones (Aprobar · Saltar · Programar 1h · Publicar
+ahora). Señales: preguntas recurrentes sin respuesta, huecos en la base de
+conocimiento (nota solo para admins), resúmenes semanales del pulse, alertas de
+mercado, raids terminados, misiones completadas y picos de miembros nuevos —
+cada una con cooldown por chat para que nada spamee. Cada post publicado es
+rastreable hasta la señal que lo generó, y `/content stats` muestra la ventana
+medida después de publicar (etiquetada SELF-REPORTED).
+
 ---
 
 ## 💰 ¿Cómo se monetiza RaidOS?
@@ -225,6 +250,7 @@ cadenas/proveedores sin tocar la app.
 1. **Setups llave en mano** — $300–$1,000 por instalación, una sola vez
 2. **Hosting administrado** — $49–$299/mes por comunidad
 3. **Trending patrocinado** — colocaciones de pago siempre etiquetadas `SPONSORED`
+4. **Múltiples comunidades alojadas** — un solo servidor maneja varias comunidades con cerebros aislados por chat, para escalar hosting hacia más tokens/clientes
 
 ¿Interesado? Escríbenos por Instagram o X — detalles en la
 [web oficial](https://inusaur.online).
@@ -235,12 +261,13 @@ cadenas/proveedores sin tocar la app.
 packages/core/            Núcleo de RaidOS (bot de Telegram + inteligencia)
 ├── src/
 │   ├── index.ts          Cableado del bot: comandos, listeners, jobs de fondo
-│   ├── database/db.ts    SQLite (better-sqlite3): 17 tablas, multi-tenant por chat_id
+│   ├── database/db.ts    SQLite (better-sqlite3): 21 tablas, multi-tenant por chat_id
 │   ├── modules/          Lógica: kb, analyzer, xp, quests, badges, memes, raids…
 │   ├── market/           Volume Intelligence: proveedores (DexScreener, mock), alertas
+│   ├── content/          Content Engine: señales, plantillas, sugerencias, aprobación, scheduler, histórico
 │   ├── ai/               Proveedores: Ollama (local), nube (compatible OpenAI), mock
 │   └── config.panel.ts   Panel de /config
-├── tests/                63 tests unitarios + de integración (vitest)
+├── tests/                96 tests unitarios + de integración (vitest)
 └── .env.example
 site/                     Landing page (precios y posicionamiento)
 docs/
@@ -258,17 +285,19 @@ comunidad.
 ```bash
 cd packages/core
 npm run dev        # compilar + correr localmente
-npm test           # 63 tests
+npm test           # 96 tests
 npm run typecheck  # TypeScript estricto
 ```
 
 ## 🗺 Roadmap
 
-- **Trending engine** — ranurar tokens/temas por señales reales y medibles; los espacios patrocinados siempre etiquetados `SPONSORED`
-- **Analítica de raids** — informes post-raid + insights del Community Brain
-- **Alertas de momentum unificadas** — mercado + señales sociales en una sola alerta basada en datos
+- **Trending engine** — ranurar tokens/temas por señales reales y medibles; los espacios patrocinados siempre etiquetados `SPONSORED`; las colocaciones de pago son la primera línea de ingreso recurrente más allá de setups y hosting
+- ~~**Content engine**~~ ✅ — `/content suggest` propone 0–3 posts basados en señales medidas (preguntas recurrentes, huecos de KB, resúmenes del pulse, alertas de mercado, raids terminados, misiones completadas, picos de miembros); el admin aprueba/edita/programa con botones inline, hay auto-publicación opcional y `/content stats` muestra la ventana medida post-publicación
+- ~~**Analítica de raids**~~ ✅ — cada `/raid end` incluye ahora un informe post-raid medido: velocidad de mensajes, delta de confusión (preguntas vs. la ventana anterior), tasa de participación y una narrativa de IA que solo puede narrar los números reales
+- ~~**Alertas de momentum unificadas**~~ ✅ — cuando salta una alerta de mercado mientras las señales sociales medidas se disparan (mensajes, preguntas, nuevos miembros, raids/quests activos), el poller envía una sola alerta combinada 🔔 UNIFIED MOMENTUM en lugar de pings sueltos sin contexto
 - **Dashboard web** — comunidad, token, raids, trending y gamificación en un centro de mando
-- **Más cadenas y proveedores** — Birdeye, GeckoTerminal, RPC configurable tras la misma interfaz
+- **Más cadenas y proveedores** — RPC configurable tras la misma interfaz (DexScreener, GeckoTerminal y Birdeye ya incluidos)
+- **Hosting multi-comunidad** — una sola ejecución maneja varias comunidades con cerebros aislados por chat, para escalar hosting hacia más tokens/clientes
 
 ## ❓ FAQ
 

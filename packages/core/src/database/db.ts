@@ -3,9 +3,10 @@ import Database from "better-sqlite3";
 /**
  * 🧠 COMMUNITY BRAIN database
  * One shared DB, tenancy keyed by chat_id.
- * Tables: chats, settings, messages, question_clusters, kb_entries, insights,
+ * Tables: chats, settings, messages, member_joins, question_clusters, kb_entries, insights,
  * xp, xp_ledger, quests, quest_participants, meme_contests, meme_submissions, meme_votes,
- * badges, market_snapshots, raids, raid_participants
+ * badges, market_snapshots, raids, raid_participants,
+ * content_templates, content_suggestions, content_schedule, content_performance
  */
 
 export interface ChatRow {
@@ -141,6 +142,49 @@ export interface RaidParticipantRow {
   xp_awarded: number;
 }
 
+export interface ContentSuggestionRow {
+  id: number;
+  chat_id: number;
+  ts: number;
+  /** Template kind: announcement|recap|market_update|raid_wrap|spotlight|reminder|kb_gap_nudge */
+  kind: string;
+  /** Signal kind that triggered the suggestion (cooldown key). */
+  signal_kind: string;
+  /** Opaque JSON blob: { kind, detail } — the measured signal behind the proposal. */
+  signal: string;
+  text: string;
+  status: "proposed" | "approved" | "edited" | "scheduled" | "published" | "skipped";
+  published_at: number | null;
+  published_text: string | null;
+}
+
+export interface ContentScheduleRow {
+  id: number;
+  chat_id: number;
+  suggestion_id: number;
+  scheduled_at: number;
+  channel: "group" | "x";
+  status: "pending" | "done" | "missed";
+}
+
+export interface ContentScheduleDueRow extends ContentScheduleRow {
+  suggestion_text: string;
+  suggestion_kind: string;
+}
+
+export interface ContentPerformanceRow {
+  id: number;
+  chat_id: number;
+  suggestion_id: number;
+  measured: string;
+  label: string;
+  ts: number;
+}
+
+export type RaidCheckinDbResult =
+  | { status: "ok"; xp: number; totalXp: number; checkins: number }
+  | { status: "not_joined" | "cooldown" | "checkin_cap" | "raid_closed" | "daily_cap"; waitSeconds?: number };
+
 export class BrainDb {
   private db: Database.Database;
 
@@ -176,6 +220,14 @@ export class BrainDb {
       );
       CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts);
       CREATE INDEX IF NOT EXISTS idx_messages_unanalyzed ON messages(chat_id, analyzed) WHERE analyzed = 0;
+
+      CREATE TABLE IF NOT EXISTS member_joins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        joined INTEGER NOT NULL,
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_member_joins_chat_ts ON member_joins(chat_id, ts);
 
       CREATE TABLE IF NOT EXISTS question_clusters (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -329,6 +381,57 @@ export class BrainDb {
         PRIMARY KEY (raid_id, user_id)
       );
       CREATE INDEX IF NOT EXISTS idx_raid_parts_user ON raid_participants(user_id);
+
+      CREATE TABLE IF NOT EXISTS content_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        template TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        params TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_content_tpl_chat ON content_templates(chat_id, kind);
+
+      CREATE TABLE IF NOT EXISTS content_suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        ts INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        signal_kind TEXT NOT NULL,
+        signal TEXT NOT NULL,
+        text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        published_at INTEGER,
+        published_text TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_content_sug_chat ON content_suggestions(chat_id, status);
+      CREATE INDEX IF NOT EXISTS idx_content_sug_sig ON content_suggestions(chat_id, signal_kind, ts);
+
+      CREATE TABLE IF NOT EXISTS content_schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        suggestion_id INTEGER NOT NULL,
+        scheduled_at INTEGER NOT NULL,
+        channel TEXT NOT NULL DEFAULT 'group',
+        status TEXT NOT NULL DEFAULT 'pending'
+      );
+      CREATE INDEX IF NOT EXISTS idx_content_sched_due ON content_schedule(status, scheduled_at);
+      DELETE FROM content_schedule
+       WHERE status = 'pending'
+         AND id NOT IN (
+           SELECT MAX(id) FROM content_schedule WHERE status = 'pending' GROUP BY suggestion_id
+         );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_content_sched_pending_suggestion ON content_schedule(suggestion_id) WHERE status = 'pending';
+
+      CREATE TABLE IF NOT EXISTS content_performance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        suggestion_id INTEGER NOT NULL,
+        measured TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT 'SELF-REPORTED',
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_content_perf_chat ON content_performance(chat_id, ts);
     `);
   }
 
@@ -371,12 +474,12 @@ export class BrainDb {
 
   // ── Messages ───────────────────────────────────────────────────────────
 
-  addMessage(chatId: number, userId: number | null, text: string, isQuestion: boolean): number {
+  addMessage(chatId: number, userId: number | null, text: string, isQuestion: boolean, ts = Math.floor(Date.now() / 1000)): number {
     const info = this.db
       .prepare(
         "INSERT INTO messages (chat_id, user_id, ts, text, is_question, analyzed) VALUES (?, ?, ?, ?, ?, 0)"
       )
-      .run(chatId, userId, Math.floor(Date.now() / 1000), text, isQuestion ? 1 : 0);
+      .run(chatId, userId, ts, text, isQuestion ? 1 : 0);
     return Number(info.lastInsertRowid);
   }
 
@@ -403,6 +506,30 @@ export class BrainDb {
       .prepare("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND ts >= ? AND ts <= ?")
       .get(chatId, sinceTs, untilTs) as { n: number };
     return row.n;
+  }
+
+  /** Questions captured in [sinceTs, untilTs] (inclusive). */
+  countQuestionsBetween(chatId: number, sinceTs: number, untilTs: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND ts >= ? AND ts <= ? AND is_question = 1")
+      .get(chatId, sinceTs, untilTs) as { n: number };
+    return row.n;
+  }
+
+  /** New-member joins recorded in [sinceTs, untilTs] (inclusive). */
+  newMembersBetween(chatId: number, sinceTs: number, untilTs: number): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(joined), 0) AS n FROM member_joins WHERE chat_id = ? AND ts >= ? AND ts <= ?")
+      .get(chatId, sinceTs, untilTs) as { n: number };
+    return row.n;
+  }
+
+  /** Record new members joining the group (service message). */
+  addMemberJoins(chatId: number, count: number, ts = Math.floor(Date.now() / 1000)): void {
+    if (count <= 0) return;
+    this.db
+      .prepare("INSERT INTO member_joins (chat_id, joined, ts) VALUES (?, ?, ?)")
+      .run(chatId, count, ts);
   }
 
   /** Distinct active users in [sinceTs, untilTs]. */
@@ -540,8 +667,10 @@ export class BrainDb {
     return this.db.prepare("SELECT * FROM kb_entries WHERE id = ?").get(id) as KbRow | undefined;
   }
 
-  deleteKbEntry(id: number): boolean {
-    const info = this.db.prepare("DELETE FROM kb_entries WHERE id = ?").run(id);
+  deleteKbEntry(id: number, expectedChatId?: number): boolean {
+    const info = expectedChatId === undefined
+      ? this.db.prepare("DELETE FROM kb_entries WHERE id = ?").run(id)
+      : this.db.prepare("DELETE FROM kb_entries WHERE id = ? AND chat_id = ?").run(id, expectedChatId);
     return info.changes > 0;
   }
 
@@ -562,10 +691,13 @@ export class BrainDb {
     return d.toISOString().slice(0, 10);
   }
 
-  /** Add XP, keep the daily streak alive, log the reason. */
-  recordXp(chatId: number, userId: number, xp: number, reason: string): { xp: number; streak: number } {
-    const today = BrainDb.dayString(0);
-    const yesterday = BrainDb.dayString(-1);
+  private static dayStringAt(ts: number, offsetDays = 0): string {
+    return new Date((ts + offsetDays * 86_400) * 1000).toISOString().slice(0, 10);
+  }
+
+  private recordXpAt(chatId: number, userId: number, xp: number, reason: string, ts: number): { xp: number; streak: number } {
+    const today = BrainDb.dayStringAt(ts);
+    const yesterday = BrainDb.dayStringAt(ts, -1);
     const row = this.db.prepare("SELECT * FROM xp WHERE chat_id = ? AND user_id = ?").get(chatId, userId) as
       | XpUserRow
       | undefined;
@@ -588,8 +720,14 @@ export class BrainDb {
       .run(chatId, userId, xp, streak, today);
     this.db
       .prepare("INSERT INTO xp_ledger (chat_id, user_id, xp, reason, ts) VALUES (?, ?, ?, ?, ?)")
-      .run(chatId, userId, xp, reason, Math.floor(Date.now() / 1000));
+      .run(chatId, userId, xp, reason, ts);
     return { xp: total, streak };
+  }
+
+  /** Add XP, keep the daily streak alive, log the reason. */
+  recordXp(chatId: number, userId: number, xp: number, reason: string, ts = Math.floor(Date.now() / 1000)): { xp: number; streak: number } {
+    const tx = this.db.transaction(() => this.recordXpAt(chatId, userId, xp, reason, ts));
+    return tx.immediate();
   }
 
   getUserStats(chatId: number, userId: number): { xp: number; streak: number } {
@@ -864,11 +1002,37 @@ export class BrainDb {
   }
 
   addRaidParticipant(raidId: number, userId: number, username: string | null): boolean {
+    const now = Math.floor(Date.now() / 1000);
     const info = this.db
       .prepare("INSERT OR IGNORE INTO raid_participants (raid_id, user_id, username, joined_at, last_checkin_at) VALUES (?, ?, ?, ?, ?)")
-      .run(raidId, userId, username, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+      .run(raidId, userId, username, now, now);
     return info.changes > 0;
   }
+
+  /** Atomically validate the raid and reserve a participant slot. */
+  joinRaidParticipant(
+    raidId: number,
+    userId: number,
+    username: string | null,
+    expectedChatId?: number,
+    now = Math.floor(Date.now() / 1000)
+  ): "ok" | "already" | "full" | "raid_closed" {
+    const tx = this.db.transaction(() => {
+      const raid = this.db.prepare("SELECT * FROM raids WHERE id = ?").get(raidId) as RaidRow | undefined;
+      if (!raid || (expectedChatId !== undefined && raid.chat_id !== expectedChatId) || raid.status !== "active" || raid.ends_at <= now) return "raid_closed" as const;
+      if (this.db.prepare("SELECT 1 FROM raid_participants WHERE raid_id = ? AND user_id = ?").get(raidId, userId)) return "already" as const;
+      if (raid.max_participants !== null) {
+        const row = this.db.prepare("SELECT COUNT(*) AS n FROM raid_participants WHERE raid_id = ?").get(raidId) as { n: number };
+        if (row.n >= raid.max_participants) return "full" as const;
+      }
+      const info = this.db
+        .prepare("INSERT OR IGNORE INTO raid_participants (raid_id, user_id, username, joined_at, last_checkin_at) VALUES (?, ?, ?, ?, ?)")
+        .run(raidId, userId, username, now, now);
+      return info.changes > 0 ? "ok" as const : "already" as const;
+    });
+    return tx.immediate();
+  }
+
 
   getRaidParticipant(raidId: number, userId: number): RaidParticipantRow | undefined {
     return this.db
@@ -892,6 +1056,7 @@ export class BrainDb {
       .run(Math.floor(Date.now() / 1000), raidId, userId);
     return info.changes > 0;
   }
+
 
   setRaidParticipantXp(raidId: number, userId: number, xp: number): void {
     this.db
@@ -917,18 +1082,181 @@ export class BrainDb {
       .all(chatId, limit) as { user_id: number; username: string | null; raids: number; checkins: number; xp: number }[];
   }
 
+  /** Atomically records a raid check-in, its participant counters, and the XP ledger entry. */
+  checkinRaidParticipant(input: {
+    raidId: number;
+    userId: number;
+    expectedChatId?: number;
+    now: number;
+    cooldownSeconds: number;
+    maxCheckins: number;
+    baseXp: number;
+    decay: number;
+    dailyXpCap: number;
+  }): RaidCheckinDbResult {
+    const tx = this.db.transaction(() => {
+      const raid = this.db.prepare("SELECT * FROM raids WHERE id = ?").get(input.raidId) as RaidRow | undefined;
+      if (!raid || (input.expectedChatId !== undefined && raid.chat_id !== input.expectedChatId) || raid.status !== "active" || raid.ends_at <= input.now) {
+        return { status: "raid_closed" } as const;
+      }
+      const participant = this.db
+        .prepare("SELECT * FROM raid_participants WHERE raid_id = ? AND user_id = ?")
+        .get(input.raidId, input.userId) as RaidParticipantRow | undefined;
+      if (!participant) return { status: "not_joined" } as const;
+      if (participant.checkins >= input.maxCheckins) return { status: "checkin_cap" } as const;
+      if (participant.checkins > 0 && input.now - participant.last_checkin_at < input.cooldownSeconds) {
+        return { status: "cooldown", waitSeconds: input.cooldownSeconds - (input.now - participant.last_checkin_at) } as const;
+      }
+
+      const current = new Date(input.now * 1000);
+      const dayStart = Math.floor(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate()) / 1000);
+      const earned = this.sumXpBetween(raid.chat_id, dayStart, dayStart + 86_399, "raid:", input.userId);
+      if (earned >= input.dailyXpCap) return { status: "daily_cap" } as const;
+      const calculatedXp = Math.max(1, Math.round(input.baseXp * Math.pow(input.decay, Math.min(participant.checkins, 10))));
+      const xp = Math.min(calculatedXp, input.dailyXpCap - earned);
+      const nextCheckins = participant.checkins + 1;
+      const nextTotalXp = participant.xp_awarded + xp;
+      this.db
+        .prepare("UPDATE raid_participants SET checkins = ?, last_checkin_at = ?, xp_awarded = ? WHERE raid_id = ? AND user_id = ?")
+        .run(nextCheckins, input.now, nextTotalXp, input.raidId, input.userId);
+      if (xp > 0) this.recordXpAt(raid.chat_id, input.userId, xp, `raid:${input.raidId}`, input.now);
+      return { status: "ok", xp, totalXp: nextTotalXp, checkins: nextCheckins } as const;
+    });
+    return tx.immediate();
+  }
+
   /** Total XP granted in [sinceTs, untilTs]; optionally only reasons starting with `reasonPrefix` (e.g. "raid:"). */
-  sumXpBetween(chatId: number, sinceTs: number, untilTs: number, reasonPrefix?: string): number {
+  sumXpBetween(chatId: number, sinceTs: number, untilTs: number, reasonPrefix?: string, userId?: number): number {
+    const clauses = ["chat_id = ?", "ts >= ?", "ts <= ?"];
+    const params: (number | string)[] = [chatId, sinceTs, untilTs];
     if (reasonPrefix) {
-      const row = this.db
-        .prepare("SELECT COALESCE(SUM(xp), 0) AS n FROM xp_ledger WHERE chat_id = ? AND ts >= ? AND ts <= ? AND reason LIKE ?")
-        .get(chatId, sinceTs, untilTs, `${reasonPrefix}%`) as { n: number };
-      return row.n;
+      clauses.push("reason LIKE ?");
+      params.push(`${reasonPrefix}%`);
+    }
+    if (userId !== undefined) {
+      clauses.push("user_id = ?");
+      params.push(userId);
     }
     const row = this.db
-      .prepare("SELECT COALESCE(SUM(xp), 0) AS n FROM xp_ledger WHERE chat_id = ? AND ts >= ? AND ts <= ?")
-      .get(chatId, sinceTs, untilTs) as { n: number };
+      .prepare(`SELECT COALESCE(SUM(xp), 0) AS n FROM xp_ledger WHERE ${clauses.join(" AND ")}`)
+      .get(...params) as { n: number };
     return row.n;
+  }
+
+  /** Most recent XP ledger entry whose reason starts with `reasonPrefix` (e.g. "quest:"). */
+  latestXpLedger(chatId: number, reasonPrefix: string): { user_id: number; username: string | null; xp: number; reason: string; ts: number } | undefined {
+    return this.db
+      .prepare(
+        `SELECT l.user_id AS user_id, x.username AS username, l.xp AS xp, l.reason AS reason, l.ts AS ts
+         FROM xp_ledger l
+         LEFT JOIN xp x ON x.chat_id = l.chat_id AND x.user_id = l.user_id
+         WHERE l.chat_id = ? AND l.reason LIKE ?
+         ORDER BY l.ts DESC
+         LIMIT 1`
+      )
+      .get(chatId, `${reasonPrefix}%`) as { user_id: number; username: string | null; xp: number; reason: string; ts: number } | undefined;
+  }
+
+  // ── Content engine ─────────────────────────────────────────────────────
+
+  addContentSuggestion(chatId: number, kind: string, signalKind: string, signal: string, text: string, ts = Math.floor(Date.now() / 1000)): number {
+    const info = this.db
+      .prepare(
+        "INSERT INTO content_suggestions (chat_id, ts, kind, signal_kind, signal, text, status) VALUES (?, ?, ?, ?, ?, ?, 'proposed')"
+      )
+      .run(chatId, ts, kind, signalKind, signal, text);
+    return Number(info.lastInsertRowid);
+  }
+
+  getContentSuggestion(id: number): ContentSuggestionRow | undefined {
+    return this.db.prepare("SELECT * FROM content_suggestions WHERE id = ?").get(id) as ContentSuggestionRow | undefined;
+  }
+
+  listContentSuggestions(chatId: number, status?: string, limit = 20): ContentSuggestionRow[] {
+    if (status) {
+      return this.db
+        .prepare("SELECT * FROM content_suggestions WHERE chat_id = ? AND status = ? ORDER BY ts DESC, id DESC LIMIT ?")
+        .all(chatId, status, limit) as ContentSuggestionRow[];
+    }
+    return this.db
+      .prepare("SELECT * FROM content_suggestions WHERE chat_id = ? ORDER BY ts DESC, id DESC LIMIT ?")
+      .all(chatId, limit) as ContentSuggestionRow[];
+  }
+
+  /** Most recent suggestion for a signal kind since `sinceTs` — cooldown + re-surface check. */
+  recentContentSuggestionByKind(chatId: number, signalKind: string, sinceTs: number): ContentSuggestionRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM content_suggestions WHERE chat_id = ? AND signal_kind = ? AND ts >= ? ORDER BY ts DESC, id DESC LIMIT 1")
+      .get(chatId, signalKind, sinceTs) as ContentSuggestionRow | undefined;
+  }
+
+  setContentSuggestionStatus(id: number, status: ContentSuggestionRow["status"]): boolean {
+    const info = this.db.prepare("UPDATE content_suggestions SET status = ? WHERE id = ?").run(status, id);
+    return info.changes > 0;
+  }
+
+  setSuggestionText(id: number, text: string): boolean {
+    const info = this.db.prepare("UPDATE content_suggestions SET text = ? WHERE id = ?").run(text, id);
+    return info.changes > 0;
+  }
+
+  publishContentSuggestion(id: number, publishedText: string, publishedAt = Math.floor(Date.now() / 1000)): boolean {
+    const info = this.db
+      .prepare("UPDATE content_suggestions SET status = 'published', published_at = ?, published_text = ? WHERE id = ?")
+      .run(publishedAt, publishedText, id);
+    return info.changes > 0;
+  }
+
+  addContentSchedule(chatId: number, suggestionId: number, scheduledAt: number, channel: "group" | "x" = "group"): number {
+    const info = this.db
+      .prepare("INSERT INTO content_schedule (chat_id, suggestion_id, scheduled_at, channel, status) VALUES (?, ?, ?, ?, 'pending') ON CONFLICT(suggestion_id) WHERE status = 'pending' DO UPDATE SET scheduled_at = excluded.scheduled_at, channel = excluded.channel")
+      .run(chatId, suggestionId, scheduledAt, channel);
+    const existing = this.db
+      .prepare("SELECT id FROM content_schedule WHERE suggestion_id = ? AND status = 'pending'")
+      .get(suggestionId) as { id: number } | undefined;
+    if (!existing) throw new Error("content schedule upsert failed");
+    return existing.id;
+  }
+
+  /** Pending schedule jobs due at or before `now`, joined with their suggestion text. */
+  listDueContentSchedule(now: number): ContentScheduleDueRow[] {
+    return this.db
+      .prepare(
+        `SELECT cs.*, sug.text AS suggestion_text, sug.kind AS suggestion_kind
+         FROM content_schedule cs
+         JOIN content_suggestions sug ON sug.id = cs.suggestion_id
+         WHERE cs.status = 'pending' AND cs.scheduled_at <= ?
+         ORDER BY cs.scheduled_at ASC`
+      )
+      .all(now) as ContentScheduleDueRow[];
+  }
+
+  listContentSchedule(chatId: number, status?: string, limit = 20): ContentScheduleRow[] {
+    if (status) {
+      return this.db
+        .prepare("SELECT * FROM content_schedule WHERE chat_id = ? AND status = ? ORDER BY scheduled_at DESC LIMIT ?")
+        .all(chatId, status, limit) as ContentScheduleRow[];
+    }
+    return this.db
+      .prepare("SELECT * FROM content_schedule WHERE chat_id = ? ORDER BY scheduled_at DESC LIMIT ?")
+      .all(chatId, limit) as ContentScheduleRow[];
+  }
+
+  setScheduleStatus(id: number, status: ContentScheduleRow["status"]): boolean {
+    const info = this.db.prepare("UPDATE content_schedule SET status = ? WHERE id = ? AND status = 'pending'").run(status, id);
+    return info.changes > 0;
+  }
+
+  addContentPerformance(chatId: number, suggestionId: number, measured: string, ts = Math.floor(Date.now() / 1000)): void {
+    this.db
+      .prepare("INSERT INTO content_performance (chat_id, suggestion_id, measured, label, ts) VALUES (?, ?, ?, 'SELF-REPORTED', ?)")
+      .run(chatId, suggestionId, measured, ts);
+  }
+
+  getContentPerformance(suggestionId: number): ContentPerformanceRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM content_performance WHERE suggestion_id = ? ORDER BY ts DESC LIMIT 1")
+      .get(suggestionId) as ContentPerformanceRow | undefined;
   }
 
   // ── Insights ───────────────────────────────────────────────────────────
@@ -943,6 +1271,13 @@ export class BrainDb {
     return this.db
       .prepare("SELECT * FROM insights WHERE chat_id = ? AND kind = ? ORDER BY ts DESC LIMIT 1")
       .get(chatId, kind) as InsightRow | undefined;
+  }
+
+  /** Insights of a kind captured since `sinceTs`, newest first. */
+  listInsightsSince(chatId: number, kind: InsightRow["kind"], sinceTs: number, limit = 50): InsightRow[] {
+    return this.db
+      .prepare("SELECT * FROM insights WHERE chat_id = ? AND kind = ? AND ts >= ? ORDER BY ts DESC LIMIT ?")
+      .all(chatId, kind, sinceTs, limit) as InsightRow[];
   }
 
   close(): void {

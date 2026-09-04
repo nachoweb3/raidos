@@ -33,12 +33,14 @@ the community needs — before anyone asks twice.
 
 | Feature | What it does |
 |---|---|
-| 📊 **Volume Intelligence** | `/volume` market card (price, volume, liquidity, buys/sells, trend) via pluggable providers (DexScreener keyless, mock for tests) |
+| 📊 **Volume Intelligence** | `/volume` market card (price, volume, liquidity, buys/sells, trend) via pluggable providers (DexScreener + GeckoTerminal keyless, Birdeye with API key, mock for tests) |
 | 🔔 **Market alerts** | Background poller fires volume-spike, price breakout/drop and liquidity-change/drain alerts with configurable thresholds — data-driven, never fabricated |
+| 🔥 **Unified momentum** | When market and social signals fire together, one combined alert replaces separate pings — social side is always measured from captured chat data |
 | ⚡ **Raid Engine** | Admin-created engagement raids (`/raid create`) with objective, duration, platform and XP; participation is clearly labeled **SELF-REPORTED** |
 | 🛡️ **Anti-abuse** | Check-in cooldowns, per-raid caps, diminishing XP returns, daily raid-XP cap, participant caps |
 | 🏆 **Raid leaderboards** | `/raid top` (raids, actions, XP), `/raid score` live engagement velocity + completion, quest integration (`raids` kind) |
 | 🏅 **Badges** | Milestone badges auto-awarded as members level up (`/badges`), plus admin honors (`/badge grant`) |
+| 📝 **Content Engine** | `/content suggest` proposes 0–3 data-grounded posts from live signals (confusion clusters, KB gaps, pulse recaps, market alerts, raid wraps, quest spotlights, join spikes); admin approves/edits/schedules via inline buttons or opt-in auto-publish; `/content stats` shows the measured post-publish window (SELF-REPORTED) |
 
 ## Privacy first
 
@@ -80,6 +82,7 @@ Then, in your community group:
 `/meme open <title> [hours]` · `/meme voting` · `/meme finish` ·
 `/volume set <address> [symbol] [provider]` · `/volume alerts` ·
 `/raid create <title>|<platform>|<url>|<30m\|2h>|<objective>|<XP> [max]` · `/raid end [id]` ·
+`/content suggest|publish|skip|stats|on|off|autopublish` ·
 `/badge grant <code>`
 
 Each group earns XP once `/setup` activates the brain: questions pay 3 XP,
@@ -103,15 +106,24 @@ tenancy) are documented in `docs/superpowers/specs/2026-09-02-community-brain-de
 ## Tests
 
 ```bash
-npm test    # 57 tests: unit (clustering, cosine, heuristics, XP, quests, raids, market) + integration (mocked AI)
+npm test    # 96 tests: unit (clustering, cosine, heuristics, XP, quests, raids, market, content) + integration (mocked AI)
 ```
 
 ## Roadmap
 
-Trending engine (organic vs. sponsored), post-raid reports & brain insights,
-unified market+social momentum alerts, web dashboard, content engine ("you
-should post this"), onboarding autopilot, scam/impersonation detection, meme
-image generation and template rendering.
+Trending engine (organic vs. sponsored) — with paid placements labeled SPONSORED as the first recurring revenue line after setups and hosting, web
+dashboard (community, token, raids, trending, gamification in one command
+center), X-channel publishing for approved posts, onboarding autopilot,
+scam/impersonation detection, meme image generation and template rendering.
+
+The content engine is shipped: `/content suggest` turns measured signals into
+proposed posts, the admin approves/edits/schedules (or enables opt-in
+auto-publish), and `/content stats` reports the measured post-publish window.
+
+Post-raid reports & brain insights are shipped: every `/raid end` appends a
+measured analytics card (message velocity, confusion delta vs. the previous
+window, join rate, completion) plus one optional AI narrative that only
+narrates the real numbers.
 
 ---
 

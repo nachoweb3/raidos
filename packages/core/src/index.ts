@@ -18,13 +18,22 @@ import { briefingText } from "./modules/briefing.js";
 import { XpEngine, LEVEL_TITLES } from "./modules/xp.js";
 import { BadgeEngine, BADGE_CODES, badgeByCode } from "./modules/badges.js";
 import { RaidEngine, parseDuration, raidScoreText, RAID_PLATFORMS } from "./modules/raids.js";
-import { volumeCard, detectAlerts } from "./market/volume.js";
-import { providerByName } from "./market/providers.js";
+import { raidAnalytics, raidAnalyticsText, raidAnalyticsNarrative } from "./modules/raid-analytics.js";
+import { unifiedMomentumAlert } from "./modules/momentum.js";
+import { volumeCard } from "./market/volume.js";
+import { providerByName, PROVIDER_NAMES } from "./market/providers.js";
 import type { MarketDataProvider, TokenStats } from "./market/providers.js";
 import { QuestEngine } from "./modules/quests.js";
 import type { QuestRequirement } from "./modules/quests.js";
 import { MemeEngine } from "./modules/memes.js";
 import { topUsers, leaderboardText } from "./modules/leaderboard.js";
+import { suggestForChat } from "./content/suggest.js";
+import { detectAlerts } from "./market/volume.js";
+import { approveSuggestion, skipSuggestion, scheduleSuggestion, publishSuggestion } from "./content/approval.js";
+import { runScheduler } from "./content/scheduler.js";
+import { contentStatsText } from "./content/trail.js";
+import { DEFAULT_SIGNAL_OPTIONS } from "./content/signals.js";
+import type { ContentSuggestionRow } from "./database/db.js";
 
 /**
  * 🧠 COMMUNITY BRAIN
@@ -77,7 +86,7 @@ const xpEngine = new XpEngine(db);
 const questEngine = new QuestEngine(db, (chatId, userId, xp, reason) => xpEngine.grantXp(chatId, userId, xp, reason));
 const memeEngine = new MemeEngine(db, (chatId, userId, xp, reason) => xpEngine.grantXp(chatId, userId, xp, reason));
 const badgeEngine = new BadgeEngine(db);
-const raidEngine = new RaidEngine(db, (chatId, userId, xp, reason) => xpEngine.grantXp(chatId, userId, xp, reason));
+const raidEngine = new RaidEngine(db);
 
 const bot = new Bot(TOKEN);
 
@@ -162,6 +171,7 @@ bot.command("start", (ctx) =>
       "/stats — quick activity stats",
       "/quest add <name>|<kind>|<target>|<xp> — create a mission",
       "/meme open <title> — start a meme contest",
+      "/content — what to post next, grounded in real signals",
       "",
       "I also learn pinned messages and admin announcements automatically.",
     ].join("\n")
@@ -194,13 +204,18 @@ bot.command("config", async (ctx) => {
 
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data ?? "";
-  if (!data.startsWith("cfg:")) return;
+  if (!data.startsWith("cfg:") && !data.startsWith("ct:")) return;
   if (!(await isAdmin(ctx))) {
     await ctx.answerCallbackQuery({ text: "👑 Admins only." });
     return;
   }
   const msg = ctx.callbackQuery.message;
   if (!msg) return;
+  if (data.startsWith("ct:")) {
+    await handleContentCallback(msg.chat.id, msg.message_id, data);
+    await ctx.answerCallbackQuery({ text: "✅ Done" });
+    return;
+  }
   await panel.handleCallback(msg.chat.id, msg.message_id, data);
   await ctx.answerCallbackQuery({ text: "✅ Updated" });
 });
@@ -253,7 +268,7 @@ bot.command("kbdel", async (ctx) => {
   if (!(await isAdmin(ctx))) return ctx.reply("👑 Admins only.");
   const id = Number((ctx.match ?? "").trim());
   if (!Number.isFinite(id) || id <= 0) return ctx.reply("Usage: /kbdel <id>  (see /kb)");
-  return ctx.reply(db.deleteKbEntry(id) ? "🗑️ Deleted." : "❌ Not found.");
+  return ctx.reply(db.deleteKbEntry(id, ctx.chat.id) ? "🗑️ Deleted." : "❌ Not found.");
 });
 
 bot.command("memory", (ctx) => {
@@ -493,10 +508,10 @@ bot.command("volume", async (ctx) => {
   if (sub === "set") {
     if (!(await isAdmin(ctx))) return ctx.reply("👑 Admins only.");
     const addr = parts[1];
-    if (!addr) return ctx.reply("Usage: /volume set <token address> [symbol] [provider]\nProviders: dexscreener, mock");
+    if (!addr) return ctx.reply(`Usage: /volume set <token address> [symbol] [provider]\nProviders: ${PROVIDER_NAMES.join(", ")}`);
     const symbol = (parts[2] ?? s.tokenSymbol).toUpperCase();
     const provider = parts[3] ?? s.marketProvider;
-    if (!providerByName(provider)) return ctx.reply(`❌ Unknown provider “${provider}”. Providers: dexscreener, mock`);
+    if (!providerByName(provider)) return ctx.reply(`❌ Unknown provider “${provider}”. Providers: ${PROVIDER_NAMES.join(", ")}`);
     settings.set(ctx.chat.id, "tokenAddress", addr);
     settings.set(ctx.chat.id, "tokenSymbol", symbol);
     settings.set(ctx.chat.id, "marketProvider", provider);
@@ -579,7 +594,7 @@ bot.command("raid", async (ctx) => {
     case "join": {
       const id = Number(restArr[0]);
       if (!userId || !Number.isFinite(id)) return ctx.reply("Usage: /raid join <id>");
-      const res = raidEngine.join(id, userId, ctx.from?.username ?? null);
+      const res = raidEngine.join(id, userId, ctx.from?.username ?? null, chatId);
       if (res === "ok") {
         const r = db.getRaid(id);
         // Quest integration: each raid joined counts as a "raids" event.
@@ -594,7 +609,7 @@ bot.command("raid", async (ctx) => {
     case "checkin": {
       const id = Number(restArr[0]);
       if (!userId || !Number.isFinite(id)) return ctx.reply("Usage: /raid in <id>");
-      const res = raidEngine.checkin(id, userId);
+      const res = raidEngine.checkin(id, userId, chatId);
       if (res.status === "ok") {
         announceBadges(chatId, userId);
         return ctx.reply(`✅ Action tracked (SELF-REPORTED) — +${res.xp} XP · ${res.checkins} actions · ${res.totalXp} XP total in this raid.`);
@@ -616,22 +631,34 @@ bot.command("raid", async (ctx) => {
       if (!Number.isFinite(id)) {
         const latest = db.listRaids(chatId, "active")[0] ?? db.listRaids(chatId)[0];
         if (!latest) return ctx.reply("No raids yet. Admins: /raid create");
-        const sc = raidEngine.score(latest.id);
+        const sc = raidEngine.score(latest.id, chatId);
         return sc ? ctx.reply(raidScoreText(sc)) : ctx.reply("No score available.");
       }
-      const sc = raidEngine.score(id);
+      const sc = raidEngine.score(id, chatId);
       return sc ? ctx.reply(raidScoreText(sc)) : ctx.reply("Raid not found.");
     }
     case "end": {
       if (!(await isAdmin(ctx))) return ctx.reply("👑 Admins only.");
       const id = Number(restArr[0]) || db.listRaids(chatId, "active")[0]?.id;
       if (!id) return ctx.reply("No active raid to end.");
-      const out = raidEngine.finish(id);
+      const out = raidEngine.finish(id, chatId);
       if (!out) return ctx.reply("Raid not found or already finished.");
       const lines = ["🏁 RAID FINISHED", `#${id} ${db.getRaid(id)?.title ?? ""}`, "", raidScoreText(out.score)];
       if (out.top) lines.push("", `🥇 Top raider: ${out.top.username ? "@" + out.top.username : `user${out.top.user_id}`} — ${out.top.checkins} actions`);
       lines.push("", "All XP was granted live per action (SELF-REPORTED tracking).");
-      return ctx.reply(lines.join("\n"));
+      await ctx.reply(lines.join("\n"));
+      // Post-raid intelligence: measured window comparison + one AI narrative.
+      try {
+        const r = db.getRaid(id);
+        if (r) {
+          const analytics = raidAnalytics(db, r);
+          const narrative = await raidAnalyticsNarrative(AI, analytics).catch(() => "");
+          return ctx.reply(raidAnalyticsText(analytics) + (narrative ? `\n\n🧠 ${narrative}` : ""));
+        }
+      } catch {
+        // analytics are best-effort; the finish report already went out
+      }
+      return;
     }
     case "top": {
       const rows = db.raidRanking(chatId, 10);
@@ -668,6 +695,144 @@ bot.command("raid", async (ctx) => {
   }
 });
 
+// ── RaidOS: Content Engine ────────────────────────────────────────────────
+
+async function postContent(chatId: number, text: string): Promise<boolean> {
+  try {
+    await bot.api.sendMessage(chatId, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function suggestionKeyboard(id: number): { inline_keyboard: { text: string; callback_data: string }[][] } {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Approve", callback_data: `ct:approve:${id}` },
+        { text: "⏭ Skip", callback_data: `ct:skip:${id}` },
+        { text: "🕐 Schedule 1h", callback_data: `ct:schedule:${id}:60` },
+      ],
+      [{ text: "📣 Publish now", callback_data: `ct:publish:${id}` }],
+    ],
+  };
+}
+
+async function handleContentCallback(chatId: number, messageId: number, data: string): Promise<void> {
+  const [, action, idStr, arg] = data.split(":");
+  const id = Number(idStr);
+  if (!Number.isFinite(id)) return;
+  switch (action) {
+    case "approve": {
+      const res = approveSuggestion(db, id, undefined, chatId);
+      const note = res.ok ? `✅ Suggestion #${id} approved. /content publish ${id} to post it.` : `❌ Suggestion #${id}: ${res.reason}.`;
+      await bot.api.editMessageText(chatId, messageId, note).catch(() => {});
+      break;
+    }
+    case "skip": {
+      const res = skipSuggestion(db, id, chatId);
+      const note = res.ok ? `⏭ Suggestion #${id} skipped.` : `❌ Suggestion #${id}: ${res.reason}.`;
+      await bot.api.editMessageText(chatId, messageId, note).catch(() => {});
+      break;
+    }
+    case "schedule": {
+      const minutes = Number(arg) || 60;
+      const res = scheduleSuggestion(db, id, Math.floor(Date.now() / 1000) + minutes * 60, "group", chatId);
+      const note = res.ok ? `🕐 Suggestion #${id} scheduled — publishing in ${minutes}m.` : `❌ Suggestion #${id}: ${res.reason}.`;
+      await bot.api.editMessageText(chatId, messageId, note).catch(() => {});
+      break;
+    }
+    case "publish": {
+      const res = await publishSuggestion(db, id, postContent, undefined, chatId);
+      const note = res.ok ? `📣 Suggestion #${id} published.` : `❌ Suggestion #${id}: ${res.reason}.`;
+      await bot.api.editMessageText(chatId, messageId, note).catch(() => {});
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+bot.command("content", async (ctx) => {
+  if (!(await isAdmin(ctx))) return ctx.reply("👑 Admins only.");
+  const parts = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+  const sub = parts[0] ?? "";
+  const chatId = ctx.chat.id;
+
+  if (sub === "suggest") {
+    const s = settings.get(chatId);
+    if (!s.contentEnabled) return ctx.reply("🔕 Content engine is off for this chat. Enable it with /content on.");
+    let marketKinds: string[] = [];
+    let stats: TokenStats | null = null;
+    try {
+      const r = await fetchAndStoreStats(chatId);
+      stats = r.stats;
+      // Re-detect alerts from the fresh snapshot vs baseline — honest, same rules as the poller.
+      marketKinds = r.prev ? detectAlerts(r.stats, r.prev).map((a) => a.kind) : [];
+    } catch {
+      stats = null; // market unavailable — suggestions continue without it
+    }
+    const { proposals } = suggestForChat(db, chatId, marketKinds, stats);
+    if (proposals.length === 0) {
+      return ctx.reply("💡 No grounded suggestions right now — the engine only proposes when there is a real signal.");
+    }
+    for (const p of proposals) {
+      const text = [`💡 Based on: ${p.signalDetail}`, "", p.text].join("\n");
+      await ctx.reply(text, { reply_markup: suggestionKeyboard(p.id) }).catch(() => {});
+    }
+    return;
+  }
+
+  if (sub === "on" || sub === "off") {
+    const on = sub === "on";
+    settings.set(chatId, "contentEnabled", on ? "1" : "0");
+    return ctx.reply(on ? "💡 Content engine ON — /content suggest proposes data-grounded posts." : "🔕 Content engine OFF.");
+  }
+
+  if (sub === "autopublish" || sub === "auto") {
+    const on = !settings.get(chatId).contentAutoPublish;
+    settings.set(chatId, "contentAutoPublish", on ? "1" : "0");
+    return ctx.reply(on ? "🤖 Auto-publish ON — approved signals post automatically (cooldowns still apply)." : "🤖 Auto-publish OFF — every post needs manual approval.");
+  }
+
+  if (sub === "publish") {
+    const id = Number(parts[1]);
+    if (!Number.isFinite(id)) return ctx.reply("Usage: /content publish <id>");
+    const res = await publishSuggestion(db, id, postContent, undefined, chatId);
+    if (res.ok) return ctx.reply("📣 Published.");
+    return ctx.reply(res.reason === "not_found" ? `❌ Suggestion #${id} not found.` : res.reason === "send_failed" ? "⚠️ Couldn't send the message — check my permissions and try again." : `❌ Suggestion #${id}: ${res.reason}.`);
+  }
+
+  if (sub === "skip") {
+    const id = Number(parts[1]);
+    if (!Number.isFinite(id)) return ctx.reply("Usage: /content skip <id>");
+    const res = skipSuggestion(db, id, chatId);
+    return ctx.reply(res.ok ? "⏭ Skipped." : `❌ ${res.reason}.`);
+  }
+
+  if (sub === "stats") {
+    return ctx.reply(contentStatsText(db, chatId));
+  }
+
+  return ctx.reply(
+    [
+      "📝 CONTENT ENGINE",
+      "",
+      "Your brain tells you what to post — grounded in measured signals only.",
+      "",
+      "/content suggest — propose 0–3 posts from live signals",
+      "/content publish <id> — publish an approved suggestion",
+      "/content skip <id> — dismiss a suggestion",
+      "/content stats — what was published and how it performed",
+      "/content on | off — enable the engine for this chat",
+      "/content autopublish — toggle auto-publish (opt-in)",
+      "",
+      "Every post is traceable to the signal that produced it — no invented numbers, no fabricated hype.",
+    ].join("\n")
+  );
+});
+
 // ── Group listeners ───────────────────────────────────────────────────────
 
 bot.on("message:new_chat_members", async (ctx) => {
@@ -687,6 +852,12 @@ bot.on("message:new_chat_members", async (ctx) => {
       }
     }
   }
+});
+
+bot.on("message:new_chat_members", (ctx) => {
+  if (ctx.chat.type === "private") return;
+  const added = ctx.message.new_chat_members?.length ?? 0;
+  if (added > 0) db.addMemberJoins(ctx.chat.id, added);
 });
 
 bot.on("message_reaction", (ctx) => {
@@ -765,8 +936,7 @@ function analyzerDeps() {
 }
 
 async function analyzerCycle(): Promise<void> {
-  const chats = db.listChats();
-  for (const chat of chats) {
+  for (const chat of db.listChats()) {
     if (!settings.get(chat.chat_id).brainEnabled) continue;
     const s = settings.get(chat.chat_id);
     const opts = {
@@ -808,6 +978,39 @@ async function pulseCheck(): Promise<void> {
   }
 }
 
+async function contentCycle(): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  // Scheduling is database-wide; run it once even when no chat currently has
+  // auto-publish enabled. The scheduler validates each job's owning chat.
+  const run = await runScheduler({ db, post: postContent });
+  if (run.published > 0 || run.failed > 0) console.log(`📝 scheduler published=${run.published} failed=${run.failed}`);
+
+  for (const chat of db.listChats()) {
+    const s = settings.get(chat.chat_id);
+    if (!s.contentEnabled || !s.brainEnabled) continue;
+    try {
+      if (!s.contentAutoPublish) continue;
+      let stats: TokenStats | null = null;
+      try {
+        stats = (await fetchAndStoreStats(chat.chat_id)).stats;
+      } catch {
+        stats = null;
+      }
+      const { proposals } = suggestForChat(db, chat.chat_id, [], stats, DEFAULT_SIGNAL_OPTIONS, now);
+      // Auto-publish: approve + schedule immediately (cooldowns already filtered).
+      for (const p of proposals) {
+        approveSuggestion(db, p.id, undefined, chat.chat_id);
+        scheduleSuggestion(db, p.id, now, "group", chat.chat_id);
+      }
+      if (proposals.length > 0) {
+        console.log(`📝 auto-publish chat=${chat.chat_id} scheduled=${proposals.length}`);
+      }
+    } catch (err) {
+      console.error("content cycle failed:", err);
+    }
+  }
+}
+
 async function marketCycle(): Promise<void> {
   for (const chat of db.listChats()) {
     const s = settings.get(chat.chat_id);
@@ -815,7 +1018,17 @@ async function marketCycle(): Promise<void> {
     try {
       const { stats, prev } = await fetchAndStoreStats(chat.chat_id);
       if (!prev) continue; // need a baseline before alerting
-      for (const alert of detectAlerts(stats, prev)) {
+      const alerts = detectAlerts(stats, prev);
+      const kinds = alerts.map((a) => a.kind);
+      // Unified momentum: when market AND measured social signals fire together,
+      // one combined alert replaces the separate market-only one.
+      const unified = unifiedMomentumAlert(db, chat.chat_id, stats, kinds);
+      if (unified) {
+        await bot.api.sendMessage(chat.chat_id, unified.text).catch(() => {});
+        db.addInsight(chat.chat_id, "pulse", JSON.stringify({ market: kinds, momentum: unified.signals.map((x) => x.kind) }));
+        continue;
+      }
+      for (const alert of alerts) {
         await bot.api.sendMessage(chat.chat_id, alert.text).catch(() => {});
         db.addInsight(chat.chat_id, "pulse", JSON.stringify({ market: alert.kind }));
       }
@@ -838,6 +1051,7 @@ async function main(): Promise<void> {
   setInterval(() => void analyzerCycle(), DEFAULT_ANALYZER_OPTIONS.cycleMs).unref?.();
   setInterval(() => void pulseCheck(), 10 * 60 * 1000).unref?.();
   setInterval(() => void marketCycle(), 5 * 60 * 1000).unref?.();
+  setInterval(() => void contentCycle(), 5 * 60 * 1000).unref?.();
 
   void bot.start();
 }
