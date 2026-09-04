@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RaidOS — Multi-Chain Trading Terminal</title>
+<meta name="description" content="Trade tokens across Solana, Ethereum, Base, BSC, Arbitrum, Polygon and Robinhood Chain. USDC-native swaps, token launches, social trading, and leaderboards.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root {
+  --bg0:#06080d; --bg1:#0c1017; --bg2:#111620; --bg3:#181e2c;
+  --border:#1e2636; --border2:#2a3348;
+  --text:#e8ecf4; --muted:#7a8599; --dim:#4a5568;
+  --green:#22c55e; --green-bg:rgba(34,197,94,.08);
+  --red:#ef4444; --red-bg:rgba(239,68,68,.08);
+  --accent:#f97316; --accent2:#a855f7; --blue:#3b82f6;
+  --yellow:#eab308;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg0);color:var(--text);font-family:'Inter','SF Pro',system-ui,-apple-system,sans-serif;font-size:13px;overflow-x:hidden}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg1)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+a{color:var(--accent);text-decoration:none}
+button{cursor:pointer;border:none;font-family:inherit}
+input,select{background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:13px;outline:none}
+input:focus,select:focus{border-color:var(--accent)}
+.green{color:var(--green)}.red{color:var(--red)}.accent{color:var(--accent)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+
+/* ── HEADER ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:48px;background:var(--bg1);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.logo{font-weight:800;font-size:18px;letter-spacing:.5px}.logo span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav-tabs{display:flex;gap:2px}
+.nav-tabs button{background:none;color:var(--muted);padding:8px 16px;font-size:13px;font-weight:600;border-radius:6px;transition:.15s}
+.nav-tabs button:hover{color:var(--text);background:var(--bg2)}
+.nav-tabs button.active{color:var(--accent);background:var(--bg2)}
+.header-right{display:flex;align-items:center;gap:12px}
+.chain-select{background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px}
+.wallet-btn{background:linear-gradient(135deg,var(--accent),#f43f5e);color:#fff;padding:8px 18px;border-radius:8px;font-weight:700;font-size:13px;transition:.15s}
+.wallet-btn:hover{opacity:.9;transform:translateY(-1px)}
+
+/* ── LAYOUT ── */
+.main{display:grid;grid-template-columns:1fr 300px;grid-template-rows:auto 1fr;gap:1px;background:var(--border);min-height:calc(100vh - 48px)}
+.panel{background:var(--bg1);padding:0}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+.panel-body{padding:10px 14px}
+
+/* ── TOKEN INFO BAR ── */
+.token-bar{display:flex;align-items:center;gap:20px;padding:12px 16px;background:var(--bg1);border-bottom:1px solid var(--border);grid-column:1/-1}
+.token-name{font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px}
+.token-name .chain-badge{font-size:10px;background:var(--bg3);border:1px solid var(--border);padding:2px 8px;border-radius:999px;font-weight:600}
+.token-price{font-size:22px;font-weight:700}
+.token-stats{display:flex;gap:18px;font-size:12px;color:var(--muted)}
+.token-stats .stat-val{color:var(--text);font-weight:600}
+.chart-tabs{display:flex;gap:4px;margin-left:auto}
+.chart-tabs button{background:var(--bg2);color:var(--muted);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600}
+.chart-tabs button.active{color:var(--accent);background:var(--bg3)}
+
+/* ── CHART ── */
+.chart-area{position:relative;min-height:400px}
+#chart-container{width:100%;height:400px}
+.chart-overlay{position:absolute;top:10px;left:14px;display:flex;gap:12px;font-size:11px;color:var(--muted)}
+.chart-overlay .ohlc{display:flex;gap:8px}.chart-overlay .ohlc span{font-weight:600}
+
+/* ── ORDER BOOK ── */
+.orderbook{font-family:'SF Mono','Fira Code',monospace;font-size:12px}
+.ob-header{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:6px 0;color:var(--dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.ob-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:3px 0;position:relative}
+.ob-row .bg-bar{position:absolute;right:0;top:0;bottom:0;opacity:.08;border-radius:2px}
+.ob-row.ask .bg-bar{background:var(--red)}
+.ob-row.bid .bg-bar{background:var(--green)}
+.ob-spread{display:flex;align-items:center;justify-content:center;padding:8px 0;color:var(--accent);font-weight:700;font-size:14px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+
+/* ── TRADE FORM ── */
+.trade-form{padding:14px}
+.form-tabs{display:flex;gap:2px;margin-bottom:14px;background:var(--bg2);border-radius:8px;padding:3px}
+.form-tabs button{flex:1;padding:8px;border-radius:6px;font-weight:700;font-size:13px;transition:.15s}
+.form-tabs button.buy{background:none;color:var(--muted)}.form-tabs button.buy.active{background:var(--green);color:#fff}
+.form-tabs button.sell{background:none;color:var(--muted)}.form-tabs button.sell.active{background:var(--red);color:#fff}
+.form-group{margin-bottom:12px}
+.form-group label{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:4px}
+.form-group input{width:100%;background:var(--bg0);border:1px solid var(--border)}
+.input-row{display:flex;gap:8px;align-items:center}
+.input-row input{flex:1}
+.pct-btns{display:flex;gap:4px}
+.pct-btns button{background:var(--bg2);color:var(--muted);padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.pct-btns button:hover{color:var(--text)}
+.swap-btn{width:36px;height:36px;border-radius:50%;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:16px;flex-shrink:0}
+.trade-btn{width:100%;padding:14px;border-radius:8px;font-size:15px;font-weight:800;margin-top:8px;transition:.15s}
+.trade-btn.buy-btn{background:var(--green);color:#fff}.trade-btn.sell-btn{background:var(--red);color:#fff}
+.trade-btn:hover{opacity:.9;transform:translateY(-1px)}
+.trade-info{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+
+/* ── BOTTOM PANELS ── */
+.bottom-panels{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border)}
+.tab-bar{display:flex;gap:2px;padding:8px 14px 0;background:var(--bg1);border-bottom:1px solid var(--border)}
+.tab-bar button{background:none;color:var(--muted);padding:8px 14px;font-size:12px;font-weight:600;border-bottom:2px solid transparent;transition:.15s}
+.tab-bar button:hover{color:var(--text)}
+.tab-bar button.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ── TRADES TABLE ── */
+.trades-table{width:100%;font-size:12px}
+.trades-table th{text-align:left;padding:6px 8px;color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.trades-table td{padding:5px 8px;border-bottom:1px solid var(--border)}
+.trades-table tr:hover{background:var(--bg2)}
+
+/* ── LAUNCHPAD ── */
+.launch-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:14px}
+.launch-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;transition:.2s;cursor:pointer}
+.launch-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.launch-card .lc-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.launch-card .lc-icon{width:40px;height:40px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:18px}
+.launch-card .lc-name{font-weight:700;font-size:14px}
+.launch-card .lc-symbol{color:var(--muted);font-size:12px}
+.launch-card .lc-chain{font-size:10px;background:var(--bg3);padding:2px 6px;border-radius:4px;color:var(--muted)}
+.progress-bar{height:6px;background:var(--bg0);border-radius:3px;margin:10px 0;overflow:hidden}
+.progress-bar .fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s}
+.launch-card .lc-stats{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.launch-card .lc-stats .val{color:var(--text);font-weight:600}
+
+/* ── LEADERBOARD ── */
+.lb-table{width:100%;font-size:12px}
+.lb-table th{text-align:left;padding:8px 12px;color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.lb-table td{padding:8px 12px;border-bottom:1px solid var(--border)}
+.lb-table tr:hover{background:var(--bg2)}
+.lb-rank{font-weight:800;width:30px}
+.lb-rank.gold{color:var(--yellow)}.lb-rank.silver{color:#94a3b8}.lb-rank.bronze{color:#d97706}
+.lb-user{display:flex;align-items:center;gap:8px}
+.lb-avatar{width:28px;height:28px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:12px}
+
+/* ── DEPTH CHART ── */
+.depth-canvas{width:100%;height:160px}
+
+/* ── RESPONSIVE ── */
+@media(max-width:900px){.main{grid-template-columns:1fr}.bottom-panels{grid-template-columns:1fr}.token-bar{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;gap:20px">
+    <a href="index.html" class="logo">Raid<span>OS</span></a>
+    <div class="nav-tabs">
+      <button class="active" onclick="showView('trade')">Trade</button>
+      <button onclick="showView('launchpad')">Launch</button>
+      <button onclick="showView('leaderboard')">Rank</button>
+      <button onclick="showView('portfolio')">Portfolio</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <select class="chain-select" id="chainSelect" onchange="switchChain(this.value)">
+      <option value="solana">◎ Solana</option>
+      <option value="ethereum">⬡ Ethereum</option>
+      <option value="base">🔵 Base</option>
+      <option value="bsc">🟡 BSC</option>
+      <option value="arbitrum">🔷 Arbitrum</option>
+      <option value="polygon">🟣 Polygon</option>
+      <option value="robinhood">🔴 Robinhood</option>
+    </select>
+    <button class="wallet-btn" onclick="connectWallet()">Connect Wallet</button>
+  </div>
+</header>
+
+<!-- ═══ TRADE VIEW ═══ -->
+<div class="main" id="view-trade">
+  <div class="token-bar">
+    <div class="token-name">MOONCAT <span class="chain-badge">SOLANA</span></div>
+    <div class="token-price green">$0.000042</div>
+    <div class="token-stats">
+      <div>24h Vol <span class="stat-val">$182.4K</span></div>
+      <div>Liquidity <span class="stat-val">$74.2K</span></div>
+      <div>Change <span class="stat-val green">+37.2%</span></div>
+      <div>Holders <span class="stat-val">4,892</span></div>
+    </div>
+    <div class="chart-tabs">
+      <button class="active" onclick="setChartType('candle',this)">Candle</button>
+      <button onclick="setChartType('line',this)">Line</button>
+      <button onclick="setChartType('depth',this)">Depth</button>
+    </div>
+  </div>
+
+  <div class="panel chart-area">
+    <div id="chart-container"></div>
+    <div class="chart-overlay">
+      <div class="ohlc">O <span class="accent">0.000041</span></div>
+      <div class="ohlc">H <span class="green">0.000045</span></div>
+      <div class="ohlc">L <span class="red">0.000038</span></div>
+      <div class="ohlc">C <span class="green">0.000042</span></div>
+      <div class="ohlc">Vol <span>182.4K</span></div>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column:2">
+    <div class="panel-header">Order Book</div>
+    <div class="orderbook" style="padding:8px 14px">
+      <div class="ob-header"><span>Bid</span><span>Size</span><span>Depth</span></div>
+      <div id="asks"></div>
+      <div class="ob-spread">Spread: 0.12%</div>
+      <div id="bids"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-row:3">
+    <div class="panel-header">
+      <div style="display:flex;gap:4px" id="bottom-tabs">
+        <button class="active" onclick="showBottom('trades',this)">Recent Trades</button>
+        <button onclick="showBottom('depth',this)">Depth Chart</button>
+        <button onclick="showBottom('activity',this)">Activity</button>
+      </div>
+    </div>
+    <div id="bottom-content">
+      <div id="bottom-trades">
+        <table class="trades-table">
+          <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>Amount</th><th>Total</th></tr></thead>
+          <tbody id="recentTrades"></tbody>
+        </table>
+      </div>
+      <div id="bottom-depth" style="display:none"><canvas class="depth-canvas" id="depthCanvas"></canvas></div>
+      <div id="bottom-activity" style="display:none"><div class="panel-body muted">Activity feed will show raids, launches, and social signals in real-time.</div></div>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column:2;grid-row:2/4">
+    <div class="trade-form">
+      <div class="form-tabs">
+        <button class="buy active" onclick="setSide('buy',this)">Buy</button>
+        <button class="sell" onclick="setSide('sell',this)">Sell</button>
+      </div>
+      <div class="form-group">
+        <label>USDC Balance <span class="green">1,247.83</span></label>
+        <div class="input-row">
+          <input type="number" placeholder="0.00" id="tradeAmount" oninput="calcOutput()">
+          <button class="swap-btn" onclick="swapTokens()">⇅</button>
+          <input type="text" value="USDC" readonly style="width:80px;text-align:center;font-weight:700;background:var(--bg0)">
+        </div>
+      </div>
+      <div class="pct-btns">
+        <button onclick="setPct(25)">25%</button>
+        <button onclick="setPct(50)">50%</button>
+        <button onclick="setPct(75)">75%</button>
+        <button onclick="setPct(100)">MAX</button>
+      </div>
+      <div class="form-group">
+        <label>You receive</label>
+        <input type="text" placeholder="0.00" id="tradeOutput" readonly style="background:var(--bg0)">
+      </div>
+      <div class="form-group">
+        <label>Slippage <span>0.5%</span></label>
+      </div>
+      <button class="trade-btn buy-btn" id="tradeBtn" onclick="executeTrade()">Buy MOONCAT</button>
+      <div class="trade-info">
+        <span>Fee: 0.3%</span>
+        <span>Route: Jupiter</span>
+        <span>Est. gas: 0.005 SOL</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LAUNCHPAD VIEW ═══ -->
+<div id="view-launchpad" style="display:none">
+  <div style="padding:20px 24px;max-width:1200px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div>
+        <h2 style="font-size:24px;font-weight:800">🚀 Token Launchpad</h2>
+        <p class="muted" style="margin-top:4px">Launch tokens on any chain with bonding curves. Graduates to DEX at $85K market cap.</p>
+      </div>
+      <button class="wallet-btn" onclick="showCreateLaunch()">+ Create Token</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <select class="chain-select"><option>All Chains</option><option>Solana</option><option>Base</option><option>Robinhood</option></select>
+      <select class="chain-select"><option>Latest</option><option>Most Raised</option><option>Most Buyers</option></select>
+    </div>
+    <div class="launch-cards" id="launchCards"></div>
+  </div>
+</div>
+
+<!-- ═══ LEADERBOARD VIEW ═══ -->
+<div id="view-leaderboard" style="display:none">
+  <div style="padding:20px 24px;max-width:1000px;margin:0 auto">
+    <h2 style="font-size:24px;font-weight:800;margin-bottom:20px">🏆 Leaderboard</h2>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <select class="chain-select"><option>All Chains</option><option>Solana</option><option>Ethereum</option><option>Base</option></select>
+      <select class="chain-select"><option>By PnL</option><option>By Win Rate</option><option>By Volume</option><option>By Followers</option></select>
+    </div>
+    <table class="lb-table">
+      <thead><tr><th>#</th><th>Trader</th><th>PnL</th><th>Win Rate</th><th>Trades</th><th>Followers</th><th></th></tr></thead>
+      <tbody id="leaderboardBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══ PORTFOLIO VIEW ═══ -->
+<div id="view-portfolio" style="display:none">
+  <div style="padding:20px 24px;max-width:1000px;margin:0 auto">
+    <h2 style="font-size:24px;font-weight:800;margin-bottom:20px">💼 Portfolio</h2>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px" id="portfolioStats"></div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+      <table class="trades-table">
+        <thead><tr><th>Token</th><th>Chain</th><th>Balance</th><th>Value (USDC)</th><th>PnL</th><th>Actions</th></tr></thead>
+        <tbody id="portfolioBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CHAIN DATA ──
+const CHAINS={solana:{name:'Solana',icon:'◎',color:'#9945FF'},ethereum:{name:'Ethereum',icon:'⬡',color:'#627EEA'},base:{name:'Base',icon:'🔵',color:'#0052FF'},bsc:{name:'BSC',icon:'🟡',color:'#F3BA2F'},arbitrum:{name:'Arbitrum',icon:'🔷',color:'#28A0F0'},polygon:{name:'Polygon',icon:'🟣',color:'#8247E5'},robinhood:{name:'Robinhood',icon:'🔴',color:'#00C805'}};
+let currentChain='solana',currentSide='buy',chartType='candle';
+
+// ── VIEWS ──
+function showView(v){
+  ['trade','launchpad','leaderboard','portfolio'].forEach(x=>{
+    document.getElementById('view-'+x).style.display=x===v?'grid':'none';
+    if(x==='trade') document.getElementById('view-'+x).style.display=x===v?'grid':'none';
+  });
+  document.querySelectorAll('.nav-tabs button').forEach((b,i)=>{
+    b.classList.toggle('active',['trade','launchpad','leaderboard','portfolio'][i]===v);
+  });
+}
+
+function switchChain(c){currentChain=c;updateTokenInfo()}
+function setSide(s,el){
+  currentSide=s;
+  document.querySelectorAll('.form-tabs button').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  const btn=document.getElementById('tradeBtn');
+  btn.className='trade-btn '+(s==='buy'?'buy-btn':'sell-btn');
+  btn.textContent=(s==='buy'?'Buy':'Sell')+' MOONCAT';
+}
+function setPct(p){
+  const bal=1247.83;document.getElementById('tradeAmount').value=(bal*p/100).toFixed(2);calcOutput();
+}
+function calcOutput(){
+  const amt=parseFloat(document.getElementById('tradeAmount').value)||0;
+  const price=0.000042;
+  document.getElementById('tradeOutput').value= amt>0?(amt/price).toLocaleString(undefined,{maximumFractionDigits:0}):'';
+}
+function swapTokens(){}
+function executeTrade(){alert(currentSide==='buy'?`Buying MOONCAT with ${document.getElementById('tradeAmount').value} USDC`:`Selling MOONCAT for USDC`)}
+function setChartType(t,el){
+  chartType=t;
+  document.querySelectorAll('.chart-tabs button').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  if(t==='depth')renderDepthChart();else initChart();
+}
+function showBottom(id,el){
+  document.querySelectorAll('#bottom-tabs button').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  ['trades','depth','activity'].forEach(x=>{
+    document.getElementById('bottom-'+x).style.display=x===id?'block':'none';
+  });
+}
+function connectWallet(){alert('Connect wallet flow: Phantom (Solana) / WalletConnect (EVM)')}
+
+// ── TRADINGVIEW CHART ──
+let chart,mainSeries;
+function initChart(){
+  const container=document.getElementById('chart-container');
+  container.innerHTML='';
+  chart=LightweightCharts.createChart(container,{width:container.clientWidth,height:400,layout:{background:{color:'#0c1017'},textColor:'#7a8599'},grid:{vertLines:{color:'#1e2636'},horzLines:{color:'#1e2636'}},crosshair:{mode:0},timeScale:{timeVisible:true,secondsVisible:false},rightPriceScale:{borderColor:'#1e2636'}});
+  if(chartType==='line'){
+    mainSeries=chart.addLineSeries({color:'#f97316',lineWidth:2});
+  } else {
+    mainSeries=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});
+  }
+  mainSeries.setData(generateData());
+  chart.timeScale().fitContent();
+}
+function generateData(){
+  const d=[];let t=Math.floor(Date.now()/1000)-86400*7;let p=0.000038;
+  for(let i=0;i<500;i++){t+=120;const c=p+(Math.random()-.48)*p*.03;const o=p;const h=Math.max(o,c)+Math.random()*p*.01;const l=Math.min(o,c)-Math.random()*p*.01;if(chartType==='line')d.push({time:t,value:c});else d.push({time:t,open:o,high:h,low:l,close:c});p=c}
+  return d;
+}
+
+// ── ORDER BOOK ──
+function renderOrderBook(){
+  const asksEl=document.getElementById('asks');const bidsEl=document.getElementById('bids');
+  let asksHtml='';let bidsHtml='';
+  const basePrice=0.000042;
+  for(let i=7;i>=0;i--){
+    const price=basePrice*(1+i*.001);const size=(Math.random()*5000+500).toFixed(0);const depth=(Math.random()*100).toFixed(1);
+    asksHtml+=`<div class="ob-row ask"><span class="red">${price.toFixed(7)}</span><span>${Number(size).toLocaleString()}</span><span class="dim">${depth}%</span><div class="bg-bar" style="width:${depth}%"></div></div>`;
+  }
+  for(let i=0;i<8;i++){
+    const price=basePrice*(1-i*.001);const size=(Math.random()*5000+500).toFixed(0);const depth=(Math.random()*100).toFixed(1);
+    bidsHtml+=`<div class="ob-row bid"><span class="green">${price.toFixed(7)}</span><span>${Number(size).toLocaleString()}</span><span class="dim">${depth}%</span><div class="bg-bar" style="width:${depth}%"></div></div>`;
+  }
+  asksEl.innerHTML=asksHtml;bidsEl.innerHTML=bidsHtml;
+}
+
+// ── RECENT TRADES ──
+function renderRecentTrades(){
+  const el=document.getElementById('recentTrades');let html='';
+  for(let i=0;i<15;i++){
+    const side=Math.random()>.5;const price=(0.000042+(Math.random()-.5)*.000002).toFixed(7);
+    const amount=(Math.random()*10000).toFixed(0);const time=new Date(Date.now()-i*Math.random()*60000).toLocaleTimeString();
+    html+=`<tr><td class="dim">${time}</td><td class="${side?'green':'red'}">${side?'Buy':'Sell'}</td><td>${price}</td><td>${Number(amount).toLocaleString()}</td><td>$${(parseFloat(price)*parseFloat(amount)).toFixed(2)}</td></tr>`;
+  }
+  el.innerHTML=html;
+}
+
+// ── DEPTH CHART ──
+function renderDepthChart(){
+  const canvas=document.getElementById('depthCanvas');
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  canvas.width=canvas.parentElement.clientWidth;canvas.height=160;
+  ctx.fillStyle='#0c1017';ctx.fillRect(0,0,canvas.width,canvas.height);
+  const mid=canvas.width/2;
+  // Bids (green)
+  ctx.beginPath();ctx.moveTo(mid,canvas.height);
+  for(let x=mid;x>0;x-=2){const y=canvas.height-Math.pow((mid-x)/mid,1.5)*canvas.height*.85;ctx.lineTo(x,y)}
+  ctx.lineTo(0,canvas.height);ctx.fillStyle='rgba(34,197,94,.15)';ctx.fill();
+  ctx.beginPath();ctx.moveTo(mid,canvas.height);
+  for(let x=mid;x>0;x-=2){const y=canvas.height-Math.pow((mid-x)/mid,1.5)*canvas.height*.85;ctx.lineTo(x,y)}
+  ctx.strokeStyle='#22c55e';ctx.lineWidth=1.5;ctx.stroke();
+  // Asks (red)
+  ctx.beginPath();ctx.moveTo(mid,canvas.height);
+  for(let x=mid;x<canvas.width;x+=2){const y=canvas.height-Math.pow((x-mid)/mid,1.5)*canvas.height*.85;ctx.lineTo(x,y)}
+  ctx.lineTo(canvas.width,canvas.height);ctx.fillStyle='rgba(239,68,68,.15)';ctx.fill();
+  ctx.beginPath();ctx.moveTo(mid,canvas.height);
+  for(let x=mid;x<canvas.width;x+=2){const y=canvas.height-Math.pow((x-mid)/mid,1.5)*canvas.height*.85;ctx.lineTo(x,y)}
+  ctx.strokeStyle='#ef4444';ctx.lineWidth=1.5;ctx.stroke();
+}
+
+// ── LAUNCHPAD ──
+function renderLaunches(){
+  const tokens=[
+    {name:'MOONCAT',symbol:'MOONCAT',chain:'solana',icon:'🐱',price:'$0.000042',mcap:'$12.4K',raised:'$34.2K',threshold:'$85K',buyers:47,progress:40},
+    {name:'SAUR',symbol:'SAUR',chain:'solana',icon:'🦖',price:'$0.00182',mcap:'$182K',raised:'$67.8K',threshold:'$85K',buyers:128,progress:80},
+    {name:'PEPE2',symbol:'PEPE2',chain:'base',icon:'🐸',price:'$0.000001',mcap:'$4.2K',raised:'$8.1K',threshold:'$85K',buyers:23,progress:10},
+    {name:'WIF2',symbol:'WIF2',chain:'solana',icon:'🎩',price:'$0.0042',mcap:'$42K',raised:'$52.3K',threshold:'$85K',buyers:89,progress:62},
+    {name:'DOGE3',symbol:'DOGE3',chain:'robinhood',icon:'🐕',price:'$0.0008',mcap:'$8.4K',raised:'$12.7K',threshold:'$85K',buyers:34,progress:15},
+    {name:'SHIB2',symbol:'SHIB2',chain:'base',icon:'🐕',price:'$0.00001',mcap:'$2.1K',raised:'$5.4K',threshold:'$85K',buyers:18,progress:6},
+  ];
+  const el=document.getElementById('launchCards');
+  el.innerHTML=tokens.map(t=>`
+    <div class="launch-card">
+      <div class="lc-header">
+        <div class="lc-icon">${t.icon}</div>
+        <div><div class="lc-name">${t.name}</div><div class="lc-symbol">${t.symbol} · <span class="lc-chain">${CHAINS[t.chain]?.icon||''} ${CHAINS[t.chain]?.name||t.chain}</span></div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">Progress to DEX</span><span class="accent">${t.progress}%</span></div>
+      <div class="progress-bar"><div class="fill" style="width:${t.progress}%"></div></div>
+      <div class="lc-stats">
+        <div>Price <span class="val">${t.price}</span></div>
+        <div>MCap <span class="val">${t.mcap}</span></div>
+        <div>Buyers <span class="val">${t.buyers}</span></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── LEADERBOARD ──
+function renderLeaderboard(){
+  const traders=[
+    {name:'@alpha_whale',pnl:'+$12,847',pnlClass:'green',winRate:'78%',trades:342,followers:'2.4K'},
+    {name:'@sol_hunter',pnl:'+$8,923',pnlClass:'green',winRate:'72%',trades:189,followers:'1.8K'},
+    {name:'@degen_caller',pnl:'+$6,441',pnlClass:'green',winRate:'68%',trades:256,followers:'3.1K'},
+    {name:'@base_sniper',pnl:'+$4,218',pnlClass:'green',winRate:'65%',trades:145,followers:'891'},
+    {name:'@chain_hopper',pnl:'+$2,901',pnlClass:'green',winRate:'62%',trades:98,followers:'567'},
+    {name:'@meme_lord',pnl:'-$1,234',pnlClass:'red',winRate:'48%',trades:412,followers:'4.2K'},
+    {name:'@newbie_trader',pnl:'-$2,100',pnlClass:'red',winRate:'35%',trades:67,followers:'23'},
+  ];
+  const rankClass=['gold','silver','bronze'];
+  document.getElementById('leaderboardBody').innerHTML=traders.map((t,i)=>`
+    <tr>
+      <td class="lb-rank ${rankClass[i]||''}">${i+1}</td>
+      <td><div class="lb-user"><div class="lb-avatar">${t.name[1].toUpperCase()}</div>${t.name}</div></td>
+      <td class="${t.pnlClass}" style="font-weight:700">${t.pnl}</td>
+      <td style="font-weight:600">${t.winRate}</td>
+      <td>${t.trades}</td>
+      <td>${t.followers}</td>
+      <td><button style="background:var(--accent);color:#fff;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700" onclick="alert('Follow ${t.name}')">Follow</button></td>
+    </tr>
+  `).join('');
+}
+
+// ── PORTFOLIO ──
+function renderPortfolio(){
+  document.getElementById('portfolioStats').innerHTML=[
+    {label:'Total Value',val:'$24,891',color:'var(--text)'},
+    {label:'Total PnL',val:'+$3,421',color:'var(--green)'},
+    {label:'24h PnL',val:'+$189',color:'var(--green)'},
+    {label:'Win Rate',val:'68%',color:'var(--accent)'},
+  ].map(s=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px"><div class="muted" style="font-size:11px;margin-bottom:4px">${s.label}</div><div style="font-size:22px;font-weight:800;color:${s.color}">${s.val}</div></div>`).join('');
+  const holdings=[
+    {token:'MOONCAT',chain:'solana',balance:'2,952,381',value:'$124',pnl:'+$34',pnlPct:'+37%'},
+    {token:'SAUR',chain:'solana',balance:'45,200',value:'$8,226',pnl:'+$1,240',pnlPct:'+18%'},
+    {token:'ETH',chain:'ethereum',balance:'2.4',value:'$8,160',pnl:'+$1,890',pnlPct:'+30%'},
+    {token:'USDC',chain:'base',balance:'8,347',value:'$8,347',pnl:'$0',pnlPct:'0%'},
+  ];
+  document.getElementById('portfolioBody').innerHTML=holdings.map(h=>`
+    <tr>
+      <td style="font-weight:700">${h.token}</td>
+      <td><span class="lc-chain">${CHAINS[h.chain]?.icon||''} ${CHAINS[h.chain]?.name||h.chain}</span></td>
+      <td>${h.balance}</td>
+      <td style="font-weight:600">${h.value}</td>
+      <td class="${h.pnl.startsWith('-')?'red':'green'}" style="font-weight:600">${h.pnl} (${h.pnlPct})</td>
+      <td><button style="background:var(--bg3);color:var(--text);padding:4px 10px;border-radius:4px;font-size:11px;border:1px solid var(--border)">Swap</button></td>
+    </tr>
+  `).join('');
+}
+
+// ── INIT ──
+document.addEventListener('DOMContentLoaded',()=>{
+  initChart();renderOrderBook();renderRecentTrades();renderLaunches();renderLeaderboard();renderPortfolio();
+  setInterval(()=>{renderOrderBook();renderRecentTrades()},5000);
+});
+</script>
+</body>
+</html>
