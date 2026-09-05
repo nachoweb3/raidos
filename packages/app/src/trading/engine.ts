@@ -167,6 +167,7 @@ export class TradingEngine {
       route: data.routePlan.map((r) => r.swapInfo.label).join(" | "),
       aggregator: "jupiter",
       expiresAt: Date.now() + 30_000,
+      raw: data, // full quoteResponse payload needed by the swap executor
     };
   }
 
