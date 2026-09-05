@@ -58,6 +58,8 @@ export interface TradeQuote {
   aggregator: string;
   /** Quote expiry (ms) */
   expiresAt: number;
+  /** Raw provider payload (needed by executors, e.g. Jupiter quoteResponse) */
+  raw?: unknown;
 }
 
 /** Execution result */

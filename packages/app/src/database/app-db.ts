@@ -1,7 +1,7 @@
 /**
  * 🗄 APP DATABASE — schema for the trading app
- * Tables: wallets, trades, launches, profiles, follows, calls, subscriptions,
- * ad_campaigns, revenue_events, copy_settings
+ * Tables: users, wallets, trades, launches, profiles, follows, calls,
+ * subscriptions, ad_campaigns, revenue_events, copy_settings
  */
 
 import Database from "better-sqlite3";
@@ -17,6 +17,13 @@ export class AppDb {
 
   private migrate(): void {
     this.db.exec(`
+      -- Users (API-key auth; keys stored hashed, never plaintext)
+      CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        api_key_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      );
+
       -- Wallets (encrypted private keys per user per chain)
       CREATE TABLE IF NOT EXISTS wallets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,7 +190,72 @@ export class AppDb {
         enabled INTEGER NOT NULL DEFAULT 0,
         chains TEXT NOT NULL DEFAULT '["solana","ethereum","base"]'
       );
+
+      -- Positions (swap build-ups per token per user; powers feed + PnL)
+      -- NOTE: no UNIQUE(user,chain,token,status) — a user may reopen a position
+      -- on the same token after closing one; each cycle gets its own row.
+      CREATE TABLE IF NOT EXISTS positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_symbol TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open',
+        amount_remaining TEXT NOT NULL DEFAULT '0',
+        total_bought TEXT NOT NULL DEFAULT '0',
+        total_sold TEXT NOT NULL DEFAULT '0',
+        avg_entry_usdc TEXT NOT NULL DEFAULT '0',
+        net_invested_usdc TEXT NOT NULL DEFAULT '0',
+        realized_pnl_usdc TEXT,
+        opened_at INTEGER NOT NULL,
+        closed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_positions_user ON positions(user_id, status, opened_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_positions_token ON positions(chain, token, status);
+
+      -- Feed events (social activity stream: swaps, positions, theses, follows)
+      CREATE TABLE IF NOT EXISTS feed_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        actor_id INTEGER NOT NULL,
+        chain TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        token_symbol TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '{}',
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_feed_ts ON feed_events(ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_feed_actor ON feed_events(actor_id, ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_feed_token ON feed_events(chain, token, ts DESC);
+
+      -- Leaderboard snapshots per period
+      CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
+        period TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        pnl_usdc TEXT NOT NULL,
+        trades INTEGER NOT NULL DEFAULT 0,
+        win_rate REAL NOT NULL DEFAULT 0,
+        ts INTEGER NOT NULL,
+        PRIMARY KEY (period, user_id)
+      );
     `);
+  }
+
+  // ── User / auth methods ─────────────────────────────────────────────
+
+  createUser(userId: number, apiKeyHash: string) {
+    this.db.prepare(
+      "INSERT INTO users (user_id, api_key_hash, created_at) VALUES (?, ?, ?)"
+    ).run(userId, apiKeyHash, Math.floor(Date.now() / 1000));
+  }
+
+  getUserByApiKeyHash(apiKeyHash: string) {
+    return this.db.prepare("SELECT * FROM users WHERE api_key_hash = ?").get(apiKeyHash) as any;
+  }
+
+  countUsers(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
+    return row.n;
   }
 
   // ── Wallet methods ────────────────────────────────────────────────────
@@ -220,7 +292,8 @@ export class AppDb {
     const placeholders = cols.map(() => "?").join(", ");
     const values = cols.map((c) => {
       const v = (input as any)[c];
-      return typeof v === "object" ? JSON.stringify(v) : v;
+      // null must stay SQL NULL — typeof null === "object" would store "null" strings
+      return v === null ? null : typeof v === "object" ? JSON.stringify(v) : v;
     });
     const info = this.db.prepare(
       `INSERT INTO launches (${cols.join(", ")}) VALUES (${placeholders})`
@@ -245,7 +318,7 @@ export class AppDb {
 
   updateLaunch(id: number, updates: Record<string, any>) {
     const sets = Object.keys(updates).map((k) => `${k} = ?`).join(", ");
-    const values = Object.values(updates).map((v) => typeof v === "object" ? JSON.stringify(v) : v);
+    const values = Object.values(updates).map((v) => v === null ? null : typeof v === "object" ? JSON.stringify(v) : v);
     this.db.prepare(`UPDATE launches SET ${sets} WHERE id = ?`).run(...values, id);
   }
 
@@ -402,7 +475,7 @@ export class AppDb {
   addTrade(trade: any) {
     const cols = Object.keys(trade);
     const placeholders = cols.map(() => "?").join(", ");
-    const values = Object.values(trade).map((v) => typeof v === "object" ? JSON.stringify(v) : v);
+    const values = Object.values(trade).map((v) => v === null ? null : typeof v === "object" ? JSON.stringify(v) : v);
     const info = this.db.prepare(`INSERT INTO trades (${cols.join(", ")}) VALUES (${placeholders})`).run(...values);
     return Number(info.lastInsertRowid);
   }
@@ -426,7 +499,8 @@ export class AppDb {
     let worstTrade = 0n;
 
     for (const t of trades) {
-      const pnl = BigInt(t.realized_pnl_usdc ?? "0");
+      const pnlRaw = t.realized_pnl_usdc;
+      const pnl = BigInt(pnlRaw != null && pnlRaw !== "null" ? pnlRaw : "0");
       totalPnl += pnl;
       if (pnl > 0n) wins++;
       if (pnl < 0n) losses++;
@@ -449,7 +523,34 @@ export class AppDb {
       totalFeesUsdc: totalFees.toString(),
       volumeUsdc: totalVolume.toString(),
       avgTradeSizeUsdc: trades.length > 0 ? (totalVolume / BigInt(trades.length)).toString() : "0",
+      pnlByToken: this.computePnlByToken(trades),
     };
+  }
+
+  /** Per-token realized PnL + holdings derived from confirmed trades.
+   *  Convention: buy amounts are in buyToken units, sell amounts in sellToken units;
+   *  USDC legs are excluded (they are the quote asset, not a holding). */
+  private computePnlByToken(trades: any[]): Record<string, { balance: string; realizedPnlUsdc: string }> {
+    const byToken: Record<string, { bal: bigint; pnl: bigint }> = {};
+    for (const t of trades) {
+      const sell = t.sell_token;
+      const buy = t.buy_token;
+      if (sell && sell.toUpperCase() !== "USDC") {
+        const entry = (byToken[sell] ??= { bal: 0n, pnl: 0n });
+        entry.bal -= BigInt(t.sell_amount);
+        entry.pnl += BigInt(t.realized_pnl_usdc ?? "0");
+      }
+      if (buy && buy.toUpperCase() !== "USDC") {
+        const entry = (byToken[buy] ??= { bal: 0n, pnl: 0n });
+        entry.bal += BigInt(t.buy_amount);
+        entry.pnl += BigInt(t.realized_pnl_usdc ?? "0");
+      }
+    }
+    const out: Record<string, { balance: string; realizedPnlUsdc: string }> = {};
+    for (const [token, v] of Object.entries(byToken)) {
+      out[token] = { balance: v.bal.toString(), realizedPnlUsdc: v.pnl.toString() };
+    }
+    return out;
   }
 
   getChainPnl(userId: number, chain: string) {
@@ -457,7 +558,8 @@ export class AppDb {
     let totalPnl = 0n;
     let wins = 0;
     for (const t of trades) {
-      const pnl = BigInt(t.realized_pnl_usdc ?? "0");
+      const pnlRaw = t.realized_pnl_usdc;
+      const pnl = BigInt(pnlRaw != null && pnlRaw !== "null" ? pnlRaw : "0");
       totalPnl += pnl;
       if (pnl > 0n) wins++;
     }
@@ -494,6 +596,107 @@ export class AppDb {
        FROM trades WHERE from_chain = ? AND ts >= ? AND status = 'confirmed'
        GROUP BY user_id ORDER BY pnl_usdc DESC LIMIT ?`
     ).all(chain, since, limit) as any[];
+  }
+
+  // ── Positions ─────────────────────────────────────────────────────────
+
+  getOpenPosition(userId: number, chain: string, token: string) {
+    return this.db.prepare(
+      "SELECT * FROM positions WHERE user_id = ? AND chain = ? AND token = ? AND status = 'open'"
+    ).get(userId, chain, token) as any;
+  }
+
+  upsertPosition(p: any) {
+    if (p.id) {
+      const sets = ["status", "amount_remaining", "total_bought", "total_sold", "avg_entry_usdc", "net_invested_usdc", "realized_pnl_usdc", "closed_at"]
+        .map((k) => `${k} = ?`).join(", ");
+      this.db.prepare(`UPDATE positions SET ${sets} WHERE id = ?`).run(
+        p.status, p.amount_remaining, p.total_bought, p.total_sold,
+        p.avg_entry_usdc, p.net_invested_usdc, p.realized_pnl_usdc, p.closed_at, p.id,
+      );
+      return p.id;
+    }
+    const info = this.db.prepare(
+      `INSERT INTO positions (user_id, chain, token, token_symbol, status, amount_remaining,
+        total_bought, total_sold, avg_entry_usdc, net_invested_usdc, realized_pnl_usdc, opened_at, closed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(p.user_id, p.chain, p.token, p.token_symbol, p.status, p.amount_remaining,
+      p.total_bought, p.total_sold, p.avg_entry_usdc, p.net_invested_usdc,
+      p.realized_pnl_usdc, p.opened_at, p.closed_at);
+    return Number(info.lastInsertRowid);
+  }
+
+  getUserPositions(userId: number, status: string | null, limit = 50) {
+    if (status) {
+      return this.db.prepare(
+        "SELECT * FROM positions WHERE user_id = ? AND status = ? ORDER BY opened_at DESC LIMIT ?"
+      ).all(userId, status, limit) as any[];
+    }
+    return this.db.prepare(
+      "SELECT * FROM positions WHERE user_id = ? ORDER BY opened_at DESC LIMIT ?"
+    ).all(userId, limit) as any[];
+  }
+
+  // ── Feed ─────────────────────────────────────────────────────────────
+
+  addFeedEvent(e: { type: string; actor_id: number; chain?: string; token?: string; token_symbol?: string; payload?: any; ts: number }) {
+    const info = this.db.prepare(
+      "INSERT INTO feed_events (type, actor_id, chain, token, token_symbol, payload, ts) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(e.type, e.actor_id, e.chain ?? "", e.token ?? "", e.token_symbol ?? "",
+      typeof e.payload === "string" ? e.payload : JSON.stringify(e.payload ?? {}), e.ts);
+    return Number(info.lastInsertRowid);
+  }
+
+  getFeed(opts: { sinceId?: number; limit?: number; chain?: string; token?: string; actorId?: number } = {}) {
+    const limit = Math.min(opts.limit ?? 30, 100);
+    const clauses: string[] = [];
+    const args: any[] = [];
+    if (opts.sinceId !== undefined) { clauses.push("id > ?"); args.push(opts.sinceId); }
+    if (opts.chain) { clauses.push("chain = ?"); args.push(opts.chain); }
+    if (opts.token) { clauses.push("token = ?"); args.push(opts.token); }
+    if (opts.actorId !== undefined) { clauses.push("actor_id = ?"); args.push(opts.actorId); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.db.prepare(
+      `SELECT * FROM feed_events ${where} ORDER BY id DESC LIMIT ?`
+    ).all(...args, limit) as any[];
+  }
+
+  getFeedMaxId(): number {
+    const row = this.db.prepare("SELECT COALESCE(MAX(id), 0) AS m FROM feed_events").get() as { m: number };
+    return row.m;
+  }
+
+  // ── Leaderboard snapshots ────────────────────────────────────────────
+
+  saveLeaderboardSnapshot(period: string, rows: { user_id: number; pnl_usdc: string; trades: number; win_rate: number }[]) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = this.db.prepare(
+      "INSERT OR REPLACE INTO leaderboard_snapshots (period, user_id, pnl_usdc, trades, win_rate, ts) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    const tx = this.db.transaction((rows2: any[]) => {
+      for (const r of rows2) stmt.run(period, r.user_id, r.pnl_usdc, r.trades, r.win_rate, now);
+    });
+    tx(rows);
+  }
+
+  getLeaderboardByPeriod(period: string, limit = 20) {
+    return this.db.prepare(
+      `SELECT l.user_id, l.pnl_usdc, l.trades, l.win_rate, p.display_name, p.x_handle, p.avatar_url, p.followers_count
+       FROM leaderboard_snapshots l LEFT JOIN profiles p ON p.user_id = l.user_id
+       WHERE l.period = ? ORDER BY CAST(l.pnl_usdc AS INTEGER) DESC LIMIT ?`
+    ).all(period, limit) as any[];
+  }
+
+  /** Recompute per-period PnL from confirmed trades (used to refresh snapshots). */
+  getPnlSince(since: number, limit = 25) {
+    return this.db.prepare(
+      `SELECT user_id,
+              SUM(CAST(COALESCE(NULLIF(realized_pnl_usdc,'null'), '0') AS INTEGER)) AS pnl_usdc,
+              COUNT(*) AS trades,
+              AVG(CASE WHEN CAST(COALESCE(NULLIF(realized_pnl_usdc,'null'),'0') AS INTEGER) > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+       FROM trades WHERE status = 'confirmed' AND ts >= ?
+       GROUP BY user_id ORDER BY pnl_usdc DESC LIMIT ?`
+    ).all(since, limit) as any[];
   }
 
   // ── Copy settings ─────────────────────────────────────────────────────

@@ -149,20 +149,28 @@ export class TokenLaunchpad {
     const config = getChain(launch.chain);
     if (!config) return { success: false, error: "Chain not found" };
 
-    // Bonding curve math: constant product
+    // Bonding curve: constant-product with price-implied virtual reserves.
+    // reserveTokens = total_supply; reserveUsdcUnits = price_p * supply
+    // (price_p = current_price_usdc, i.e. 1e6-USDC units per whole token).
+    // This keeps buys/sells on ONE consistent curve, works on the very first
+    // buy (raised = 0), and `raised` stays the real USDC accounting ledger.
     const raised = BigInt(launch.raised_usdc);
     const supply = BigInt(launch.total_supply);
     const amount = BigInt(usdcAmount);
 
-    // Price increases as more USDC is raised (bonding curve)
-    const k = raised * supply;
-    const newRaised = raised + amount;
-    const newSupply = k / newRaised;
-    const tokensBought = supply - newSupply;
+    const priceP = BigInt(launch.current_price_usdc) > 0n ? BigInt(launch.current_price_usdc) : 1n;
+    const reserveUsdc = priceP * supply;
+    const reserveTokens = supply;
+    const k = reserveUsdc * reserveTokens;
+
+    const newReserveUsdc = reserveUsdc + amount;
+    const newReserveTokens = k / newReserveUsdc;
+    const tokensBought = reserveTokens - newReserveTokens;
 
     if (tokensBought <= 0n) return { success: false, error: "Amount too small" };
 
-    const newPrice = newRaised / newSupply;
+    const newRaised = raised + amount;
+    const newPrice = newReserveUsdc / newReserveTokens;
     const newMcap = (newPrice * supply) / 1000000n; // USDC with 6 decimals
 
     // Update launch state
@@ -196,18 +204,28 @@ export class TokenLaunchpad {
     if (!launch) return { success: false, error: "Launch not found" };
     if (launch.status !== "funding") return { success: false, error: "Cannot sell at this stage" };
 
+    // Same price-implied constant-product curve as buyTokens (see comment there).
     const raised = BigInt(launch.raised_usdc);
     const supply = BigInt(launch.total_supply);
     const amount = BigInt(tokenAmount);
 
-    const k = raised * supply;
-    const newSupply = supply + amount;
-    const newRaised = k / newSupply;
-    const usdcOut = raised - newRaised;
+    const priceP = BigInt(launch.current_price_usdc) > 0n ? BigInt(launch.current_price_usdc) : 1n;
+    const reserveUsdc = priceP * supply;
+    const reserveTokens = supply;
+    const k = reserveUsdc * reserveTokens;
+
+    const newReserveTokens = reserveTokens + amount;
+    const newReserveUsdc = k / newReserveTokens;
+    const usdcOut = reserveUsdc - newReserveUsdc;
 
     if (usdcOut <= 0n) return { success: false, error: "Amount too small" };
+    if (usdcOut > raised) {
+      // the curve can only pay out real USDC that was actually raised
+      return { success: false, error: "Amount too large" };
+    }
 
-    const newPrice = newRaised / newSupply;
+    const newRaised = raised - usdcOut;
+    const newPrice = newReserveUsdc / newReserveTokens;
 
     this.db.updateLaunch(launchId, {
       raised_usdc: newRaised.toString(),

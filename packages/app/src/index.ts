@@ -34,4 +34,13 @@ export type { RevenueEvent, RevenueStream, PremiumTier, AdCampaign } from "./tra
 export { TradeHistory } from "./trading/history.js";
 export type { TradeRow, PnlSummary, ActivityEntry } from "./trading/history.js";
 
+export { applySwapToPosition } from "./trading/positions.js";
+export type { PositionRow, PositionUpdateResult } from "./trading/positions.js";
+
+export { ApiServer, buildMockQuote } from "./api/server.js";
+export type { ServerOptions } from "./api/server.js";
+export { AuthService, AuthError, generateApiKey, hashApiKey } from "./api/auth.js";
+export { Router, sendJson, readJsonBody, HttpError } from "./api/router.js";
+export { executeSolanaSwap, executeEvmSwap } from "./api/executors.js";
+
 export { AppDb } from "./database/app-db.js";
