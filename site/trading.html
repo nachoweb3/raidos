@@ -453,16 +453,17 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 const LS_KEY = 'raidos_api_key';
 let API_KEY = localStorage.getItem(LS_KEY) || '';
 // ── API ENDPOINT ──
-// Same-origin by default (dashboard served by the API process). For static hosting
-// (e.g. GitHub Pages) point it at the hosted API: append ?api=https://your-api-host
-// once — it persists in localStorage. Clear it with ?api= (empty).
+// Defaults to the hosted RaidOS trading API (live deployment). Override per
+// visitor with ?api=https://your-api-host — it persists in localStorage.
+// Clear the override with ?api= (empty).
+const DEFAULT_API = 'https://raidos-api.onrender.com';
 const API_BASE = (() => {
   const q = new URLSearchParams(location.search).get('api');
   if (q !== null) {
     if (q) localStorage.setItem('raidos_api_base', q.replace(/\/+$/, ''));
     else localStorage.removeItem('raidos_api_base');
   }
-  return (localStorage.getItem('raidos_api_base') || '').replace(/\/+$/, '');
+  return (localStorage.getItem('raidos_api_base') || DEFAULT_API).replace(/\/+$/, '');
 })();
 let API_MODE = 'demo'; // demo | mock | live — from server
 let feedTimer = null, lastFeedId = 0;
