@@ -3,245 +3,433 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RaidOS — Telegram bot for Web3 communities (brain, raids, market, content)</title>
-<meta name="description" content="RaidOS is a Telegram bot and operating system for Web3 token communities. It adds a community brain, /volume market intelligence, raids, XP/quests/badges, and a content engine — installed and managed for you from $300, with managed hosting from $49/mo.">
-<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<title>RaidOS — Trade Every Chain. One Terminal.</title>
+<meta name="description" content="RaidOS is a live multi-chain trading terminal. Real Jupiter routing, wallet-grade security, Phantom/MetaMask login, and every chain from one glass-clear interface.">
+<meta name="robots" content="index, follow">
 <link rel="canonical" href="https://inusaur.online/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="RaidOS — Telegram bot for Web3 communities (brain, raids, market, content)">
-<meta property="og:description" content="RaidOS gives token communities a brain, market intelligence, raids, rewards, and a content engine. Setup from $300, managed hosting from $49/mo.">
+<meta property="og:title" content="RaidOS — Trade Every Chain. One Terminal.">
+<meta property="og:description" content="Live multi-chain trading. Real liquidity routing, wallet login, one terminal for Solana, Ethereum, Base, BSC, Arbitrum, Polygon.">
 <meta property="og:url" content="https://inusaur.online/">
-<meta property="og:site_name" content="RaidOS">
-<meta property="og:image" content="https://github.com/nachoweb3/raidos/raw/main/docs/assets/raidos-banner.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="RaidOS — Telegram bot for Web3 communities (brain, raids, market, content)">
-<meta name="twitter:description" content="RaidOS gives token communities a brain, market intelligence, raids, rewards, and a content engine. Setup from $300, managed hosting from $49/mo.">
-<meta name="twitter:image" content="https://github.com/nachoweb3/raidos/raw/main/docs/assets/raidos-banner.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "RaidOS",
-  "url": "https://inusaur.online/",
-  "applicationCategory": "BusinessApplication",
-  "operatingSystem": "Telegram",
-  "description": "Telegram bot and operating system for Web3 token communities with a community brain, market intelligence, raids, rewards, and content engine.",
-  "offers": [
-    {
-      "@type": "Offer",
-      "name": "Launch Setup",
-      "price": "300",
-      "priceCurrency": "USD"
-    },
-    {
-      "@type": "Offer",
-      "name": "Managed Hosting",
-      "price": "49",
-      "priceCurrency": "USD",
-      "billingIncrement": "monthly"
-    }
-  ]
-}
-</script>
 <style>
-  :root {
-    --bg: #0b1020; --bg2: #111832; --card: #151d3b; --line: #232c52;
-    --text: #e8edf7; --muted: #94a3b8; --accent: #f97316; --accent2: #a855f7;
+  :root{
+    --bg:#05060f; --bg2:#0a0d1f; --text:#eef1ff; --muted:#9aa3c7;
+    --accent:#7c5cff; --accent2:#00e5ff; --accent3:#ff3d81;
+    --glass:rgba(255,255,255,.045); --glass-border:rgba(255,255,255,.12);
+    --green:#22d3a5;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; line-height: 1.6; }
-  a { color: #fb923c; text-decoration: none; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    background:var(--bg); color:var(--text); overflow-x:hidden; line-height:1.6;
+  }
+  /* ── animated aurora background ── */
+  .aurora{
+    position:fixed; inset:0; z-index:-2; overflow:hidden;
+    background:
+      radial-gradient(60% 50% at 15% 10%, rgba(124,92,255,.25), transparent 60%),
+      radial-gradient(50% 40% at 85% 20%, rgba(0,229,255,.18), transparent 60%),
+      radial-gradient(70% 60% at 50% 100%, rgba(255,61,129,.15), transparent 60%),
+      linear-gradient(180deg,#05060f,#0a0d1f 60%,#05060f);
+  }
+  .orb{position:absolute; border-radius:50%; filter:blur(90px); opacity:.5; animation:drift 18s ease-in-out infinite alternate}
+  .orb.a{width:520px;height:520px;background:#7c5cff;top:-140px;left:-120px}
+  .orb.b{width:420px;height:420px;background:#00e5ff;top:10%;right:-160px;animation-delay:-6s}
+  .orb.c{width:460px;height:460px;background:#ff3d81;bottom:-180px;left:30%;animation-delay:-12s}
+  @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(60px,40px) scale(1.15)}}
+  .grid-overlay{
+    position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.5;
+    background-image:linear-gradient(rgba(124,92,255,.06) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(124,92,255,.06) 1px,transparent 1px);
+    background-size:56px 56px;
+    mask-image:radial-gradient(ellipse 90% 60% at 50% 30%, #000 40%, transparent 100%);
+    -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 30%, #000 40%, transparent 100%);
+  }
+  .wrap{max-width:1100px;margin:0 auto;padding:0 22px;position:relative;z-index:1}
 
-  header { position: sticky; top: 0; background: rgba(11,16,32,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); z-index: 10; }
-  .nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
-  .logo { font-weight: 800; font-size: 20px; letter-spacing: .5px; }
-  .logo span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .nav a.pill { border: 1px solid var(--line); border-radius: 999px; padding: 8px 18px; font-size: 14px; color: var(--text); }
-  .nav a.pill:hover { border-color: var(--accent); }
+  /* ── glassmorphism primitives ── */
+  .glass{
+    background:var(--glass);
+    backdrop-filter:blur(18px) saturate(150%);
+    -webkit-backdrop-filter:blur(18px) saturate(150%);
+    border:1px solid var(--glass-border);
+    border-radius:20px;
+    box-shadow:0 20px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .glow-line{
+    height:1px; border:none; margin:0 auto;
+    background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),transparent);
+    opacity:.6;
+  }
 
-  .hero { text-align: center; padding: 84px 0 64px; background:
-    radial-gradient(600px 300px at 15% 0%, rgba(249,115,22,.18), transparent),
-    radial-gradient(600px 300px at 85% 20%, rgba(168,85,247,.18), transparent); }
-  .hero h1 { font-size: clamp(38px, 6vw, 64px); font-weight: 800; line-height: 1.1; }
-  .hero h1 span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .hero p.sub { color: var(--muted); font-size: 19px; max-width: 640px; margin: 18px auto 30px; }
-  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 34px; }
-  .badge { font-size: 12.5px; letter-spacing: 1px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; }
-  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-  .btn { display: inline-block; padding: 14px 28px; border-radius: 12px; font-weight: 700; font-size: 16px; }
-  .btn.primary { background: linear-gradient(90deg, var(--accent), #f43f5e); color: #fff; }
-  .btn.ghost { border: 1px solid var(--line); color: var(--text); }
-  .btn.ghost:hover { border-color: var(--accent); }
+  /* ── nav ── */
+  nav{
+    position:sticky; top:14px; z-index:50; margin-top:14px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 22px; border-radius:16px;
+    background:rgba(10,13,31,.55);
+    backdrop-filter:blur(20px) saturate(160%);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    border:1px solid var(--glass-border);
+  }
+  .logo{font-size:20px;font-weight:800;letter-spacing:.5px;text-decoration:none;color:var(--text)}
+  .logo span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .nav-links{display:flex;gap:26px;align-items:center}
+  .nav-links a{color:var(--muted);text-decoration:none;font-size:14px;font-weight:600;transition:color .2s}
+  .nav-links a:hover{color:var(--text)}
+  .nav-cta{
+    padding:9px 20px;border-radius:12px;font-weight:700;font-size:14px;text-decoration:none;
+    background:linear-gradient(90deg,var(--accent),var(--accent3));
+    color:#fff; box-shadow:0 8px 30px rgba(124,92,255,.4); transition:transform .2s,box-shadow .2s;
+  }
+  .nav-cta:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(124,92,255,.55)}
 
-  section { padding: 64px 0; }
-  .kicker { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; }
-  h2 { font-size: clamp(26px, 4vw, 36px); margin: 8px 0 30px; }
-  .muted { color: var(--muted); }
+  /* ── hero ── */
+  .hero{text-align:center;padding:110px 0 70px}
+  .hero .tag{
+    display:inline-block; padding:7px 16px; border-radius:999px; font-size:12px; font-weight:700;
+    letter-spacing:1.5px; text-transform:uppercase; color:var(--accent2);
+    border:1px solid rgba(0,229,255,.3); background:rgba(0,229,255,.06); margin-bottom:26px;
+  }
+  .hero h1{
+    font-size:clamp(40px,7vw,78px); font-weight:900; line-height:1.05; letter-spacing:-2px;
+    background:linear-gradient(120deg,#fff 20%,var(--accent2) 50%,var(--accent) 80%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .hero .sub{max-width:640px;margin:26px auto 0;color:var(--muted);font-size:clamp(15px,2.2vw,19px)}
+  .hero .sub b{color:var(--text)}
+  .hero-ctas{display:flex;gap:16px;justify-content:center;margin-top:40px;flex-wrap:wrap}
+  .btn{
+    padding:15px 34px; border-radius:14px; font-weight:800; font-size:16px; text-decoration:none;
+    display:inline-flex; align-items:center; gap:10px; transition:transform .2s,box-shadow .2s;
+  }
+  .btn-primary{
+    background:linear-gradient(90deg,var(--accent),var(--accent3));
+    color:#fff; box-shadow:0 10px 40px rgba(124,92,255,.45); animation:pulse 2.6s ease-in-out infinite;
+  }
+  .btn-primary:hover{transform:translateY(-3px) scale(1.02)}
+  .btn-ghost{
+    color:var(--text); border:1px solid var(--glass-border);
+    background:var(--glass); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  }
+  .btn-ghost:hover{transform:translateY(-3px);border-color:rgba(255,255,255,.3)}
+  @keyframes pulse{0%,100%{box-shadow:0 10px 40px rgba(124,92,255,.45)}50%{box-shadow:0 10px 55px rgba(124,92,255,.75)}}
+  .hero .stat-line{margin-top:26px;color:var(--muted);font-size:13px}
+  .hero .stat-line .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;box-shadow:0 0 12px var(--green);animation:blink 2s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
 
-  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
-  .layer { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
-  .layer b { display: block; margin-bottom: 6px; }
-  .layer small { color: var(--muted); }
+  /* ── terminal mock ── */
+  .mock{
+    position:relative; max-width:940px; margin:10px auto 0; padding:26px;
+  }
+  .mock::before{
+    content:''; position:absolute; inset:-2px; border-radius:22px; z-index:-1;
+    background:linear-gradient(120deg,var(--accent),transparent 30%,transparent 70%,var(--accent2));
+    filter:blur(30px); opacity:.5;
+  }
+  .mock-head{display:flex;align-items:center;gap:8px;margin-bottom:18px}
+  .mock-head i{width:12px;height:12px;border-radius:50%}
+  .mock-head i:nth-child(1){background:#ff5f57}.mock-head i:nth-child(2){background:#febc2e}.mock-head i:nth-child(3){background:#28c840}
+  .mock-head .m-title{color:var(--muted);font-size:12px;margin-left:8px;letter-spacing:1px}
+  .mock-head .live{margin-left:auto;font-size:11px;font-weight:800;color:var(--green);letter-spacing:1.5px}
+  .mock-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+  .mock-chart{height:210px;border-radius:12px;position:relative;overflow:hidden;background:rgba(0,0,0,.3)}
+  .mock-chart svg{position:absolute;inset:0;width:100%;height:100%}
+  .mock-side{display:flex;flex-direction:column;gap:12px}
+  .mock-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .mock-row b{color:var(--text);font-weight:700}
+  .mock-row .up{color:var(--green)}.mock-row .down{color:var(--accent3)}
+  .mock-buy{
+    margin-top:auto; text-align:center; padding:14px; border-radius:12px; font-weight:800; font-size:14px;
+    background:linear-gradient(90deg,var(--green),#0ea5e9); color:#04121a;
+  }
+  @media(max-width:720px){.mock-grid{grid-template-columns:1fr}}
 
-  .demo { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; font-family: 'Consolas', monospace; font-size: 14.5px; color: #cbd5e1; max-width: 560px; margin: 26px auto 0; text-align: left; }
-  .demo .u { color: #7dd3fc; } .demo .b { color: #fca5a5; }
+  /* ── sections ── */
+  section{padding:90px 0}
+  .sec-tag{
+    display:inline-block; font-size:11px; font-weight:800; letter-spacing:2px; text-transform:uppercase;
+    color:var(--accent2); margin-bottom:14px;
+  }
+  h2.sec-title{font-size:clamp(28px,4.5vw,44px);font-weight:900;letter-spacing:-1px;line-height:1.15}
+  .sec-sub{color:var(--muted);max-width:560px;margin-top:14px;font-size:16px}
+  .center{text-align:center}
+  .center .sec-sub{margin-left:auto;margin-right:auto}
 
-  .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 18px; align-items: stretch; }
-  .plan { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; }
-  .plan.hot { border: 1.5px solid var(--accent); position: relative; }
-  .plan.hot::before { content: "MOST POPULAR"; position: absolute; top: -11px; left: 24px; background: var(--accent); color: #1a1005; font-size: 11px; font-weight: 800; letter-spacing: 1px; padding: 3px 10px; border-radius: 999px; }
-  .plan h3 { font-size: 18px; }
-  .price { font-size: 38px; font-weight: 800; margin: 10px 0 2px; }
-  .price small { font-size: 15px; color: var(--muted); font-weight: 500; }
-  .plan ul { list-style: none; margin: 18px 0 24px; flex: 1; }
-  .plan li { padding: 7px 0; font-size: 15px; color: #cbd5e1; }
-  .plan li::before { content: "✓ "; color: #4ade80; font-weight: 700; }
-  .plan .btn { text-align: center; }
+  /* features grid */
+  .features{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:50px}
+  .feature{padding:28px}
+  .feature .ic{
+    width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+    font-size:22px;margin-bottom:18px;
+    background:linear-gradient(135deg,rgba(124,92,255,.25),rgba(0,229,255,.15));
+    border:1px solid rgba(124,92,255,.35);
+  }
+  .feature h3{font-size:17px;font-weight:800;margin-bottom:8px}
+  .feature p{color:var(--muted);font-size:13.5px}
+  .feature:hover{transform:translateY(-4px);transition:transform .25s;border-color:rgba(124,92,255,.4)}
+  @media(max-width:900px){.features{grid-template-columns:1fr}}
 
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 15px; }
-  th { color: var(--muted); font-weight: 600; }
-  code { background: #1c2447; border-radius: 6px; padding: 2px 8px; font-size: 13.5px; }
+  /* chains strip */
+  .chains{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:40px}
+  .chain{
+    padding:12px 22px;border-radius:999px;font-size:14px;font-weight:700;
+    background:var(--glass);border:1px solid var(--glass-border);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px); color:var(--text);
+  }
+  .chain:hover{border-color:var(--accent);transform:translateY(-2px);transition:all .2s}
 
-  footer { border-top: 1px solid var(--line); padding: 34px 0; text-align: center; color: var(--muted); font-size: 14px; }
-  .socials a { margin: 0 10px; }
+  /* how it works */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:50px}
+  .step{padding:30px;position:relative}
+  .step .num{
+    font-size:13px;font-weight:900;letter-spacing:1px;color:var(--accent2);
+    border:1px solid rgba(0,229,255,.35);border-radius:999px;padding:4px 12px;display:inline-block;margin-bottom:16px;
+  }
+  .step h3{font-size:16px;font-weight:800;margin-bottom:8px}
+  .step p{color:var(--muted);font-size:13.5px}
+  @media(max-width:900px){.steps{grid-template-columns:1fr}}
+
+  /* subscribe */
+  .subscribe{padding:64px 40px;text-align:center;position:relative;overflow:hidden}
+  .subscribe::before{
+    content:''; position:absolute; inset:-1px; border-radius:20px; z-index:-1;
+    background:linear-gradient(120deg,var(--accent),var(--accent3),var(--accent2));
+    filter:blur(40px); opacity:.35;
+  }
+  .subscribe h2{font-size:clamp(26px,4vw,40px);font-weight:900;letter-spacing:-1px}
+  .subscribe p{color:var(--muted);max-width:520px;margin:14px auto 30px;font-size:15px}
+  .sub-form{display:flex;gap:10px;max-width:460px;margin:0 auto}
+  .sub-form input{
+    flex:1; padding:15px 18px; border-radius:12px; border:1px solid var(--glass-border);
+    background:rgba(0,0,0,.35); color:var(--text); font-size:15px; outline:none;
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  }
+  .sub-form input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(124,92,255,.2)}
+  .sub-form button{
+    padding:15px 26px;border-radius:12px;border:none;font-weight:800;font-size:15px;cursor:pointer;
+    background:linear-gradient(90deg,var(--accent),var(--accent3));color:#fff;
+    box-shadow:0 8px 30px rgba(124,92,255,.4);transition:transform .2s;
+  }
+  .sub-form button:hover{transform:translateY(-2px)}
+  .sub-msg{margin-top:14px;font-size:13px;min-height:20px}
+  .sub-msg.ok{color:var(--green)} .sub-msg.err{color:var(--accent3)}
+  @media(max-width:560px){.sub-form{flex-direction:column}}
+
+  /* final CTA */
+  .final{text-align:center;padding:40px 0 10px}
+  .final h2{font-size:clamp(30px,5vw,52px);font-weight:900;letter-spacing:-1px;
+    background:linear-gradient(120deg,#fff,var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .final p{color:var(--muted);margin:16px auto 34px;max-width:520px}
+
+  footer{padding:50px 0 40px;text-align:center;color:var(--muted);font-size:13px}
+  footer .foot-links{display:flex;gap:22px;justify-content:center;margin-bottom:18px;flex-wrap:wrap}
+  footer a{color:var(--muted);text-decoration:none}
+  footer a:hover{color:var(--text)}
 </style>
 </head>
 <body>
+<div class="aurora"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+<div class="grid-overlay"></div>
 
-<header>
-  <div class="wrap nav">
-    <div class="logo">Raid<span>OS</span></div>
-    <a class="pill" href="trading.html">Trade Now</a>
+<nav class="wrap">
+  <a href="/" class="logo">Raid<span>OS</span></a>
+  <div class="nav-links">
+    <a href="#features">Capabilities</a>
+    <a href="#how">How it works</a>
+    <a href="#subscribe">Early access</a>
+    <a class="nav-cta" href="/trading.html">Launch Terminal ⚡</a>
   </div>
+</nav>
+
+<!-- ═══ HERO ═══ -->
+<header class="hero wrap">
+  <div class="tag">⚡ Live multi-chain trading terminal</div>
+  <h1>Trade Every Chain.<br>One Terminal.</h1>
+  <p class="sub">Real liquidity routing through <b>Jupiter</b>. Wallet-grade security with <b>Phantom &amp; MetaMask</b> login. Solana, Ethereum, Base, BSC, Arbitrum and Polygon — from one glass-clear interface built for speed.</p>
+  <div class="hero-ctas">
+    <a class="btn btn-primary" href="/trading.html">Start Trading →</a>
+    <a class="btn btn-ghost" href="#subscribe">Get early access</a>
+  </div>
+  <p class="stat-line"><span class="dot"></span><span id="liveStat">Live market data · Real broadcasts</span></p>
 </header>
 
-<main>
-<section class="hero" aria-label="Hero">
-  <div class="wrap">
-    <div class="badges">
-      <span class="badge">TELEGRAM-NATIVE</span>
-      <span class="badge">AI-POWERED</span>
-      <span class="badge">DONE-FOR-YOU</span>
+<!-- ═══ TERMINAL MOCK ═══ -->
+<div class="wrap"><div class="mock glass">
+  <div class="mock-head">
+    <i></i><i></i><i></i><span class="m-title">RaidOS TERMINAL</span><span class="live">● LIVE</span>
+  </div>
+  <div class="mock-grid">
+    <div class="mock-chart glass">
+      <svg viewBox="0 0 600 210" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#7c5cff" stop-opacity=".45"/>
+            <stop offset="100%" stop-color="#7c5cff" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#7c5cff"/>
+          </linearGradient>
+        </defs>
+        <path d="M0,170 L60,150 L120,158 L180,120 L240,132 L300,95 L360,108 L420,70 L480,84 L540,45 L600,30 L600,210 L0,210 Z" fill="url(#area)"/>
+        <path d="M0,170 L60,150 L120,158 L180,120 L240,132 L300,95 L360,108 L420,70 L480,84 L540,45 L600,30" fill="none" stroke="url(#stroke)" stroke-width="3"/>
+      </svg>
     </div>
-    <h1>Your community gets a <span>brain</span>.</h1>
-    <p class="sub">RaidOS answers your members' questions from official info, tracks your token's market,
-       runs raids and rewards your community with XP, quests and badges — <strong>installed and managed for you</strong>.
-       You never touch a server.</p>
-    <div class="cta-row">
-      <a class="btn primary" href="trading.html">Launch Trading Terminal</a>
-      <a class="btn ghost" href="#pricing">See pricing</a>
-    </div>
-
-    <div class="demo">
-      <div class="u">@newbie:</div> when was fair launch? was I too late?<br><br>
-      <div class="b">🧠 Community Brain:</div> Fair launch was <b>12:00 UTC, March 3</b> — and no,
-      the community keeps building every day. Anything else? 🦖<br><br>
-      <div class="u">@degen:</div> /volume<br><br>
-      <div class="b">📊 $TOKEN MARKET INTELLIGENCE</div><br>
-      Price $0.000042 · 24H Vol $182K · Liq $74K<br>
-      Buys 1,284 · Sells 917 (B/S 1.40) · <b>Trend: 🔥 ACCELERATING</b>
+    <div class="mock-side">
+      <div class="mock-row"><span>SOL / USDC</span><b class="up">▲ $182.44</b></div>
+      <div class="mock-row"><span>Route</span><b>Jupiter · Best price</b></div>
+      <div class="mock-row"><span>Est. output</span><b>1,000.00 USDC</b></div>
+      <div class="mock-row"><span>Fee</span><b class="down">0.5%</b></div>
+      <div class="mock-buy">BUY SOL →</div>
     </div>
   </div>
-</div>
+</div></div>
 
-<section id="features">
-  <div class="wrap">
-    <div class="kicker">Five layers, one bot</div>
-    <h2>What your community gets</h2>      <div class="layers">
-      <div class="layer"><b>🧠 Brain</b><small>Answer recurring questions from official info, learn pinned messages, and brief admins.</small></div>
-      <div class="layer"><b>📊 Volume</b><small>Show live price, volume, liquidity, holders, and automatic spike/whale alerts.</small></div>
-      <div class="layer"><b>⚡ Raids</b><small>Run measurable raids on X/Telegram/Discord with goals, timers, and XP rewards.</small></div>
-      <div class="layer"><b>🎮 XP &amp; Quests</b><small>Use levels, streaks, missions, and badges to keep members active daily.</small></div>
-      <div class="layer"><b>💭 Content</b><small>Get post suggestions built from real signals, then approve, schedule, or publish.</small></div>
-      <div class="layer"><b>🔥 Trending</b><small>Coming next: rank what is gaining real momentum, with sponsored placements labeled SPONSORED.</small></div>
-    </div>
+<!-- ═══ FEATURES ═══ -->
+<section id="features" class="wrap">
+  <div class="center">
+    <div class="sec-tag">Capabilities</div>
+    <h2 class="sec-title">Built to make you want to trade</h2>
+    <p class="sec-sub">RaidOS isn't a chart with buttons — it's a complete execution terminal with the tooling serious traders expect, and the simplicity everyone else needs.</p>
   </div>
-</section>
-
-<section id="pricing" style="background: var(--bg2);">
-  <div class="wrap">
-    <div class="kicker">Pricing</div>
-    <h2>Two ways today · one more in the roadmap</h2>
-    <p class="muted" style="margin-bottom:22px;">Setup is one-time. Managed hosting is recurring. Trending placements (coming next) are the first paid slot on top of setups and hosting.</p>
-    <div class="pricing">
-
-      <div class="plan">
-        <h3>🚀 Launch Setup</h3>
-        <div class="price">$300–$1,000 <small>one-time</small></div>
-        <p class="muted" style="font-size:14px;">Final price depends on group size and how much official content we train the brain on.</p>
-        <ul>
-          <li>Full install on our infrastructure — zero servers for you</li>
-          <li>Brain trained on your official answers (website, docs, pinned msgs)</li>
-          <li>Token wired into <code>/volume</code> with live market alerts</li>
-          <li>Starter quests + badges configured</li>
-          <li>Your first launch raid planned with your mods</li>
-          <li>Admin walkthrough for your team</li>
-        </ul>
-        <a class="btn primary" href="https://instagram.com/nacho_web3">DM to book</a>
-      </div>
-
-      <div class="plan hot">
-        <h3>🧠 Managed Hosting</h3>
-        <div class="price">$49–$299 <small>/month</small></div>
-        <p class="muted" style="font-size:14px;">Tiered by community size and features. Cancel anytime.</p>
-        <ul>
-          <li>Everything in Launch Setup</li>
-          <li>24/7 uptime — we host, monitor and update</li>
-          <li>Market alerts watched around the clock</li>
-          <li>Monthly community health report</li>
-          <li>Branded commands &amp; custom personality</li>
-          <li>Priority support on Telegram</li>
-          <li>One server, multiple communities (coming next — so managed hosting scales past one token per server)</li>
-        </ul>
-        <a class="btn primary" href="https://x.com/nacho_web3_">DM to subscribe</a>
-      </div>
-
-      <div class="plan">
-        <h3>🛠 Self-hosted</h3>
-        <div class="price">Free <small>open source</small></div>
-        <p class="muted" style="font-size:14px;">For technical teams. Runs on your machine, your data stays yours.</p>
-        <ul>
-          <li>Complete source code on GitHub</li>
-          <li>Local AI via Ollama — privacy-first</li>
-          <li>Cloud AI mode also supported</li>
-          <li>57+ automated tests, MIT-friendly stack</li>
-          <li>Community support via GitHub issues</li>
-        </ul>
-        <a class="btn ghost" href="https://github.com/nachoweb3/raidos">Read the install guide</a>
-      </div>
-
+  <div class="features">
+    <div class="feature glass">
+      <div class="ic">⚡</div>
+      <h3>Live execution, not demos</h3>
+      <p>Real order routing through Jupiter's aggregator. Quotes from live liquidity, broadcasts straight to chain. No simulated fills, ever.</p>
+    </div>
+    <div class="feature glass">
+      <div class="ic">👛</div>
+      <h3>Login with your wallet</h3>
+      <p>Phantom and MetaMask one-click sign-in — prove ownership with a free signature. Google and X login on the way. No passwords to leak.</p>
+    </div>
+    <div class="feature glass">
+      <div class="ic">🔗</div>
+      <h3>Every chain, one place</h3>
+      <p>Solana, Ethereum, Base, BSC, Arbitrum, Polygon. One interface, one mental model, the best route on whichever chain you choose.</p>
+    </div>
+    <div class="feature glass">
+      <div class="ic">🛡️</div>
+      <h3>Your keys, encrypted</h3>
+      <p>Wallet keys are encrypted server-side with a password you control. The terminal never stores a raw key in your browser.</p>
+    </div>
+    <div class="feature glass">
+      <div class="ic">📊</div>
+      <h3>Positions &amp; PnL</h3>
+      <p>Track open positions, realized profit and loss, and your personal leaderboard standing — all updated live.</p>
+    </div>
+    <div class="feature glass">
+      <div class="ic">🚀</div>
+      <h3>Launchpad &amp; rank</h3>
+      <p>Watch new token launches, discover traders to follow, and climb the leaderboard. Social trading without the noise.</p>
     </div>
   </div>
 </section>
 
-<section id="how">
-  <div class="wrap">
-    <div class="kicker">Onboarding</div>
-    <h2>Live in 48 hours</h2>
-    <table>
-      <tr><th>Day</th><th>What happens</th></tr>
-      <tr><td><b>Day 1</b></td><td>You send your links, token contract and official answers. We deploy and train the brain.</td></tr>
-      <tr><td><b>Day 2</b></td><td>Bot joins your group, quests and badges go live, your first raid is scheduled. You get the admin walkthrough.</td></tr>
-      <tr><td><b>Week 1</b></td><td>We tune answers and alert thresholds with your mods until it feels like your best moderator.</td></tr>
-    </table>
+<!-- ═══ CHAINS ═══ -->
+<section class="wrap" style="padding-top:0">
+  <div class="center">
+    <div class="sec-tag">Supported chains</div>
+    <div class="chains">
+      <div class="chain">◎ Solana</div>
+      <div class="chain">⬡ Ethereum</div>
+      <div class="chain">🔵 Base</div>
+      <div class="chain">🟡 BNB Chain</div>
+      <div class="chain">🔷 Arbitrum</div>
+      <div class="chain">🟣 Polygon</div>
+    </div>
   </div>
 </section>
-</main>
 
-<footer>
-  <div class="wrap">
-    <p><b>RaidOS</b> — The operating system for Web3 communities.</p>
-    <p class="socials" style="margin-top:10px;">
-      <a href="https://instagram.com/nacho_web3">📸 @nacho_web3</a>
-      <a href="https://x.com/nacho_web3_">🐦 @nacho_web3_</a>
-      <a href="https://youtube.com/@nacho_web3">▶️ @nacho_web3</a>
-    </p>
-    <p style="margin-top:10px;">Created by @nacho_web3 · <a href="https://github.com/nachoweb3/raidos">github.com/nachoweb3/raidos</a></p>
+<hr class="glow-line" style="width:70%">
+
+<!-- ═══ HOW IT WORKS ═══ -->
+<section id="how" class="wrap">
+  <div class="center">
+    <div class="sec-tag">How it works</div>
+    <h2 class="sec-title">From zero to your first trade in under a minute</h2>
   </div>
+  <div class="steps">
+    <div class="step glass">
+      <div class="num">01</div>
+      <h3>Connect your wallet</h3>
+      <p>One click with Phantom or MetaMask. A free signature proves ownership — no gas, no seed phrase, nothing stored.</p>
+    </div>
+    <div class="step glass">
+      <div class="num">02</div>
+      <h3>Pick a chain &amp; token</h3>
+      <p>Choose Solana, Ethereum or any supported chain, paste a token, and see a live best-route quote in milliseconds.</p>
+    </div>
+    <div class="step glass">
+      <div class="num">03</div>
+      <h3>Execute live</h3>
+      <p>Your order is routed, signed and broadcast to the chain. Track the fill, your position, and your PnL in real time.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="glow-line" style="width:70%">
+
+<!-- ═══ SUBSCRIBE ═══ -->
+<section id="subscribe" class="wrap">
+  <div class="subscribe glass">
+    <h2>Get early access</h2>
+    <p>Join the waitlist for launch updates, new chain support and early-trader perks. No spam — just the green lights.</p>
+    <form class="sub-form" id="subForm" novalidate>
+      <input type="email" id="subEmail" placeholder="you@email.com" required autocomplete="email">
+      <button type="submit">Notify me →</button>
+    </form>
+    <div class="sub-msg" id="subMsg"></div>
+  </div>
+</section>
+
+<!-- ═══ FINAL CTA ═══ -->
+<section class="final wrap">
+  <h2>Ready when you are.</h2>
+  <p>The terminal is live right now. Connect a wallet and make your first real trade in minutes.</p>
+  <div class="hero-ctas">
+    <a class="btn btn-primary" href="/trading.html">Open the Terminal ⚡</a>
+  </div>
+</section>
+
+<footer class="wrap">
+  <div class="foot-links">
+    <a href="/trading.html">Terminal</a>
+    <a href="https://x.com/nacho_web3_">X</a>
+    <a href="https://instagram.com/nacho_web3">Instagram</a>
+    <a href="https://github.com/nachoweb3/raidos">GitHub</a>
+  </div>
+  <p>© 2026 RaidOS · Trade at your own risk · Not financial advice</p>
 </footer>
 
+<script>
+// Live status from the API — shows the real mode instead of a fake badge
+fetch('https://raidos-api.fly.dev/api/health').then(r=>r.json()).then(d=>{
+  const el = document.getElementById('liveStat');
+  if (el && d.ok) el.textContent = '● Live market data · ' + (d.mode === 'live' ? 'real broadcasts enabled' : 'API connected');
+}).catch(()=>{});
+
+// Waitlist capture → public API endpoint
+const form = document.getElementById('subForm');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('subEmail').value.trim();
+  const msg = document.getElementById('subMsg');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.className='sub-msg err'; msg.textContent='Please enter a valid email.'; return; }
+  msg.className='sub-msg'; msg.textContent='Signing you up…';
+  try {
+    const r = await fetch('https://raidos-api.fly.dev/api/waitlist', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email }),
+    });
+    const j = await r.json().catch(()=>({}));
+    if (r.ok){ msg.className='sub-msg ok'; msg.textContent='You\u2019re on the list ✓ Watch your inbox for launch updates.'; form.reset(); }
+    else { msg.className='sub-msg err'; msg.textContent=j.error || 'Something went wrong — try again.'; }
+  } catch { msg.className='sub-msg err'; msg.textContent='Network error — are you online?'; }
+});
+</script>
 </body>
 </html>

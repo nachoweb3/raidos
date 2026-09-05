@@ -344,6 +344,14 @@ export class ApiServer {
       sendJson(ctx.res, 200, { ok: true, mode: this.appMode });
     });
 
+    // ── Waitlist (landing page email capture) ──
+    this.router.publicRoute("POST", "/api/waitlist", (ctx) => {
+      const email = this.str(ctx, "email");
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, "invalid email");
+      const added = this.db.addWaitlist(email);
+      sendJson(ctx.res, added ? 201 : 200, { added, count: this.db.countWaitlist() });
+    });
+
     // ── Wallets ──
     this.router.route("GET", "/api/wallets", (ctx) => {
       const userId = this.requireUserId(ctx);

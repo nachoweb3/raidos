@@ -32,6 +32,13 @@ export class AppDb {
         created_at INTEGER NOT NULL
       );
 
+      -- Landing page waitlist (email capture)
+      CREATE TABLE IF NOT EXISTS waitlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      );
+
       -- External identities (wallet addresses, Google, X) → user link
       CREATE TABLE IF NOT EXISTS identities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,6 +303,20 @@ export class AppDb {
 
   countReferrals(userId: number): number {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE referred_by = ?").get(userId) as { n: number };
+    return row.n;
+  }
+
+  // ── Waitlist methods ──────────────────────────────────────────────────
+
+  addWaitlist(email: string): boolean {
+    const info = this.db.prepare(
+      "INSERT OR IGNORE INTO waitlist (email, created_at) VALUES (?, ?)"
+    ).run(email.trim().toLowerCase(), Math.floor(Date.now() / 1000));
+    return info.changes > 0;
+  }
+
+  countWaitlist(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM waitlist").get() as { n: number };
     return row.n;
   }
 
