@@ -184,7 +184,8 @@ export class ApiServer {
       sendJson(res, 404, { error: "not found" });
       return;
     }
-    const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    let rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    if (rel.endsWith("/")) rel += "index.html";
     const filePath = normalize(join(this.siteDir, rel));
     if (!filePath.startsWith(normalize(this.siteDir))) {
       sendJson(res, 403, { error: "forbidden" });
@@ -264,6 +265,11 @@ export class ApiServer {
         supportsLaunches: c.supportsLaunches,
       }));
       sendJson(ctx.res, 200, { chains, mode: this.appMode });
+    });
+
+    // ── Health ──
+    this.router.publicRoute("GET", "/api/health", (ctx) => {
+      sendJson(ctx.res, 200, { ok: true, mode: this.appMode });
     });
 
     // ── Wallets ──

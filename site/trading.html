@@ -223,6 +223,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
   <div class="modal">
     <h3>🔑 Connect to your RaidOS node</h3>
     <p>Paste the API key from <code>POST /api/auth/register</code> on your self-hosted trading API. The key stays in this browser (localStorage). Without a key, this dashboard runs in <b>DEMO MODE</b> with clearly-labeled simulated data.</p>
+  <p style="margin-top:8px;font-size:12px;opacity:.75">API endpoint: <code id="apiBaseLabel">same-origin</code> — change it by visiting this page with <code>?api=https://your-api-host</code></p>
     <div class="key-result" id="keyResult"></div>
     <input type="password" id="keyInput" placeholder="raidos_…" onkeydown="if(event.key==='Enter')saveKey()">
     <div class="row">
@@ -449,6 +450,18 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 // ═══════════════════════════════════════════════════════════════
 const LS_KEY = 'raidos_api_key';
 let API_KEY = localStorage.getItem(LS_KEY) || '';
+// ── API ENDPOINT ──
+// Same-origin by default (dashboard served by the API process). For static hosting
+// (e.g. GitHub Pages) point it at the hosted API: append ?api=https://your-api-host
+// once — it persists in localStorage. Clear it with ?api= (empty).
+const API_BASE = (() => {
+  const q = new URLSearchParams(location.search).get('api');
+  if (q !== null) {
+    if (q) localStorage.setItem('raidos_api_base', q.replace(/\/+$/, ''));
+    else localStorage.removeItem('raidos_api_base');
+  }
+  return (localStorage.getItem('raidos_api_base') || '').replace(/\/+$/, '');
+})();
 let API_MODE = 'demo'; // demo | mock | live — from server
 let feedTimer = null, lastFeedId = 0;
 
@@ -466,7 +479,7 @@ let currentChain='solana', currentSide='buy', chartType='candle', myUserId=null;
 async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers||{}) };
   if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`;
-  const res = await fetch(path, { ...opts, headers });
+  const res = await fetch(API_BASE + path, { ...opts, headers });
   let json = {}; try { json = await res.json(); } catch {}
   if (res.status === 401 && API_KEY) { clearKey('Session expired — reconnecting as demo'); }
   return { status: res.status, ok: res.ok, json };
@@ -478,7 +491,12 @@ function timeAgo(ts){ const s=Math.floor(Date.now()/1000-ts); if(s<60)return s+'
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ── AUTH ──
-function openKeyModal(){ document.getElementById('keyModal').classList.add('show'); document.getElementById('keyInput').focus(); }
+function openKeyModal(){
+  document.getElementById('keyModal').classList.add('show');
+  document.getElementById('keyInput').focus();
+  const lbl = document.getElementById('apiBaseLabel');
+  if (lbl) lbl.textContent = API_BASE || 'same-origin';
+}
 function closeKeyModal(){ document.getElementById('keyModal').classList.remove('show'); }
 function saveKey(){
   const k = document.getElementById('keyInput').value.trim();
