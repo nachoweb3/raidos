@@ -46,6 +46,29 @@ input:focus,select:focus{border-color:var(--accent)}
 .btn-ghost{background:var(--bg3);color:var(--muted)}
 .key-result{display:none;background:var(--bg0);border:1px solid var(--green);border-radius:8px;padding:10px;margin-bottom:10px;font-family:monospace;font-size:11px;word-break:break-all;color:var(--green2)}
 .key-result.show{display:block}
+.event-card{cursor:pointer;overflow:hidden;transition:transform .2s,border-color .2s}
+.event-card:hover{transform:translateY(-3px);border-color:rgba(124,92,255,.45)}
+.event-img{width:100%;height:140px;object-fit:cover;display:block}
+.event-img-fallback{display:flex;align-items:center;justify-content:center;font-size:40px;background:linear-gradient(135deg,rgba(124,92,255,.25),rgba(0,229,255,.12))}
+.event-body{padding:14px}
+.event-tag{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--accent2);background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.25);padding:2px 8px;border-radius:999px}
+.event-tag.dim{color:var(--muted);background:var(--bg2);border-color:var(--border)}
+.event-title{font-size:14px;font-weight:700;line-height:1.35;margin-bottom:10px}
+.event-outcomes{display:flex;gap:8px;flex-wrap:wrap}
+.outcome-pill{font-size:12px;font-weight:600;color:var(--text);background:var(--bg2);border:1px solid var(--border);padding:4px 10px;border-radius:999px}
+.outcome-pill b{color:var(--green)}
+.outcome-buy{font-size:13px;font-weight:700;color:var(--text);background:var(--bg2);border:1px solid var(--border);padding:8px 14px;border-radius:999px;cursor:pointer;transition:.15s}
+.outcome-buy:hover{background:linear-gradient(90deg,var(--accent),var(--accent3));color:#fff;border-color:transparent}
+.glass-card{background:rgba(255,255,255,.04);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.1);border-radius:16px}
+.key-result.err{display:block;border-color:#ef4444;color:#f87171}
+.key-result.ok{display:block;border-color:var(--green);color:var(--green2)}
+.social-login{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.btn-social{width:100%;padding:11px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text);transition:opacity .15s}
+.btn-social:hover{opacity:.85}
+.btn-x{color:#fff;background:#111;border-color:#333}
+.btn-google{color:#fff;background:#4285f4}
+.btn-phantom{color:#fff;background:linear-gradient(135deg,#ab9ff2,#6948f4)}
+.btn-metamask{color:#fff;background:linear-gradient(135deg,#f6851b,#e2761b)}
 
 /* ── HEADER ── */
 header{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:48px;background:var(--bg1);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
@@ -194,6 +217,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
     <a href="index.html" class="logo">Raid<span>OS</span></a>
     <div class="nav-tabs">
       <button class="active" onclick="showView('trade')">Trade</button>
+      <button onclick="showView('events')">Events</button>
       <button onclick="showView('launchpad')">Launch</button>
       <button onclick="showView('leaderboard')">Rank</button>
       <button onclick="showView('portfolio')">Portfolio</button>
@@ -221,13 +245,18 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 <!-- ═══ API KEY MODAL ═══ -->
 <div class="modal-backdrop" id="keyModal">
   <div class="modal">
-    <h3>🔑 Connect to your RaidOS node</h3>
-    <p>Paste the API key from <code>POST /api/auth/register</code> on your self-hosted trading API. The key stays in this browser (localStorage). Without a key, this dashboard runs in <b>DEMO MODE</b> with clearly-labeled simulated data.</p>
-  <p style="margin-top:8px;font-size:12px;opacity:.75">API endpoint: <code id="apiBaseLabel">same-origin</code> — change it by visiting this page with <code>?api=https://your-api-host</code></p>
+    <h3>🔑 Log in to trade live</h3>
+    <div class="social-login" id="socialLogin">
+      <button class="btn-social btn-x" id="btnX" onclick="loginX()" style="display:none">𝕏 Continue with X</button>
+      <button class="btn-social btn-google" id="btnGoogle" onclick="loginGoogle()" style="display:none">G Continue with Google</button>
+      <button class="btn-social btn-phantom" id="btnPhantom" onclick="loginPhantom()">◎ Phantom wallet</button>
+      <button class="btn-social btn-metamask" id="btnMetaMask" onclick="loginMetaMask()">🦊 MetaMask</button>
+    </div>
     <div class="key-result" id="keyResult"></div>
+    <p style="margin:10px 0 6px;font-size:12px;opacity:.65">— or paste an API key / create an account —</p>
     <input type="password" id="keyInput" placeholder="raidos_…" onkeydown="if(event.key==='Enter')saveKey()">
     <input type="password" id="bootstrapInput" placeholder="BOOTSTRAP_SECRET (optional — needed to create an account)" onkeydown="if(event.key==='Enter')registerNewUser()">
-    <p style="margin-top:8px;font-size:12px;opacity:.75">On the free tier the server DB is <b>ephemeral</b> — if your key stops working after the service idles, click <b>Create account</b> and paste the bootstrap secret to mint a fresh key.</p>
+    <p style="margin-top:8px;font-size:12px;opacity:.75">Wallet login signs a free message — no gas, no keys stored in your browser. Google/X appear when the host enables them.</p>
     <div class="row">
       <button class="btn-primary" onclick="saveKey()">Connect</button>
       <button class="btn-ghost" onclick="registerNewUser()">Create account</button>
@@ -376,6 +405,41 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
   </div>
 </div>
 
+<!-- ═══ EVENTS VIEW (prediction markets) ═══ -->
+<div id="view-events" style="display:none">
+  <div style="padding:20px 24px;max-width:1200px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div>
+        <h2 style="font-size:24px;font-weight:800">🎯 Trade What's Happening</h2>
+        <p class="muted" style="margin-top:4px">Live prediction markets — elections, BTC milestones, sports, macro. Buy YES / NO shares on what the world does next.</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('')">Trending</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('crypto')">Crypto</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('politics')">Politics</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('sports')">Sports</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('pop-culture')">Pop culture</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('markets')">Markets</button>
+      <button class="wallet-btn" style="padding:8px 16px" onclick="loadEvents('ai')">AI</button>
+    </div>
+    <div class="events-grid" id="eventsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px">
+      <div class="empty-state" style="padding:40px;text-align:center">Loading live events…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EVENT DETAIL MODAL ═══ -->
+<div class="modal-backdrop" id="eventModal">
+  <div class="modal" style="max-width:520px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <h3 id="eventModalTitle" style="margin:0">Event</h3>
+      <button class="btn-ghost" onclick="closeModal('eventModal')" style="padding:4px 12px">✕</button>
+    </div>
+    <div class="key-result" id="eventModalBody" style="display:block"></div>
+  </div>
+</div>
+
 <!-- ═══ LAUNCHPAD VIEW ═══ -->
 <div id="view-launchpad" style="display:none">
   <div style="padding:20px 24px;max-width:1200px;margin:0 auto">
@@ -520,6 +584,7 @@ function openKeyModal(){
   document.getElementById('keyInput').focus();
   const lbl = document.getElementById('apiBaseLabel');
   if (lbl) lbl.textContent = API_BASE || 'same-origin';
+  initProviders();
 }
 function closeKeyModal(){ document.getElementById('keyModal').classList.remove('show'); }
 function saveKey(){
@@ -552,6 +617,148 @@ async function registerNewUser(){
     showNote('Registration needs a fresh node or BOOTSTRAP_SECRET ('+(r.json.error||r.status)+')', 'err');
   }
 }
+/** Store a session API key from any login path and re-boot the dashboard. */
+function completeLogin(json){
+  localStorage.setItem(LS_KEY, json.apiKey);
+  API_KEY = json.apiKey;
+  localStorage.removeItem('raidos_ref');
+  closeKeyModal();
+  showNote(json.isNew ? 'Welcome! Account created — API key saved in this browser' : 'Signed in — API key saved in this browser', 'ok');
+  boot();
+}
+function setKeyResult(msg, ok){
+  const el = document.getElementById('keyResult');
+  if (el){ el.textContent = msg; el.className = 'key-result ' + (ok ? 'ok' : 'err'); }
+}
+
+// ── WALLET LOGIN (Phantom / MetaMask) ──
+async function loginPhantom(){
+  const provider = window.phantom?.solana || window.solana;
+  if (!provider || !provider.isPhantom){
+    setKeyResult('Phantom wallet not detected — install the Phantom browser extension, then retry', false);
+    return;
+  }
+  try {
+    const ch = await apiFetch('/api/auth/challenge', { method:'POST', body: JSON.stringify({ chain:'solana' }) });
+    if (!ch.ok) throw new Error(ch.json.error || 'challenge failed');
+    const { nonce, message } = ch.json;
+    const conn = await provider.connect();
+    const pubkey = conn.publicKey?.toString() || (conn.publicKey ? String(conn.publicKey) : '');
+    if (!pubkey) throw new Error('could not read wallet address');
+    const encoded = new TextEncoder().encode(message);
+    const sig = await provider.signMessage(encoded);
+    const sigHex = Array.from(sig.signature ?? sig).map(b=>b.toString(16).padStart(2,'0')).join('');
+    setKeyResult('Verifying signature…', true);
+    const r = await apiFetch('/api/auth/wallet', { method:'POST', body: JSON.stringify({ chain:'solana', address:pubkey, message, signature:sigHex, nonce }) });
+    if (!r.ok) throw new Error(r.json.error || 'login failed');
+    completeLogin(r.json);
+  } catch(e){ setKeyResult(String(e?.message || e), false); }
+}
+
+async function loginMetaMask(){
+  if (!window.ethereum || !window.ethereum.isMetaMask){
+    setKeyResult('MetaMask not detected — install the MetaMask extension, then retry', false);
+    return;
+  }
+  try {
+    const accounts = await window.ethereum.request({ method:'eth_requestAccounts' });
+    const address = accounts?.[0];
+    if (!address) throw new Error('no account authorized');
+    const ch = await apiFetch('/api/auth/challenge', { method:'POST', body: JSON.stringify({ chain:'evm' }) });
+    if (!ch.ok) throw new Error(ch.json.error || 'challenge failed');
+    const { nonce, message } = ch.json;
+    const signature = await window.ethereum.request({ method:'personal_sign', params:[message, address] });
+    setKeyResult('Verifying signature…', true);
+    const r = await apiFetch('/api/auth/wallet', { method:'POST', body: JSON.stringify({ chain:'evm', address, message, signature, nonce }) });
+    if (!r.ok) throw new Error(r.json.error || 'login failed');
+    completeLogin(r.json);
+  } catch(e){ setKeyResult(String(e?.message || e), false); }
+}
+
+// ── SOCIAL LOGIN (Google / X — enabled by the host) ──
+async function loginGoogle(){
+  const clientId = (await getProviders()).google;
+  if (!clientId){ setKeyResult('Google login is not enabled on this host yet', false); return; }
+  if (!window.google?.accounts?.id){
+    setKeyResult('Loading Google… click again in a second', true);
+    return;
+  }
+  window.google.accounts.id.initialize({
+    client_id: clientId,
+    callback: async (resp) => {
+      if (!resp?.credential){ setKeyResult('Google sign-in cancelled', false); return; }
+      setKeyResult('Verifying Google account…', true);
+      const r = await apiFetch('/api/auth/google', { method:'POST', body: JSON.stringify({ credential: resp.credential }) });
+      if (!r.ok) setKeyResult(r.json.error || 'Google login failed', false);
+      else completeLogin(r.json);
+    },
+  });
+  window.google.accounts.id.prompt();
+}
+
+function pkceVerifier(){
+  const bytes = new Uint8Array(48);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function pkceChallenge(verifier){
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(buf =>
+    btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')
+  );
+}
+
+async function loginX(){
+  const providers = await getProviders();
+  const clientId = providers.xClientId;
+  if (!clientId){ setKeyResult('X login is not enabled on this host yet', false); return; }
+  const redirectUri = location.origin + location.pathname;
+  const state = Math.random().toString(36).slice(2);
+  const verifier = pkceVerifier();
+  const challenge = await pkceChallenge(verifier);
+  sessionStorage.setItem('x_state', state);
+  sessionStorage.setItem('x_verifier', verifier);
+  sessionStorage.setItem('x_redirect', redirectUri);
+  const params = new URLSearchParams({
+    response_type:'code', client_id:clientId, redirect_uri:redirectUri,
+    scope:'users.read', state, code_challenge:challenge, code_challenge_method:'S256',
+  });
+  setKeyResult('Opening X authorization…', true);
+  location.href = 'https://twitter.com/i/oauth2/authorize?' + params.toString();
+}
+
+let _providersCache = null;
+async function getProviders(){
+  if (_providersCache) return _providersCache;
+  const r = await apiFetch('/api/auth/providers');
+  _providersCache = r.ok ? r.json : { google:null, x:false };
+  return _providersCache;
+}
+
+/** On load: if X redirected back with ?code=, exchange it for a session. */
+async function handleXCallback(){
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  const state = params.get('state');
+  if (!code || !state) return;
+  const saved = sessionStorage.getItem('x_state');
+  if (!saved || saved !== state) { setKeyResult('X sign-in state mismatch — try again', false); return; }
+  sessionStorage.removeItem('x_state');
+  const redirectUri = sessionStorage.getItem('x_redirect') || location.origin + location.pathname;
+  sessionStorage.removeItem('x_redirect');
+  const codeVerifier = sessionStorage.getItem('x_verifier') || '';
+  sessionStorage.removeItem('x_verifier');
+  setKeyResult('Verifying X account…', true);
+  const r = await apiFetch('/api/auth/x', { method:'POST', body: JSON.stringify({ code, redirectUri, codeVerifier }) });
+  if (!r.ok) setKeyResult(r.json.error || 'X login failed', false);
+  else completeLogin(r.json);
+}
+
+async function initProviders(){
+  const p = await getProviders();
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('btnGoogle', Boolean(p.google));
+  show('btnX', Boolean(p.x));
+}
 function clearKey(msg){
   localStorage.removeItem(LS_KEY); API_KEY=''; myUserId=null;
   if (msg) showNote(msg, 'err');
@@ -574,16 +781,82 @@ function applyAuthState(){
 
 // ── VIEWS ──
 function showView(v){
-  ['trade','launchpad','leaderboard','portfolio'].forEach(x=>{
+  ['trade','events','launchpad','leaderboard','portfolio'].forEach(x=>{
     document.getElementById('view-'+x).style.display = x===v ? (x==='trade'?'grid':'block') : 'none';
   });
   document.querySelectorAll('.nav-tabs button').forEach((b)=>{
     b.classList.toggle('active', b.textContent.toLowerCase().startsWith(v.slice(0,4)));
   });
+  if (v==='events') loadEvents('');
   if (v==='launchpad') renderLaunches();
   if (v==='leaderboard') renderLeaderboard();
   if (v==='portfolio') renderPortfolio();
 }
+
+// ── EVENTS (prediction markets) ──
+let currentEventCategory = '';
+let allEventsCache = [];
+async function loadEvents(category){
+  currentEventCategory = category;
+  const grid = document.getElementById('eventsGrid');
+  grid.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">Loading live events…</div>';
+  const sort = category ? '' : 'trending';
+  const url = `/api/prediction/events?limit=60` + (category ? `&category=${encodeURIComponent(category)}` : '') + (sort ? `&sort=${sort}` : '');
+  const r = await apiFetch(url);
+  if (!r.ok || !r.json.events){
+    grid.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">Could not load events — ' + esc(r.json.error || 'unavailable') + '</div>';
+    return;
+  }
+  allEventsCache = r.json.events;
+  renderEvents(r.json.events);
+}
+function renderEvents(events){
+  const grid = document.getElementById('eventsGrid');
+  if (!events.length){ grid.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">No events in this category right now.</div>'; return; }
+  grid.innerHTML = events.map(e => {
+    const top = e.markets?.[0];
+    const img = e.image || '';
+    const vol = fmtUsdc(e.volumeUsd || 0, 0);
+    return `<div class="glass-card event-card" onclick="openEvent('${esc(e.slug)}')">
+      ${img ? `<img src="${esc(img)}" class="event-img" loading="lazy" onerror="this.style.display='none'">` : '<div class="event-img event-img-fallback">🎯</div>'}
+      <div class="event-body">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <span class="event-tag">${esc(e.category || 'other')}</span>
+          <span class="event-tag dim">$${fmtUsdc(e.volumeUsd||0,0)} vol</span>
+        </div>
+        <div class="event-title">${esc(e.title)}</div>
+        ${top ? `<div class="event-outcomes">${top.outcomes.slice(0,2).map((o,i)=>{
+          const p = top.outcomePrices?.[i] ?? 0;
+          return `<span class="outcome-pill">${esc(o)} <b>${(p*100).toFixed(0)}¢</b></span>`;
+        }).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+async function openEvent(slug){
+  const r = await apiFetch('/api/prediction/events/' + encodeURIComponent(slug));
+  if (!r.ok || !r.json.event){ showNote('Could not load event', 'err'); return; }
+  const e = r.json.event;
+  const markets = e.markets || [];
+  document.getElementById('eventModalTitle').textContent = e.title;
+  const rows = markets.map(m => {
+    const outs = (m.outcomes||[]).map((o,i)=>{
+      const p = m.outcomePrices?.[i] ?? 0;
+      return `<button class="outcome-buy" onclick="buyOutcome('${esc(m.conditionId)}','${esc(o)}',${p})">${esc(o)} · <b>${(p*100).toFixed(0)}¢</b></button>`;
+    }).join('');
+    return `<div style="margin-bottom:14px;padding:12px;border:1px solid var(--border);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">${esc(m.question)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${outs}</div>
+      ${m.endDate ? `<div style="margin-top:8px;font-size:11px;color:var(--muted)">Ends ${esc(String(m.endDate).slice(0,10))} · Liquidity $${fmtUsdc(m.liquidityUsd||0,0)}</div>` : ''}
+    </div>`;
+  }).join('') || '<div class="empty-state">No open markets in this event.</div>';
+  document.getElementById('eventModalBody').innerHTML = rows + `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Prices are live market quotes from Polymarket. Trading execution is coming next — connect a Polygon wallet to buy shares.</div>`;
+  document.getElementById('eventModal').classList.add('show');
+}
+function buyOutcome(conditionId, outcome, price){
+  showNote('Execution coming soon — fund a Polygon wallet and I\'ll wire Polymarket CLOB next', 'err');
+}
+function closeEventModal(){ document.getElementById('eventModal').classList.remove('show'); }
 function showBottom(id, el){
   document.querySelectorAll('#bottom-tabs button').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
@@ -1028,6 +1301,8 @@ async function copyWalletAddress(addr, btn){
 
 // ── BOOT ──
 async function boot(){
+  initProviders();
+  handleXCallback();
   applyAuthState();
   // referral capture: ?ref=CODE is stored until the visitor registers
   const refParam = new URLSearchParams(location.search).get('ref');

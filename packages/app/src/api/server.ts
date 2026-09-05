@@ -29,6 +29,7 @@ import { Router, sendJson, readJsonBody, HttpError, type RequestContext } from "
 import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./executors.js";
 import { applySwapToPosition } from "../trading/positions.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
+import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
 
 export interface ServerOptions {
   /** Path to the SQLite database file. */
@@ -394,6 +395,28 @@ export class ApiServer {
       const deleted = this.wallets.deleteWallet(userId, walletId, password);
       if (!deleted) throw new HttpError(404, "wallet not found or wrong password");
       sendJson(ctx.res, 200, { deleted: true });
+    });
+
+    // ── Prediction markets (public market data from Polymarket) ──
+    this.router.publicRoute("GET", "/api/prediction/categories", (ctx) => {
+      sendJson(ctx.res, 200, { categories: PREDICTION_CATEGORIES });
+    });
+
+    this.router.publicRoute("GET", "/api/prediction/events", async (ctx) => {
+      const category = ctx.query.get("category") || undefined;
+      const trending = ctx.query.get("sort") === "trending";
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 30), 100);
+      const offset = Number(ctx.query.get("offset") ?? 0);
+      const events = await fetchPredictionEvents({ category, limit, offset, trending });
+      sendJson(ctx.res, 200, { events, count: events.length, source: "polymarket" });
+    });
+
+    this.router.publicRoute("GET", "/api/prediction/events/:slug", async (ctx) => {
+      const slug = ctx.params.slug;
+      if (!slug) throw new HttpError(400, "missing event slug");
+      const event = await fetchPredictionEventCached(slug);
+      if (!event) throw new HttpError(404, "event not found");
+      sendJson(ctx.res, 200, { event, source: "polymarket" });
     });
 
     // ── Trades ──
