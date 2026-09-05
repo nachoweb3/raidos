@@ -1,0 +1,12 @@
+# Keep the build context small and — critically — never ship secrets.
+# .freebuff holds bootstrap secrets / API keys; it must never enter an image.
+.git
+.freebuff
+**/node_modules
+**/dist
+docs
+site
+saur-bot
+render.yaml
+README.md
+README.es.md

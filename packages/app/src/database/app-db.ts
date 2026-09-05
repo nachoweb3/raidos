@@ -5,11 +5,16 @@
  */
 
 import Database from "better-sqlite3";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export class AppDb {
   private db: Database.Database;
 
   constructor(dbPath: string) {
+    // better-sqlite3 creates the file but not its parent dir — ensure it exists
+    // (matters for volume mounts like /data/raidos.db and local ./data/… paths)
+    mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.migrate();
