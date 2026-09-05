@@ -283,6 +283,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
       <div style="display:flex;gap:4px" id="bottom-tabs">
         <button class="active" onclick="showBottom('feed',this)">Feed</button>
         <button onclick="showBottom('trades',this)">My Trades</button>
+        <button onclick="showBottom('holders',this)">Holders</button>
         <button onclick="showBottom('depth',this)">Depth Chart</button>
       </div>
     </div>
@@ -292,6 +293,17 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
         <table class="trades-table">
           <thead><tr><th>Time</th><th>Side</th><th>Token</th><th>Amount</th><th>Fee</th><th>Status</th></tr></thead>
           <tbody id="myTrades"><tr><td colspan="6" class="empty-state">Connect to load your trades</td></tr></tbody>
+        </table>
+      </div>
+      <div id="bottom-holders" style="display:none">
+        <div style="padding:8px 14px;display:flex;gap:8px;align-items:center">
+          <input type="text" id="holdersToken" placeholder="Token address" style="flex:1;background:var(--bg0)">
+          <button class="pct-btns" style="padding:6px 12px" onclick="loadHolders()">Load</button>
+          <span class="mode-chip demo" id="holdersSource"></span>
+        </div>
+        <table class="trades-table">
+          <thead><tr><th>#</th><th>Address</th><th>Share</th><th></th></tr></thead>
+          <tbody id="holdersBody"><tr><td colspan="4" class="empty-state">Enter a token address and load</td></tr></tbody>
         </table>
       </div>
       <div id="bottom-depth" style="display:none"><canvas class="depth-canvas" id="depthCanvas" style="width:100%;height:160px"></canvas></div>
@@ -526,11 +538,32 @@ function showView(v){
 function showBottom(id, el){
   document.querySelectorAll('#bottom-tabs button').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
-  ['feed','trades','depth'].forEach(x=>{
+  ['feed','trades','holders','depth'].forEach(x=>{
     document.getElementById('bottom-'+x).style.display = x===id ? 'block' : 'none';
   });
   if (id==='trades') renderMyTrades();
   if (id==='depth') renderDepthChart();
+  if (id==='holders'){ document.getElementById('holdersToken').value = document.getElementById('tokenAddress').value || CHAINS[currentChain].usdc; loadHolders(); }
+}
+
+// ── HOLDERS (pluggable providers; labeled honestly) ──
+async function loadHolders(){
+  const token = (document.getElementById('holdersToken').value || document.getElementById('tokenAddress').value).trim();
+  if (!token) return;
+  const body = document.getElementById('holdersBody');
+  body.innerHTML = '<tr><td colspan="4" class="empty-state">Loading holders…</td></tr>';
+  const r = await apiFetch(`/api/tokens/${currentChain}/${encodeURIComponent(token)}/holders?limit=15`);
+  if (!r.ok){ body.innerHTML = '<tr><td colspan="4" class="empty-state">'+esc(r.json.error||'unavailable')+'</td></tr>'; return; }
+  const chip = document.getElementById('holdersSource');
+  chip.textContent = r.json.labeled === 'SIMULATED' ? 'SIMULATED' : 'on-chain · '+r.json.source;
+  chip.className = 'mode-chip ' + (r.json.labeled === 'SIMULATED' ? 'demo' : 'live');
+  const stats = r.json.stats||{};
+  body.innerHTML = (r.json.holders||[]).map(h=>`
+    <tr><td class="dim">${h.rank}</td>
+    <td class="mono" title="${esc(h.address)}">${esc(shortAddr(h.address))}</td>
+    <td style="font-weight:600">${h.sharePct}%</td>
+    <td><div class="progress-bar" style="margin:0"><div class="fill" style="width:${Math.min(100,h.sharePct*3)}%"></div></div></td></tr>`).join('')
+    + (stats.holdersCount ? `<tr><td colspan="4" class="dim" style="text-align:center">${stats.holdersCount.toLocaleString()} total holders</td></tr>` : '');
 }
 function switchChain(c){ currentChain=c; updateTokenBar(); }
 

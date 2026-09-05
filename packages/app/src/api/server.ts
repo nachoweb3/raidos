@@ -26,6 +26,7 @@ import { AuthService, AuthError } from "./auth.js";
 import { Router, sendJson, readJsonBody, HttpError, type RequestContext } from "./router.js";
 import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./executors.js";
 import { applySwapToPosition } from "../trading/positions.js";
+import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 
 export interface ServerOptions {
   /** Path to the SQLite database file. */
@@ -67,6 +68,7 @@ export class ApiServer {
   private readonly router = new Router();
   private readonly siteDir: string | null;
   private readonly bootstrapSecret?: string;
+  private readonly holdersProviders: HoldersProvider[];
   private server: http.Server | null = null;
   private readonly port: number;
 
@@ -79,6 +81,10 @@ export class ApiServer {
     // <repo>/packages/app/{src|dist}/api/server.js → 4 levels up = repo root /site
     const defaultSiteDir = resolve(fileURLToPath(new URL("../../../../site/", import.meta.url)));
     this.siteDir = options.siteDir !== undefined ? options.siteDir : (process.env.SITE_DIR ?? defaultSiteDir);
+
+    // Holders providers: Blockscout (keyless) where available, mock fallback.
+    // LIVE_HOLDER_DATA=1 forces live providers even in mock mode (read-only).
+    this.holdersProviders = [new BlockscoutHoldersProvider(), new MockHoldersProvider()];
 
     this.auth = new AuthService(this.db);
     this.wallets = new WalletManager(this.db);
@@ -477,6 +483,33 @@ export class ApiServer {
       const userId = this.requireUserId(ctx);
       const status = ctx.query.get("status");
       sendJson(ctx.res, 200, { positions: this.db.getUserPositions(userId, status, 100) });
+    });
+
+    // ── Token holders (fomo-style token page) ──
+    this.router.publicRoute("GET", "/api/tokens/:chain/:address/holders", async (ctx) => {
+      const chain = ctx.params.chain ?? "";
+      const address = ctx.params.address ?? "";
+      if (!chain || !address || !getChain(chain)) throw new HttpError(400, `unknown chain: ${chain}`);
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 20), 50);
+      const forceMock = this.appMode === "mock" && process.env.LIVE_HOLDER_DATA !== "1";
+      const providers = forceMock
+        ? this.holdersProviders.filter((p) => p.id === "mock")
+        : this.holdersProviders;
+      const provider = pickHoldersProvider(chain, providers);
+      if (!provider) throw new HttpError(404, `no holders provider for chain "${chain}"`);
+      try {
+        const result = await provider.getHolders(chain, address, limit);
+        sendJson(ctx.res, 200, { ...result, labeled: provider.id === "mock" ? "SIMULATED" : "on-chain" });
+      } catch (err) {
+        // live provider failed → fall back to mock, but say so honestly
+        const mock = new MockHoldersProvider();
+        const result = await mock.getHolders(chain, address, limit);
+        sendJson(ctx.res, 200, {
+          ...result,
+          labeled: "SIMULATED",
+          fallbackReason: err instanceof Error ? err.message : String(err),
+        });
+      }
     });
 
     // ── Social feed ──

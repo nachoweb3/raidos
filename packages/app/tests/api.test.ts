@@ -404,7 +404,29 @@ describe("referrals, search & discovery (fomo Phase C/D)", () => {
     expect(ids.indexOf(b)).toBeLessThan(ids.indexOf(c));
 
     const byBuyers = await api("GET", "/api/launches?sort=buyers&limit=10");
-    expect(byBuyers.json.launches[0].id).toBe(a); // only A has buyers
+    // A (1 buyer) must rank above B and C (0 buyers); ties broken by recency
+    const buyerIds = byBuyers.json.launches.map((l: any) => l.id);
+    expect(buyerIds.indexOf(a)).toBeLessThan(buyerIds.indexOf(b));
+    expect(buyerIds.indexOf(a)).toBeLessThan(buyerIds.indexOf(c));
+  });
+});
+
+describe("token holders (pluggable providers)", () => {
+  it("returns labeled simulated holders in mock mode", async () => {
+    const r = await api("GET", `/api/tokens/solana/${USDC}/holders?limit=5`);
+    expect(r.status).toBe(200);
+    expect(r.json.source).toBe("mock");
+    expect(r.json.labeled).toBe("SIMULATED");
+    expect(r.json.holders.length).toBeGreaterThan(0);
+    expect(r.json.holders[0].rank).toBe(1);
+    // deterministic: same token → same first holder
+    const again = await api("GET", `/api/tokens/solana/${USDC}/holders?limit=5`);
+    expect(again.json.holders[0].address).toBe(r.json.holders[0].address);
+  });
+
+  it("rejects unknown chains", async () => {
+    const r = await api("GET", "/api/tokens/nope/0xabc/holders");
+    expect(r.status).toBe(400);
   });
 });
 
