@@ -6,6 +6,7 @@
 
 import { ethers } from "ethers";
 import bs58 from "bs58";
+import { Keypair } from "@solana/web3.js";
 import { encrypt, decrypt, type EncryptedPayload } from "./crypto.js";
 import { CHAINS, type ChainConfig } from "../chains/config.js";
 
@@ -48,7 +49,6 @@ export class WalletManager {
     const privateKey = bs58.encode(keypairBytes);
 
     // Derive public address from the keypair
-    const { Keypair } = require("@solana/web3.js");
     const keypair = Keypair.fromSeed(keypairBytes);
     const address = keypair.publicKey.toBase58();
 
@@ -81,7 +81,6 @@ export class WalletManager {
 
     if (chain === "solana") {
       const decoded = bs58.decode(privateKey);
-      const { Keypair } = require("@solana/web3.js");
       const keypair = Keypair.fromSecretKey(decoded);
       address = keypair.publicKey.toBase58();
     } else {
