@@ -60,6 +60,24 @@ describe("prediction markets module", () => {
     expect(m.orderBookEnabled).toBe(true);
   });
 
+  it("derives YES/NO prices for single-outcome markets", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => [gammaEvent({
+        markets: [{
+          id: "m1", question: "Fed cut 50bps?", slug: "fed-50", conditionId: "0x1",
+          outcomes: [], outcomePrices: [], bestAsk: "0.35", lastTradePrice: "0.35",
+          enableOrderBook: true, acceptingOrders: true, liquidity: "100",
+        }],
+      })],
+    })) as any);
+    const events = await fetchPredictionEvents({ limit: 5 });
+    const m = events[0]!.markets[0]!;
+    expect(m.outcomes).toEqual(["Yes", "No"]);
+    expect(m.outcomePrices[0]).toBe(0.35);
+    expect(m.outcomePrices[1]).toBeCloseTo(0.65);
+  });
+
   it("passes category + trending params to the Gamma API", async () => {
     let calledUrl = "";
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

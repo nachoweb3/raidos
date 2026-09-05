@@ -62,11 +62,24 @@ function toNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Map a Gamma market object into our normalized shape. */
+/**
+ * Map a Gamma market object into our normalized shape.
+ * Multi-outcome markets carry `outcomes` + `outcomePrices`; single-outcome
+ * event markets often leave those empty and only expose `lastTradePrice` /
+ * `bestAsk` — fall back to those so prices always render.
+ */
 function mapMarket(m: any): PredictionMarket {
   const rawPrices: unknown[] = Array.isArray(m.outcomePrices) ? m.outcomePrices : [];
-  const outcomes: string[] = Array.isArray(m.outcomes) ? m.outcomes : [];
-  const prices = outcomes.map((_, i) => toNumber(rawPrices[i]));
+  let outcomes: string[] = Array.isArray(m.outcomes) && m.outcomes.length ? m.outcomes : [];
+  let prices: number[] = [];
+  if (outcomes.length) {
+    prices = outcomes.map((_, i) => toNumber(rawPrices[i]));
+  } else {
+    // Single-outcome market: derive a YES/NO pair from the last trade price.
+    const p = m.lastTradePrice != null ? toNumber(m.lastTradePrice) : (m.bestAsk != null ? toNumber(m.bestAsk) : 0);
+    outcomes = ["Yes", "No"];
+    prices = [p, Math.max(0, 1 - p)];
+  }
   return {
     id: String(m.id ?? ""),
     question: String(m.question ?? ""),
