@@ -44,12 +44,10 @@ export class WalletManager {
 
   /** Create a fresh Solana wallet (keypair). */
   createSolanaWallet(userId: number, password: string, label = "Primary"): PublicWallet {
-    // Solana keypair: generate 32 random bytes → base58 private key → public key
-    const keypairBytes = randomBytes(32);
-    const privateKey = bs58.encode(keypairBytes);
-
-    // Derive public address from the keypair
-    const keypair = Keypair.fromSeed(keypairBytes);
+    // Full 64-byte secret key (seed + public key) so Keypair.fromSecretKey
+    // round-trips: import/execute use fromSecretKey, not fromSeed.
+    const keypair = Keypair.generate();
+    const privateKey = bs58.encode(keypair.secretKey);
     const address = keypair.publicKey.toBase58();
 
     const encrypted = encrypt(privateKey, password);
@@ -150,4 +148,3 @@ export class WalletManager {
 
 // Inline import to avoid circular deps
 import { verifyPassword as verifyPasswordLocal } from "./crypto.js";
-import { randomBytes } from "node:crypto";
