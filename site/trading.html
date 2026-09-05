@@ -477,7 +477,7 @@ let API_KEY = localStorage.getItem(LS_KEY) || '';
 // Defaults to the hosted RaidOS trading API (live deployment). Override per
 // visitor with ?api=https://your-api-host — it persists in localStorage.
 // Clear the override with ?api= (empty).
-const DEFAULT_API = 'https://raidos-api.onrender.com';
+const DEFAULT_API = 'https://raidos-api.fly.dev';
 const API_BASE = (() => {
   const q = new URLSearchParams(location.search).get('api');
   if (q !== null) {
