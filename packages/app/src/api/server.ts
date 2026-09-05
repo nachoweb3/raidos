@@ -22,7 +22,9 @@ import { SocialTrading } from "../profiles/social.js";
 import { RevenueEngine } from "../trading/revenue.js";
 import { TradeHistory } from "../trading/history.js";
 import { getChain, CHAINS } from "../chains/config.js";
-import { AuthService, AuthError } from "./auth.js";
+import { AuthService, AuthError, ChallengeStore } from "./auth.js";
+import { verifySolanaSignature, verifyEvmSignature, normalizeEvmAddress } from "./verify-login.js";
+import { verifyGoogleIdToken, verifyXCode } from "./providers.js";
 import { Router, sendJson, readJsonBody, HttpError, type RequestContext } from "./router.js";
 import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./executors.js";
 import { applySwapToPosition } from "../trading/positions.js";
@@ -59,6 +61,7 @@ export class ApiServer {
   readonly db: AppDb;
   readonly appMode: "live" | "mock";
   private readonly auth: AuthService;
+  private readonly challenges = new ChallengeStore();
   private readonly wallets: WalletManager;
   private readonly trading: TradingEngine;
   private readonly launchpad: TokenLaunchpad;
@@ -226,6 +229,75 @@ export class ApiServer {
       if (refCode && !referrer) throw new HttpError(400, `unknown referral code: ${refCode}`);
       const { userId, apiKey, refCode: myRefCode } = this.auth.register(this.bootstrapSecret, secret, referrer?.user_id);
       sendJson(ctx.res, 201, { userId, apiKey, refCode: myRefCode, referredBy: referrer?.user_id ?? null, mode: this.appMode });
+    });
+
+    // ── Social / wallet login (public) ──
+    this.router.publicRoute("POST", "/api/auth/challenge", (ctx) => {
+      const chain = ctx.body.chain === "evm" ? "evm" : "solana";
+      const { nonce, message } = this.challenges.issue(chain);
+      sendJson(ctx.res, 200, { nonce, message });
+    });
+
+    this.router.publicRoute("POST", "/api/auth/wallet", async (ctx) => {
+      const chain = ctx.body.chain === "evm" ? "evm" : "solana";
+      const address = this.str(ctx, "address");
+      const message = this.str(ctx, "message");
+      const signature = this.str(ctx, "signature");
+      const nonce = this.str(ctx, "nonce");
+      if (!this.challenges.consume(nonce)) throw new HttpError(400, "expired or invalid challenge — request a new one");
+
+      let externalId: string;
+      let displayName = "";
+      if (chain === "solana") {
+        if (!verifySolanaSignature(address, message, signature)) throw new HttpError(401, "signature verification failed");
+        externalId = address; // base58 — unique by construction
+        displayName = `${address.slice(0, 4)}…${address.slice(-4)}`;
+      } else {
+        const recovered = await verifyEvmSignature(message, signature);
+        if (!recovered || recovered !== normalizeEvmAddress(address)) throw new HttpError(401, "signature verification failed");
+        externalId = recovered; // lowercase hex
+        displayName = `${address.slice(0, 6)}…${address.slice(-4)}`;
+      }
+
+      const login = this.auth.loginWithIdentity(chain, externalId, displayName);
+      sendJson(ctx.res, 200, {
+        userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
+        provider: chain, displayName, mode: this.appMode,
+      });
+    });
+
+    this.router.publicRoute("POST", "/api/auth/google", async (ctx) => {
+      const credential = this.str(ctx, "credential");
+      const profile = await verifyGoogleIdToken(credential, process.env.GOOGLE_CLIENT_ID ?? "");
+      const login = this.auth.loginWithIdentity("google", profile.sub, profile.name || profile.email, profile.picture);
+      sendJson(ctx.res, 200, {
+        userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
+        provider: "google", displayName: profile.name || profile.email, email: profile.email,
+        avatarUrl: profile.picture, mode: this.appMode,
+      });
+    });
+
+    this.router.publicRoute("POST", "/api/auth/x", async (ctx) => {
+      const code = this.str(ctx, "code");
+      const redirectUri = this.str(ctx, "redirectUri");
+      const codeVerifier = this.str(ctx, "codeVerifier");
+      const profile = await verifyXCode(code, redirectUri, codeVerifier);
+      if (!profile) throw new HttpError(501, "X login is not configured (set X_CLIENT_ID / X_CLIENT_SECRET)");
+      const login = this.auth.loginWithIdentity("x", profile.id, profile.name || `@${profile.username}`);
+      sendJson(ctx.res, 200, {
+        userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
+        provider: "x", displayName: profile.name || `@${profile.username}`, username: profile.username,
+        mode: this.appMode,
+      });
+    });
+
+    // ── Provider config (public) — what the frontend should render ──
+    this.router.publicRoute("GET", "/api/auth/providers", (ctx) => {
+      sendJson(ctx.res, 200, {
+        google: process.env.GOOGLE_CLIENT_ID ?? null,
+        x: Boolean(process.env.X_CLIENT_ID && process.env.X_CLIENT_SECRET),
+        xClientId: process.env.X_CLIENT_ID ?? null,
+      });
     });
 
     this.router.route("GET", "/api/me", (ctx) => {

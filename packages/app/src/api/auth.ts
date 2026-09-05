@@ -28,6 +28,10 @@ export function extractBearerToken(authorization: string | undefined): string | 
 /** Minimal db surface needed for auth. */
 export interface AuthDb {
   getUserByApiKeyHash(keyHash: string): { user_id: number; api_key_hash: string; created_at: number } | undefined;
+  getUserById(userId: number): { user_id: number; ref_code: string | null; created_at: number } | undefined;
+  getUserByIdentity(provider: string, externalId: string): { user_id: number } | undefined;
+  createIdentity(provider: string, externalId: string, userId: number, displayName?: string, avatarUrl?: string): boolean;
+  rotateApiKey(userId: number): string;
   countUsers(): number;
   createUser(userId: number, apiKeyHash: string, refCode?: string, referredBy?: number): void;
 }
@@ -65,6 +69,67 @@ export class AuthService {
     if (!token) return null;
     const user = this.db.getUserByApiKeyHash(hashApiKey(token));
     return user ? user.user_id : null;
+  }
+
+  /**
+   * Log in (or sign up) via an external identity (wallet address, Google sub,
+   * X user id). Finds the linked user, or creates one when the identity is new
+   * (no bootstrap secret needed — social login is self-serve by design).
+   * Returns a fresh API key for the session plus the user id.
+   */
+  loginWithIdentity(
+    provider: string,
+    externalId: string,
+    displayName = "",
+    avatarUrl = ""
+  ): { userId: number; apiKey: string; isNew: boolean } {
+    let user = this.db.getUserByIdentity(provider, externalId);
+    let isNew = false;
+    if (!user) {
+      // Fresh identity → create the user first, then link the identity.
+      const userId = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+      const { apiKey, keyHash } = generateApiKey();
+      const refCode = userId.toString(36);
+      this.db.createUser(userId, keyHash, refCode);
+      this.db.createIdentity(provider, externalId, userId, displayName, avatarUrl);
+      return { userId, apiKey, isNew: true };
+    }
+    // Existing identity → rotate the API key so each login is a fresh session.
+    const apiKey = this.db.rotateApiKey(user.user_id);
+    return { userId: user.user_id, apiKey, isNew: false };
+  }
+}
+
+/**
+ * In-memory one-time nonces for wallet sign-in challenges.
+ * Server issues a signed message; the wallet signs it; we verify once.
+ * Entries expire after CHALLENGE_TTL_MS and are single-use.
+ */
+export class ChallengeStore {
+  private nonces = new Map<string, { exp: number }>();
+
+  constructor(private ttlMs = 5 * 60 * 1000) {}
+
+  /** Issue a fresh challenge for a chain. Returns nonce + message to sign. */
+  issue(chain: "solana" | "evm", domain = "raidos"): { nonce: string; message: string } {
+    const nonce = randomBytes(16).toString("hex");
+    const exp = Date.now() + this.ttlMs;
+    this.nonces.set(nonce, { exp });
+    const message = [
+      `${domain} wants you to sign in with your ${chain === "solana" ? "Solana" : "EVM"} wallet`,
+      "This signature proves you own this wallet. It will never cost gas.",
+      `Nonce: ${nonce}`,
+      `Issued: ${new Date().toISOString()}`,
+    ].join("\n");
+    return { nonce, message };
+  }
+
+  /** Consume a nonce. Returns true exactly once, within TTL. */
+  consume(nonce: string): boolean {
+    const entry = this.nonces.get(nonce);
+    if (!entry) return false;
+    this.nonces.delete(nonce);
+    return Date.now() <= entry.exp;
   }
 }
 

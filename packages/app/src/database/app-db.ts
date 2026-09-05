@@ -7,6 +7,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { generateApiKey } from "../api/auth.js";
 
 export class AppDb {
   private db: Database.Database;
@@ -30,6 +31,19 @@ export class AppDb {
         referred_by INTEGER,
         created_at INTEGER NOT NULL
       );
+
+      -- External identities (wallet addresses, Google, X) → user link
+      CREATE TABLE IF NOT EXISTS identities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,          -- 'solana' | 'evm' | 'google' | 'x'
+        external_id TEXT NOT NULL,       -- wallet address | google sub | x user id
+        user_id INTEGER NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        avatar_url TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        UNIQUE(provider, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_identities_user ON identities(user_id);
 
       -- Wallets (encrypted private keys per user per chain)
       CREATE TABLE IF NOT EXISTS wallets (
@@ -283,6 +297,36 @@ export class AppDb {
   countReferrals(userId: number): number {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE referred_by = ?").get(userId) as { n: number };
     return row.n;
+  }
+
+  // ── Identity methods (wallet / Google / X login) ──────────────────────
+
+  /** Find the user linked to an external identity, or undefined. */
+  getUserByIdentity(provider: string, externalId: string) {
+    const row = this.db.prepare(
+      "SELECT user_id FROM identities WHERE provider = ? AND external_id = ?"
+    ).get(provider, externalId) as { user_id: number } | undefined;
+    return row ? this.getUserById(row.user_id) : undefined;
+  }
+
+  /** Link an external identity to a user. Returns true when newly created. */
+  createIdentity(provider: string, externalId: string, userId: number, displayName = "", avatarUrl = "") {
+    const info = this.db.prepare(
+      "INSERT OR IGNORE INTO identities (provider, external_id, user_id, display_name, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(provider, externalId, userId, displayName, avatarUrl, Math.floor(Date.now() / 1000));
+    return info.changes > 0;
+  }
+
+  /** List the external identities linked to a user. */
+  getUserIdentities(userId: number) {
+    return this.db.prepare("SELECT provider, external_id, display_name, avatar_url FROM identities WHERE user_id = ?").all(userId) as any[];
+  }
+
+  /** Rotate a user's API key: returns the fresh plaintext key (hash stored). */
+  rotateApiKey(userId: number): string {
+    const { apiKey, keyHash } = generateApiKey();
+    this.db.prepare("UPDATE users SET api_key_hash = ? WHERE user_id = ?").run(keyHash, userId);
+    return apiKey;
   }
 
   // ── Wallet methods ────────────────────────────────────────────────────

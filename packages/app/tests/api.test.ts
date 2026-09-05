@@ -430,6 +430,86 @@ describe("token holders (pluggable providers)", () => {
   });
 });
 
+describe("wallet login (Phantom / MetaMask)", () => {
+  it("issues a challenge with a nonce + message", async () => {
+    const r = await api("POST", "/api/auth/challenge", { chain: "solana" });
+    expect(r.status).toBe(200);
+    expect(r.json.nonce).toBeTruthy();
+    expect(r.json.message).toContain("Nonce:");
+  });
+
+  it("rejects a tampered signature", async () => {
+    const ch = await api("POST", "/api/auth/challenge", { chain: "solana" });
+    const r = await api("POST", "/api/auth/wallet", {
+      chain: "solana",
+      address: "So11111111111111111111111111111111111111112",
+      message: ch.json.message,
+      signature: "00".repeat(64),
+      nonce: ch.json.nonce,
+    });
+    expect(r.status).toBe(401);
+  });
+
+  it("rejects a replayed nonce (single-use challenges)", async () => {
+    const ch = await api("POST", "/api/auth/challenge", { chain: "evm" });
+    const bad = await api("POST", "/api/auth/wallet", {
+      chain: "evm", address: "0x0000000000000000000000000000000000000000",
+      message: ch.json.message, signature: "00", nonce: ch.json.nonce,
+    });
+    expect(bad.status).toBe(401);
+    const replay = await api("POST", "/api/auth/wallet", {
+      chain: "evm", address: "0x0000000000000000000000000000000000000000",
+      message: ch.json.message, signature: "00", nonce: ch.json.nonce,
+    });
+    expect(replay.status).toBe(400); // nonce already consumed
+  });
+
+  it("logs in a real EVM wallet (MetaMask personal_sign)", async () => {
+    const { ethers } = await import("ethers");
+    const signer = ethers.Wallet.createRandom();
+    const ch = await api("POST", "/api/auth/challenge", { chain: "evm" });
+    const signature = await signer.signMessage(ch.json.message);
+    const r = await api("POST", "/api/auth/wallet", {
+      chain: "evm", address: signer.address, message: ch.json.message, signature, nonce: ch.json.nonce,
+    });
+    expect(r.status).toBe(200);
+    expect(r.json.apiKey).toMatch(/^raidos_/);
+    expect(r.json.isNew).toBe(true);
+    // Second login with same wallet → same user, fresh key, not new
+    const ch2 = await api("POST", "/api/auth/challenge", { chain: "evm" });
+    const sig2 = await signer.signMessage(ch2.json.message);
+    const r2 = await api("POST", "/api/auth/wallet", {
+      chain: "evm", address: signer.address, message: ch2.json.message, signature: sig2, nonce: ch2.json.nonce,
+    });
+    expect(r2.status).toBe(200);
+    expect(r2.json.userId).toBe(r.json.userId);
+    expect(r2.json.isNew).toBe(false);
+  });
+
+  it("logs in a real Solana wallet (Phantom ed25519)", async () => {
+    const { Keypair } = await import("@solana/web3.js");
+    const { ed25519 } = await import("@noble/curves/ed25519");
+    const kp = Keypair.generate();
+    const ch = await api("POST", "/api/auth/challenge", { chain: "solana" });
+    const msg = new TextEncoder().encode(ch.json.message);
+    // ed25519 seed (32 bytes) → public key is derived from it, matches kp.publicKey
+    const signature = Buffer.from(ed25519.sign(msg, kp.secretKey.subarray(0, 32))).toString("hex");
+    const r = await api("POST", "/api/auth/wallet", {
+      chain: "solana", address: kp.publicKey.toBase58(), message: ch.json.message, signature, nonce: ch.json.nonce,
+    });
+    expect(r.status).toBe(200);
+    expect(r.json.apiKey).toMatch(/^raidos_/);
+    expect(r.json.isNew).toBe(true);
+  });
+
+  it("reports provider config", async () => {
+    const r = await api("GET", "/api/auth/providers");
+    expect(r.status).toBe(200);
+    expect(r.json).toHaveProperty("google");
+    expect(r.json).toHaveProperty("x");
+  });
+});
+
 describe("static & misc", () => {
   it("serves the dashboard when siteDir points at the repo site/", async () => {
     const dir3 = mkdtempSync(join(tmpdir(), "raidos-api-test3-"));
