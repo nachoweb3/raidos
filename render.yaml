@@ -24,7 +24,7 @@ services:
     repo: https://github.com/nachoweb3/raidos
     branch: main
     autoDeploy: true
-    buildCommand: cd packages/app && corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: cd packages/app && corepack enable && pnpm install --no-frozen-lockfile && pnpm build
     startCommand: cd packages/app && node dist/api/main.js
     healthCheckPath: /api/health
     # disk:                 # ← uncomment together with plan: starter
