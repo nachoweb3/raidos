@@ -1,8 +1,7 @@
-# RaidOS Trading API — Docker image (used by Railway, also works on any Docker host)
+# RaidOS Trading API — Docker image (used by Fly.io, also works on any Docker host)
 #
 # Builds packages/app (a standalone pnpm package) and runs the API server.
-# Mirrors the previous Render buildCommand:
-#   cd packages/app && corepack enable && pnpm install && pnpm build
+# Build: cd packages/app && corepack enable && pnpm install && pnpm build
 #
 # Runtime env vars (set in the host dashboard):
 #   DB_PATH          SQLite file path, e.g. /data/raidos.db (persistent volume)
