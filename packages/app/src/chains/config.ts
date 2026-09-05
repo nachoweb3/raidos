@@ -53,7 +53,7 @@ const SOLANA: ChainConfig = {
   usdcDecimals: 6,
   wrappedNative: "So11111111111111111111111111111111111111112",
   dexAggregator: "jupiter",
-  dexApiUrl: "https://quote-api.jup.ag/v6",
+  dexApiUrl: "https://api.jup.ag/swap/v1",
   bridgeProvider: "lifi",
   supportsLaunches: true,
 };

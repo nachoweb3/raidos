@@ -52,7 +52,10 @@ export async function executeSolanaSwap(params: {
   // Request the serialized swap transaction from Jupiter
   const res = await fetch(`${swapsApiUrl}/swap`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(process.env.JUPITER_API_KEY ? { "x-api-key": process.env.JUPITER_API_KEY } : {}),
+    },
     body: JSON.stringify({
       quoteResponse: params.quoteResponse,
       userPublicKey: params.walletAddress,

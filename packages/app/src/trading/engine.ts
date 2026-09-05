@@ -137,7 +137,7 @@ export class TradingEngine {
     return this.getEvmQuote(params, fromConfig, fee);
   }
 
-  /** Jupiter quote for Solana swaps */
+  /** Jupiter quote for Solana swaps (Swap API v1 — v6 was sunset Oct 2025) */
   private async getJupiterQuote(params: TradeParams, config: ChainConfig, fee: string): Promise<TradeQuote> {
     const url = new URL(`${config.dexApiUrl}/quote`);
     url.searchParams.set("inputMint", params.sellToken);
@@ -145,11 +145,13 @@ export class TradingEngine {
     url.searchParams.set("amount", params.amount);
     url.searchParams.set("slippageBps", String(params.slippageBps ?? 50));
 
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), {
+      headers: process.env.JUPITER_API_KEY ? { "x-api-key": process.env.JUPITER_API_KEY } : undefined,
+    });
     if (!res.ok) throw new Error(`Jupiter quote failed: ${res.status}`);
     const data = await res.json() as {
       inAmount: string; outAmount: string; priceImpactPct: string;
-      routePlan: { swapInfo: { dexLabel: string }[] }[];
+      routePlan: { swapInfo: { label: string } }[];
     };
 
     return {
@@ -162,7 +164,7 @@ export class TradingEngine {
       priceImpact: data.priceImpactPct,
       feeUsdc: fee,
       gasEstimate: "5000", // Solana tx fee ~5000 lamports
-      route: data.routePlan.map((r) => r.swapInfo.map((s) => s.dexLabel).join("→")).join(" | "),
+      route: data.routePlan.map((r) => r.swapInfo.label).join(" | "),
       aggregator: "jupiter",
       expiresAt: Date.now() + 30_000,
     };
