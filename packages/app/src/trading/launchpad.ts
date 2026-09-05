@@ -265,6 +265,11 @@ export class TokenLaunchpad {
     return this.db.listLaunchesByUser(userId, limit).map((l) => this.formatLaunch(l));
   }
 
+  /** Format a raw launch row (also used by API search results). */
+  formatLaunchPublic(l: LaunchRow): PublicLaunch {
+    return this.formatLaunch(l);
+  }
+
   private formatLaunch(l: LaunchRow): PublicLaunch {
     const threshold = BigInt(l.graduate_threshold);
     const raised = BigInt(l.raised_usdc);

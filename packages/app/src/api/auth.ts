@@ -29,7 +29,7 @@ export function extractBearerToken(authorization: string | undefined): string | 
 export interface AuthDb {
   getUserByApiKeyHash(keyHash: string): { user_id: number; api_key_hash: string; created_at: number } | undefined;
   countUsers(): number;
-  createUser(userId: number, apiKeyHash: string): void;
+  createUser(userId: number, apiKeyHash: string, refCode?: string, referredBy?: number): void;
 }
 
 export class AuthService {
@@ -43,8 +43,9 @@ export class AuthService {
   /**
    * Register a new user. Requires the bootstrap secret once at least one user
    * exists (so a public deployment cannot be flooded with accounts).
+   * Every user gets a unique referral code; `referredBy` attributes signup.
    */
-  register(bootstrapSecret: string | undefined, providedSecret: string | undefined): { userId: number; apiKey: string } {
+  register(bootstrapSecret: string | undefined, providedSecret: string | undefined, referredBy?: number): { userId: number; apiKey: string; refCode: string } {
     if (!this.needsBootstrap()) {
       const expected = bootstrapSecret ?? "";
       if (!providedSecret || providedSecret !== expected) {
@@ -53,8 +54,9 @@ export class AuthService {
     }
     const userId = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
     const { apiKey, keyHash } = generateApiKey();
-    this.db.createUser(userId, keyHash);
-    return { userId, apiKey };
+    const refCode = userId.toString(36); // short, unique per user id
+    this.db.createUser(userId, keyHash, refCode, referredBy);
+    return { userId, apiKey, refCode };
   }
 
   /** Authenticate a request's Bearer token. Returns the user id or null. */

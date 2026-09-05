@@ -318,6 +318,96 @@ describe("positions, feed & leaderboard periods (fomo-style)", () => {
   });
 });
 
+describe("referrals, search & discovery (fomo Phase C/D)", () => {
+  it("gives every user a ref code and attributes referred signups", async () => {
+    const me = await api("GET", "/api/me", undefined, firstUserKey);
+    expect(me.json.refCode).toBeTruthy();
+
+    // register a referred user on a fresh bootstrap server
+    const dirR = mkdtempSync(join(tmpdir(), "raidos-ref-"));
+    const sR = new ApiServer({ dbPath: join(dirR, "a.db"), port: 0, siteDir: null, appMode: "mock" });
+    const portR = await sR.start();
+    const baseR = `http://127.0.0.1:${portR}`;
+    const first = await fetch(`${baseR}/api/auth/register`, { method: "POST", body: "{}" }).then(r => r.json());
+    const second = await fetch(`${baseR}/api/auth/register`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: first.refCode }),
+    });
+    // second registration on a no-secret server → 403 before referral check
+    expect(second.status).toBe(403);
+
+    // on the main test server we can't self-register; instead verify code shape + referrals endpoint
+    const refs = await api("GET", "/api/me/referrals", undefined, firstUserKey);
+    expect(refs.status).toBe(200);
+    expect(refs.json.refCode).toBe(me.json.refCode);
+    expect(refs.json.count).toBe(0);
+    await sR.stop();
+    rmSync(dirR, { recursive: true, force: true });
+  });
+
+  it("referral attribution works when bootstrap allows multi-register", async () => {
+    const dirR = mkdtempSync(join(tmpdir(), "raidos-ref2-"));
+    const sR = new ApiServer({ dbPath: join(dirR, "a.db"), port: 0, siteDir: null, appMode: "mock", bootstrapSecret: "ref-test" });
+    const portR = await sR.start();
+    const baseR = `http://127.0.0.1:${portR}`;
+    const post = (body: any) => fetch(`${baseR}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
+    const first = await post({ bootstrapSecret: "ref-test" });
+    const second = await post({ bootstrapSecret: "ref-test", ref: first.refCode });
+    expect(second.referredBy).toBe(first.userId);
+    expect(second.refCode).toBeTruthy();
+    expect(second.refCode).not.toBe(first.refCode);
+
+    const refs = await fetch(`${baseR}/api/me/referrals`, { headers: { Authorization: `Bearer ${first.apiKey}` } }).then(r => r.json());
+    expect(refs.count).toBe(1);
+    expect(refs.referrals[0].user_id).toBe(second.userId);
+
+    // unknown ref code rejected
+    const bad = await fetch(`${baseR}/api/auth/register`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bootstrapSecret: "ref-test", ref: "nope123" }),
+    });
+    expect(bad.status).toBe(400);
+    await sR.stop();
+    rmSync(dirR, { recursive: true, force: true });
+  });
+
+  it("searches launches and users by term", async () => {
+    const created = await api("POST", "/api/launches", { chain: "base", name: "SearchCoin", symbol: "SRCH", description: "", imageUrl: "", totalSupply: "1000000000000" }, firstUserKey);
+    expect(created.status).toBe(201);
+
+    const r = await api("GET", "/api/search?q=SRCH");
+    expect(r.status).toBe(200);
+    expect(r.json.tokens.length).toBe(1);
+    expect(r.json.tokens[0].symbol).toBe("SRCH");
+
+    const noRes = await api("GET", "/api/search?q=zzzznotfound");
+    expect(noRes.json.tokens.length).toBe(0);
+
+    const tooShort = await api("GET", "/api/search?q=a");
+    expect(tooShort.status).toBe(400);
+  });
+
+  it("launches endpoint sorts by raised/buyers/price", async () => {
+    // create 3 launches, buy different amounts on each
+    const mk = async (sym: string, buyAmt?: string) => {
+      const l = await api("POST", "/api/launches", { chain: "solana", name: sym, symbol: sym, description: "", imageUrl: "", totalSupply: "1000000000000" }, firstUserKey);
+      if (buyAmt) await api("POST", `/api/launches/${l.json.launch.id}/buy`, { usdcAmount: buyAmt }, firstUserKey);
+      return l.json.launch.id;
+    };
+    const a = await mk("SORTA", "30000000");
+    const b = await mk("SORTB", "10000000");
+    const c = await mk("SORTC");
+
+    const byRaised = await api("GET", "/api/launches?sort=raised&limit=10");
+    const ids = byRaised.json.launches.map((l: any) => l.id);
+    expect(ids.indexOf(a)).toBeLessThan(ids.indexOf(b));
+    expect(ids.indexOf(b)).toBeLessThan(ids.indexOf(c));
+
+    const byBuyers = await api("GET", "/api/launches?sort=buyers&limit=10");
+    expect(byBuyers.json.launches[0].id).toBe(a); // only A has buyers
+  });
+});
+
 describe("static & misc", () => {
   it("serves the dashboard when siteDir points at the repo site/", async () => {
     const dir3 = mkdtempSync(join(tmpdir(), "raidos-api-test3-"));

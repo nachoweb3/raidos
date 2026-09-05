@@ -164,6 +164,20 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .lb-user{display:flex;align-items:center;gap:8px}
 .lb-avatar{width:28px;height:28px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:12px}
 
+/* ── SHARE CARD MODAL (win/fumble) ── */
+.share-canvas{border-radius:12px;display:block;margin:0 auto;max-width:100%}
+.share-actions{display:flex;gap:8px;margin-top:12px}
+.share-actions button{flex:1;padding:10px;border-radius:8px;font-weight:700}
+
+/* ── SEARCH ── */
+.search-wrap{position:relative}
+.search-results{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;max-height:320px;overflow-y:auto;z-index:150;box-shadow:0 12px 32px rgba(0,0,0,.5)}
+.search-results.show{display:block}
+.sr-section{padding:6px 12px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);border-bottom:1px solid var(--border)}
+.sr-item{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;cursor:pointer}
+.sr-item:hover{background:var(--bg3)}
+.sr-item .mono{font-size:11px}
+
 /* ── RESPONSIVE ── */
 @media(max-width:900px){.main{grid-template-columns:1fr}.bottom-panels{grid-template-columns:1fr}.token-bar{flex-wrap:wrap}}
 </style>
@@ -186,6 +200,10 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
     </div>
   </div>
   <div class="header-right">
+    <div class="search-wrap">
+      <input type="text" id="globalSearch" placeholder="Search tokens, traders…" autocomplete="off" style="width:220px;padding:6px 12px" oninput="onSearch(this.value)" onfocus="onSearch(this.value)" onblur="setTimeout(()=>closeSearch(),200)">
+      <div class="search-results" id="searchResults"></div>
+    </div>
     <span class="mode-chip demo" id="modeChip">DEMO</span>
     <select class="chain-select" id="chainSelect" onchange="switchChain(this.value)">
       <option value="solana">◎ Solana</option>
@@ -209,7 +227,20 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
     <input type="password" id="keyInput" placeholder="raidos_…" onkeydown="if(event.key==='Enter')saveKey()">
     <div class="row">
       <button class="btn-primary" onclick="saveKey()">Connect</button>
-      <button class="btn-ghost" onclick="closeKeyModal()">Browse demo</button>
+      <button class="btn-ghost" onclick="registerNewUser()">Create account</button>
+      <button class="btn-ghost" onclick="closeKeyModal()">Demo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ SHARE CARD MODAL (win/fumble) ═══ -->
+<div class="modal-backdrop" id="shareModal">
+  <div class="modal">
+    <h3 id="shareTitle">🏆 Share your result</h3>
+    <canvas id="shareCanvas" class="share-canvas" width="480" height="280"></canvas>
+    <div class="share-actions">
+      <button class="btn-primary" onclick="downloadShareCard()">Download PNG</button>
+      <button class="btn-ghost" onclick="closeModal('shareModal')">Close</button>
     </div>
   </div>
 </div>
@@ -445,6 +476,21 @@ function saveKey(){
   closeKeyModal();
   boot();
 }
+/** Register a brand-new user via the API (needs open bootstrap or secret). */
+async function registerNewUser(){
+  const ref = localStorage.getItem('raidos_ref') || undefined;
+  const r = await apiFetch('/api/auth/register', { method:'POST', body: JSON.stringify(ref?{ ref }:{}) });
+  if (r.ok){
+    localStorage.setItem(LS_KEY, r.json.apiKey);
+    API_KEY = r.json.apiKey;
+    localStorage.removeItem('raidos_ref');
+    closeKeyModal();
+    showNote('Account created — save your API key: '+shortAddr(r.json.apiKey), 'ok');
+    boot();
+  } else {
+    showNote('Registration needs a fresh node or BOOTSTRAP_SECRET ('+(r.json.error||r.status)+')', 'err');
+  }
+}
 function clearKey(msg){
   localStorage.removeItem(LS_KEY); API_KEY=''; myUserId=null;
   if (msg) showNote(msg, 'err');
@@ -628,8 +674,10 @@ async function loadFeed(){
     }
     if (e.type==='position_closed') {
       const pnl=Number(p.pnl||0);
+      const mine = myUserId && e.actor_id===myUserId;
       return `<div class="feed-item"><div class="feed-avatar">${pnl>=0?'🏆':'💀'}</div><div class="feed-body">
-        <div class="feed-line"><b>${esc(who)}</b> closed a position on <b class="mono">${esc(shortAddr(e.token))}</b> — <b class="${pnl>=0?'green':'red'}">${pnl>=0?'+':''}${fmtUsdc(p.pnl)} USDC</b></div>
+        <div class="feed-line"><b>${esc(who)}</b> closed a position on <b class="mono">${esc(shortAddr(e.token))}</b> — <b class="${pnl>=0?'green':'red'}">${pnl>=0?'+':''}${fmtUsdc(p.pnl)} USDC</b>
+        ${mine?`<button class="pct-btns" style="margin-left:8px" onclick="openShareCard('${p.pnl}','${esc(e.token)}','${esc(e.chain)}')">Share</button>`:''}</div>
         <div class="feed-ts">${timeAgo(e.ts)} ago</div></div></div>`;
     }
     return '';
@@ -743,12 +791,14 @@ async function renderPortfolio(){
   const [pnlR, posR] = await Promise.all([apiFetch('/api/trades/pnl'), apiFetch('/api/positions')]);
   if (!pnlR.ok) return;
   const p = pnlR.json.pnl;
+  localStorage.setItem('lastPnl', String(p.totalPnlUsdc));
+  const shareBtn = Number(p.totalTrades)>0 ? `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer" onclick="openShareCard(${p.totalPnlUsdc}, 'portfolio', '${currentChain}')"><div class="muted" style="font-size:11px;margin-bottom:4px">Share</div><div style="font-size:22px;font-weight:800">${Number(p.totalPnlUsdc)>=0?'🏆':'💀'} Card</div></div>` : '';
   stats.innerHTML = [
     {label:'Total PnL', val:fmtUsdc(p.totalPnlUsdc)+' USDC', cls:Number(p.totalPnlUsdc)>=0?'green':'red'},
     {label:'Win rate', val:Math.round(p.winRate)+'%', cls:''},
     {label:'Trades', val:p.totalTrades, cls:''},
     {label:'Fees paid', val:fmtUsdc(p.totalFeesUsdc)+' USDC', cls:'muted'},
-  ].map(s=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px"><div class="muted" style="font-size:11px;margin-bottom:4px">${s.label}</div><div style="font-size:22px;font-weight:800" class="${s.cls}">${s.val}</div></div>`).join('');
+  ].map(s=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px"><div class="muted" style="font-size:11px;margin-bottom:4px">${s.label}</div><div style="font-size:22px;font-weight:800" class="${s.cls}">${s.val}</div></div>`).join('') + shareBtn;
   const holdings = Object.entries(p.pnlByToken||{});
   holdBody.innerHTML = holdings.length ? holdings.map(([token,v])=>`
     <tr><td class="mono" title="${esc(token)}">${esc(shortAddr(token))}</td>
@@ -761,13 +811,96 @@ async function renderPortfolio(){
     <td class="mono" title="${esc(t.token)}">${esc(shortAddr(t.token))}</td>
     <td class="mono">${fmtUsdc(t.avg_entry_usdc)}</td>
     <td class="mono">${fmtUsdc(t.amount_remaining)}</td>
-    <td class="${Number(t.realized_pnl_usdc||0)>=0?'green':'red'}">${t.realized_pnl_usdc!=null?(Number(t.realized_pnl_usdc)>=0?'+':'')+fmtUsdc(t.realized_pnl_usdc):'—'}</td></tr>`).join('')
+    <td class="${Number(t.realized_pnl_usdc||0)>=0?'green':'red'}">${t.realized_pnl_usdc!=null?(Number(t.realized_pnl_usdc)>=0?'+':'')+fmtUsdc(t.realized_pnl_usdc):'—'}
+    ${t.realized_pnl_usdc!=null&&t.status==='closed'?`<button class="pct-btns" style="margin-left:6px" onclick="openShareCard('${t.realized_pnl_usdc}','${esc(t.token)}','${esc(t.chain)}')">Share</button>`:''}</td></tr>`).join('')
     : '<tr><td colspan="5" class="empty-state">No positions yet</td></tr>';
+
+  // referral card
+  const refR = await apiFetch('/api/me/referrals');
+  if (refR.ok && refR.json.refCode){
+    const refUrl = `${location.origin}${location.pathname}?ref=${refR.json.refCode}`;
+    const refEl = document.getElementById('refCard') || document.createElement('div');
+    refEl.id = 'refCard';
+    refEl.style.cssText = 'background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:24px';
+    refEl.innerHTML = `<div class="panel-header" style="padding:0 0 8px">🎁 Invite friends — ${refR.json.count} referred</div>
+      <div class="mono" style="font-size:12px;color:var(--blue);word-break:break-all">${esc(refUrl)}</div>
+      <button class="pct-btns" style="margin-top:8px" onclick="navigator.clipboard.writeText('${esc(refUrl)}');this.textContent='Copied!'">Copy invite link</button>`;
+    const view = document.getElementById('view-portfolio').firstElementChild;
+    if (!document.getElementById('refCard')) view.insertBefore(refEl, view.querySelector('div[style*="grid-template-columns:repeat(4"]'));
+  }
 }
+
+// ── SHARE CARDS (win/fumble, fomo-style) ──
+function openShareCard(pnlUsdc, token, chain){
+  const pnl = Number(pnlUsdc)/1e6;
+  const win = pnl >= 0;
+  document.getElementById('shareTitle').textContent = win ? '🏆 Win card' : '💀 Fumble card';
+  const c = document.getElementById('shareCanvas');
+  const ctx = c.getContext('2d');
+  // bg
+  const grad = ctx.createLinearGradient(0,0,480,280);
+  grad.addColorStop(0,'#0d0c17'); grad.addColorStop(1, win ? '#0b1f14' : '#210b0d');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,480,280);
+  ctx.strokeStyle = win ? '#21C95E' : '#FF4E51'; ctx.lineWidth = 2; ctx.strokeRect(1,1,478,278);
+  // brand
+  ctx.fillStyle = '#9899A3'; ctx.font = '600 14px Inter, sans-serif';
+  ctx.fillText('RaidOS · self-reported', 24, 34);
+  // emoji
+  ctx.font = '56px serif'; ctx.fillText(win ? '🏆' : '💀', 24, 108);
+  // pnl
+  ctx.fillStyle = win ? '#45FE82' : '#FF4E51';
+  ctx.font = '800 52px Inter, sans-serif';
+  ctx.fillText((win?'+':'')+pnl.toLocaleString(undefined,{maximumFractionDigits:2})+' USDC', 24, 180);
+  // token info
+  ctx.fillStyle = '#F7F7F7'; ctx.font = '600 18px Inter, sans-serif';
+  const tok = token && token.length>12 ? token.slice(0,6)+'…'+token.slice(-4) : (token||'—');
+  ctx.fillText(tok+' · '+(CHAINS[chain]?.name||chain||''), 24, 216);
+  // honesty label
+  ctx.fillStyle = '#474B52'; ctx.font = '500 12px Inter, sans-serif';
+  ctx.fillText('SELF-REPORTED PnL · '+new Date().toLocaleDateString(), 24, 252);
+  document.getElementById('shareModal').classList.add('show');
+}
+function downloadShareCard(){
+  const a = document.createElement('a');
+  a.download = 'raidos-' + (Number(localStorage.getItem('lastPnl'))>=0?'win':'fumble') + '.png';
+  a.href = document.getElementById('shareCanvas').toDataURL('image/png');
+  a.click();
+}
+
+// ── SEARCH (tokens + users) ──
+let searchSeq = 0;
+async function onSearch(term){
+  const box = document.getElementById('searchResults');
+  if (!term || term.length < 2){ box.classList.remove('show'); return; }
+  const seq = ++searchSeq;
+  const r = await apiFetch('/api/search?q='+encodeURIComponent(term)+'&limit=6');
+  if (seq !== searchSeq) return; // stale
+  if (!r.ok){ box.classList.remove('show'); return; }
+  const tokens = r.json.tokens||[], users = r.json.users||[];
+  if (!tokens.length && !users.length){ box.innerHTML = '<div class="empty-state" style="padding:14px">No results for "'+esc(term)+'"</div>'; box.classList.add('show'); return; }
+  box.innerHTML =
+    (tokens.length ? '<div class="sr-section">Tokens</div>' + tokens.map(t=>
+      `<div class="sr-item" onclick="window.open('https://'+location.host+'/trading.html','_self');document.getElementById('tokenAddress').value='${esc(t.tokenAddress||'')}';closeSearch()">
+        <div class="feed-avatar">${esc((t.symbol||'?').slice(0,2))}</div>
+        <div><b>${esc(t.name)}</b> <span class="muted mono">\${esc(t.symbol)}</span> <span class="lc-chain">${esc(t.chain)}</span></div>
+        <span class="dim mono" style="margin-left:auto">${fmtUsdc(t.raisedUsdc)} raised</span>
+      </div>`).join('') : '')
+  + (users.length ? '<div class="sr-section">Traders</div>' + users.map(u=>
+      `<div class="sr-item">
+        <div class="feed-avatar">${esc((u.display_name||'U')[0].toUpperCase())}</div>
+        <div><b>${esc(u.display_name||u.x_handle||('user '+u.user_id))}</b> <span class="muted">${esc(u.x_handle||'')}</span></div>
+        <span class="dim mono" style="margin-left:auto">${u.followers_count} followers</span>
+      </div>`).join('') : '');
+  box.classList.add('show');
+}
+function closeSearch(){ document.getElementById('searchResults').classList.remove('show'); }
 
 // ── BOOT ──
 async function boot(){
   applyAuthState();
+  // referral capture: ?ref=CODE is stored until the visitor registers
+  const refParam = new URLSearchParams(location.search).get('ref');
+  if (refParam) localStorage.setItem('raidos_ref', refParam);
   renderOrderBook(); updateTokenBar(); startFeed(); renderLaunches();
   if (API_KEY) {
     const me = await apiFetch('/api/me');

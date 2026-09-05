@@ -214,13 +214,39 @@ export class ApiServer {
     // ── Auth ──
     this.router.publicRoute("POST", "/api/auth/register", (ctx) => {
       const secret = typeof ctx.body.bootstrapSecret === "string" ? ctx.body.bootstrapSecret : undefined;
-      const { userId, apiKey } = this.auth.register(this.bootstrapSecret, secret);
-      sendJson(ctx.res, 201, { userId, apiKey, mode: this.appMode });
+      const refCode = typeof ctx.body.ref === "string" ? ctx.body.ref.trim() : undefined;
+      const referrer = refCode ? this.db.getUserByRefCode(refCode) : undefined;
+      if (refCode && !referrer) throw new HttpError(400, `unknown referral code: ${refCode}`);
+      const { userId, apiKey, refCode: myRefCode } = this.auth.register(this.bootstrapSecret, secret, referrer?.user_id);
+      sendJson(ctx.res, 201, { userId, apiKey, refCode: myRefCode, referredBy: referrer?.user_id ?? null, mode: this.appMode });
     });
 
     this.router.route("GET", "/api/me", (ctx) => {
       const userId = this.requireUserId(ctx);
-      sendJson(ctx.res, 200, { userId, mode: this.appMode });
+      const user = this.db.getUserById(userId);
+      sendJson(ctx.res, 200, { userId, refCode: user?.ref_code ?? null, referredBy: user?.referred_by ?? null, mode: this.appMode });
+    });
+
+    // ── Referrals ──
+    this.router.route("GET", "/api/me/referrals", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const user = this.db.getUserById(userId);
+      sendJson(ctx.res, 200, {
+        refCode: user?.ref_code ?? null,
+        count: this.db.countReferrals(userId),
+        referrals: this.db.getReferrals(userId, 100),
+      });
+    });
+
+    // ── Search (tokens + users, fomo-style fuzzy) ──
+    this.router.publicRoute("GET", "/api/search", (ctx) => {
+      const term = (ctx.query.get("q") ?? "").trim();
+      if (term.length < 2) throw new HttpError(400, "query `q` must be at least 2 characters");
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 10), 25);
+      sendJson(ctx.res, 200, {
+        tokens: this.db.searchLaunches(term, limit).map((l) => this.launchpad.formatLaunchPublic(l)),
+        users: this.db.searchUsers(term, limit),
+      });
     });
 
     // ── Chains (public) ──
@@ -391,12 +417,10 @@ export class ApiServer {
       const limit = Math.min(Number(ctx.query.get("limit") ?? 30), 100);
       const status = ctx.query.get("status") ?? undefined;
       const chain = ctx.query.get("chain");
+      const sort = ctx.query.get("sort") ?? "latest"; // latest | raised | buyers | price
       const launches = chain
         ? this.launchpad.listLaunches(chain, status as never, limit)
-        : Object.keys(CHAINS)
-            .flatMap((c) => this.launchpad.listLaunches(c, status as never, limit))
-            .sort((a, b) => b.createdAt - a.createdAt)
-            .slice(0, limit);
+        : this.db.listAllLaunches(status, sort, limit).map((l) => this.launchpad.formatLaunchPublic(l));
       sendJson(ctx.res, 200, { launches, mode: this.appMode });
     });
 

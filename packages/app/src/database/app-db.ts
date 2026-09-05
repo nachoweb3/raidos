@@ -21,6 +21,8 @@ export class AppDb {
       CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         api_key_hash TEXT NOT NULL UNIQUE,
+        ref_code TEXT UNIQUE,
+        referred_by INTEGER,
         created_at INTEGER NOT NULL
       );
 
@@ -243,18 +245,38 @@ export class AppDb {
 
   // ── User / auth methods ─────────────────────────────────────────────
 
-  createUser(userId: number, apiKeyHash: string) {
+  createUser(userId: number, apiKeyHash: string, refCode?: string, referredBy?: number) {
     this.db.prepare(
-      "INSERT INTO users (user_id, api_key_hash, created_at) VALUES (?, ?, ?)"
-    ).run(userId, apiKeyHash, Math.floor(Date.now() / 1000));
+      "INSERT INTO users (user_id, api_key_hash, ref_code, referred_by, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).run(userId, apiKeyHash, refCode ?? null, referredBy ?? null, Math.floor(Date.now() / 1000));
   }
 
   getUserByApiKeyHash(apiKeyHash: string) {
     return this.db.prepare("SELECT * FROM users WHERE api_key_hash = ?").get(apiKeyHash) as any;
   }
 
+  getUserById(userId: number) {
+    return this.db.prepare("SELECT * FROM users WHERE user_id = ?").get(userId) as any;
+  }
+
+  getUserByRefCode(refCode: string) {
+    return this.db.prepare("SELECT * FROM users WHERE ref_code = ?").get(refCode) as any;
+  }
+
   countUsers(): number {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
+    return row.n;
+  }
+
+  /** Users referred by the given user, newest first. */
+  getReferrals(userId: number, limit = 50, offset = 0) {
+    return this.db.prepare(
+      "SELECT user_id, ref_code, created_at FROM users WHERE referred_by = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    ).all(userId, limit, offset) as any[];
+  }
+
+  countReferrals(userId: number): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE referred_by = ?").get(userId) as { n: number };
     return row.n;
   }
 
@@ -310,6 +332,19 @@ export class AppDb {
       return this.db.prepare("SELECT * FROM launches WHERE chain = ? AND status = ? ORDER BY created_at DESC LIMIT ?").all(chain, status, limit) as any[];
     }
     return this.db.prepare("SELECT * FROM launches WHERE chain = ? ORDER BY created_at DESC LIMIT ?").all(chain, limit) as any[];
+  }
+
+  /** All launches across chains, optionally filtered, with a sort key.
+   *  Sorts: latest (default) | raised (most raised) | buyers (most buyers) | price. */
+  listAllLaunches(status?: string, sort = "latest", limit = 30) {
+    const orderBy = sort === "raised" ? "CAST(raised_usdc AS INTEGER) DESC"
+      : sort === "buyers" ? "buyers_count DESC, created_at DESC"
+      : sort === "price" ? "CAST(current_price_usdc AS INTEGER) DESC, created_at DESC"
+      : "created_at DESC";
+    if (status) {
+      return this.db.prepare(`SELECT * FROM launches WHERE status = ? ORDER BY ${orderBy} LIMIT ?`).all(status, limit) as any[];
+    }
+    return this.db.prepare(`SELECT * FROM launches ORDER BY ${orderBy} LIMIT ?`).all(limit) as any[];
   }
 
   listLaunchesByUser(userId: number, limit = 20) {
@@ -417,6 +452,27 @@ export class AppDb {
        ORDER BY CAST(p.total_pnl_usdc AS INTEGER) DESC
        LIMIT ?`
     ).all(limit) as any[];
+  }
+
+  // ── Search (fuzzy tokens + users, fomo-style) ──────────────────────
+
+  searchUsers(term: string, limit = 10) {
+    const like = `%${term}%`;
+    return this.db.prepare(
+      `SELECT user_id, x_handle, display_name, avatar_url, followers_count, total_pnl_usdc, win_rate, total_trades
+       FROM profiles
+       WHERE x_handle LIKE ? OR display_name LIKE ?
+       ORDER BY followers_count DESC LIMIT ?`
+    ).all(like, like, limit) as any[];
+  }
+
+  searchLaunches(term: string, limit = 10) {
+    const like = `%${term}%`;
+    return this.db.prepare(
+      `SELECT * FROM launches
+       WHERE name LIKE ? OR symbol LIKE ?
+       ORDER BY CAST(raised_usdc AS INTEGER) DESC LIMIT ?`
+    ).all(like, like, limit) as any[];
   }
 
   // ── Revenue ───────────────────────────────────────────────────────────
