@@ -288,6 +288,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
         <button onclick="showBottom('trades',this)">My Trades</button>
         <button onclick="showBottom('holders',this)">Holders</button>
         <button onclick="showBottom('depth',this)">Depth Chart</button>
+        <button onclick="showBottom('wallet',this)">Wallet</button>
       </div>
     </div>
     <div id="bottom-content">
@@ -310,6 +311,26 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
         </table>
       </div>
       <div id="bottom-depth" style="display:none"><canvas class="depth-canvas" id="depthCanvas" style="width:100%;height:160px"></canvas></div>
+      <div id="bottom-wallet" style="display:none">
+        <div style="padding:14px 16px">
+          <div class="panel-header" style="padding:0 0 10px">👛 Wallets <span class="dim" style="text-transform:none">fund an address to trade it live</span> <span class="mode-chip demo" id="walletMode" style="float:right"></span></div>
+          <div id="walletList"><div class="empty-state">Connect to load your wallets</div></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px">
+            <select class="chain-select" id="walletChain" style="width:auto;flex:0 0 auto">
+              <option value="solana">◎ Solana</option>
+              <option value="ethereum">⬡ Ethereum</option>
+              <option value="base">🔵 Base</option>
+              <option value="bsc">🟡 BSC</option>
+              <option value="arbitrum">🔷 Arbitrum</option>
+              <option value="polygon">🟣 Polygon</option>
+              <option value="robinhood">🔴 Robinhood</option>
+            </select>
+            <input type="password" id="walletNewPassword" placeholder="wallet password (never stored)" style="flex:1;min-width:180px;background:var(--bg0)">
+            <button class="pct-btns" style="padding:8px 16px" onclick="createWallet()">+ New wallet</button>
+          </div>
+          <div class="dim" style="font-size:11px;margin-top:8px">Private keys are encrypted server-side with your wallet password. In live mode, send real tokens (SOL / ETH / USDC) to the address above to trade with it.</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -566,12 +587,13 @@ function showView(v){
 function showBottom(id, el){
   document.querySelectorAll('#bottom-tabs button').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
-  ['feed','trades','holders','depth'].forEach(x=>{
+  ['feed','trades','holders','depth','wallet'].forEach(x=>{
     document.getElementById('bottom-'+x).style.display = x===id ? 'block' : 'none';
   });
   if (id==='trades') renderMyTrades();
   if (id==='depth') renderDepthChart();
   if (id==='holders'){ document.getElementById('holdersToken').value = document.getElementById('tokenAddress').value || CHAINS[currentChain].usdc; loadHolders(); }
+  if (id==='wallet') renderWallets();
 }
 
 // ── HOLDERS (pluggable providers; labeled honestly) ──
@@ -956,6 +978,54 @@ async function onSearch(term){
 }
 function closeSearch(){ document.getElementById('searchResults').classList.remove('show'); }
 
+// ── WALLETS (create + fund addresses for live trading) ──
+async function renderWallets(){
+  const list = document.getElementById('walletList');
+  const mode = document.getElementById('walletMode');
+  if (!API_KEY || !myUserId){
+    list.innerHTML = '<div class="empty-state">Connect to load your wallets</div>';
+    if (mode) { mode.textContent=''; mode.className='mode-chip demo'; }
+    return;
+  }
+  const r = await apiFetch('/api/wallets');
+  if (!r.ok){ list.innerHTML = '<div class="empty-state">Wallets unavailable — is the API running?</div>'; return; }
+  const wallets = r.json.wallets || [];
+  if (mode) { mode.textContent = API_MODE.toUpperCase(); mode.className = 'mode-chip ' + (API_MODE==='live'?'live':'demo'); }
+  if (!wallets.length){
+    list.innerHTML = '<div class="empty-state">No wallets yet — create one above, then fund its address to trade live.</div>';
+    return;
+  }
+  list.innerHTML = wallets.map(w=>{
+    const cfg = CHAINS[w.chain] || { icon:'?', name:w.chain };
+    return `<div style="display:flex;gap:10px;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:18px">${cfg.icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">${esc(w.label||cfg.name)} ${w.isPrimary?'<span class="lc-chain">primary</span>':''}</div>
+        <div class="mono dim" style="font-size:12px;word-break:break-all" title="${esc(w.address)}">${esc(w.address)}</div>
+      </div>
+      <button class="pct-btns" style="padding:6px 12px" onclick="copyWalletAddress('${esc(w.address)}',this)">Copy</button>
+    </div>`;
+  }).join('');
+}
+async function createWallet(){
+  if (!API_KEY || !myUserId){ openKeyModal(); return; }
+  const chain = document.getElementById('walletChain').value;
+  const password = document.getElementById('walletNewPassword').value.trim();
+  if (!password || password.length < 6){ showNote('Wallet password needs at least 6 characters', 'err'); return; }
+  const r = await apiFetch('/api/wallets', { method:'POST', body: JSON.stringify({ chain, password, label:'Primary' }) });
+  if (r.ok){
+    showNote('Wallet created — fund '+shortAddr(r.json.wallet.address)+' to trade live', 'ok');
+    document.getElementById('walletNewPassword').value='';
+    renderWallets();
+  } else {
+    showNote('Wallet create failed: '+(r.json.error||r.status), 'err');
+  }
+}
+async function copyWalletAddress(addr, btn){
+  try { await navigator.clipboard.writeText(addr); } catch {}
+  if (btn){ btn.textContent='Copied ✓'; setTimeout(()=>btn.textContent='Copy', 1500); }
+}
+
 // ── BOOT ──
 async function boot(){
   applyAuthState();
@@ -969,7 +1039,7 @@ async function boot(){
     else { API_KEY=''; localStorage.removeItem(LS_KEY); }
   }
   applyAuthState();
-  renderMyTrades(); renderPortfolio(); renderLeaderboard();
+  renderMyTrades(); renderPortfolio(); renderLeaderboard(); renderWallets();
 }
 document.addEventListener('DOMContentLoaded', boot);
 window.addEventListener('resize', ()=>{ if(chartType!=='depth') initChart(); else renderDepthChart(); });
