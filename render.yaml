@@ -1,42 +1,44 @@
 # Render Blueprint — RaidOS Trading API
 # Docs: https://render.com/docs/blueprint-spec
 #
-# Deploys packages/app as a long-running Node service:
-#   - pnpm build compiles TS to dist/
-#   - start runs the compiled server on $PORT
-#   - disk0 is a persistent disk mounted at /data so the SQLite DB survives
-#     deploys and restarts (custodial wallet keys + trade history MUST persist;
-#     do not downgrade to a free instance — free disks are ephemeral)
+# Deploys packages/app as a long-running Node service.
 #
-# One-time after first deploy: set BOOTSTRAP_SECRET in the Render dashboard
-# (Environment tab), then register your account:
-#   curl -X POST https://raidos-api.onrender.com/api/auth/register \
-#     -H "X-Bootstrap-Secret: <your-secret>"
-# The response contains your API key ONCE — paste it into the dashboard key modal.
+# CURRENT: free tier (sleeps after 15 min idle; EPHEMERAL disk — DB resets on
+# restart. Safe for APP_MODE=mock only).
+#
+# BEFORE GOING LIVE (APP_MODE=live, custodial wallets):
+#   1. plan: starter (~$7/mo)
+#   2. uncomment the disk block (persistent /data volume)
+#   3. set DB_PATH: /data/raidos.db
+#   4. set BOOTSTRAP_SECRET in the dashboard, then register:
+#      curl -X POST https://<service>.onrender.com/api/auth/register \
+#        -H "X-Bootstrap-Secret: <your-secret>"
+#      The response contains your API key ONCE — paste it into the dashboard key modal.
 
 services:
   - type: web
     name: raidos-api
     runtime: node
-    plan: starter
+    plan: free             # upgrade to starter + disk below before APP_MODE=live
     region: oregon
+    repo: https://github.com/nachoweb3/raidos
     branch: main
     autoDeploy: true
     buildCommand: cd packages/app && corepack enable && pnpm install --frozen-lockfile && pnpm build
     startCommand: cd packages/app && node dist/api/main.js
     healthCheckPath: /api/health
-    disk:
-      name: raidos-data
-      mountPath: /data
-      sizeGB: 1
+    # disk:                 # ← uncomment together with plan: starter
+    #   name: raidos-data
+    #   mountPath: /data
+    #   sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: "22"
       - key: DB_PATH
-        value: /data/raidos.db
+        value: ./raidos.db   # ← /data/raidos.db once the disk is attached
       - key: APP_MODE
-        value: mock            # switch to live after keys are funded + audited
+        value: mock          # switch to live after keys are funded + audited
       - key: BOOTSTRAP_SECRET
-        sync: false            # set in the Render dashboard; never commit it
+        sync: false          # set in the Render dashboard; never commit it
       - key: SITE_DIR
-        value: ""              # API-only; dashboard is served by GitHub Pages
+        value: ""            # API-only; dashboard is served by GitHub Pages
