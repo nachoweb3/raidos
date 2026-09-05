@@ -226,6 +226,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
   <p style="margin-top:8px;font-size:12px;opacity:.75">API endpoint: <code id="apiBaseLabel">same-origin</code> — change it by visiting this page with <code>?api=https://your-api-host</code></p>
     <div class="key-result" id="keyResult"></div>
     <input type="password" id="keyInput" placeholder="raidos_…" onkeydown="if(event.key==='Enter')saveKey()">
+    <input type="password" id="bootstrapInput" placeholder="BOOTSTRAP_SECRET (optional — needed to create an account)" onkeydown="if(event.key==='Enter')registerNewUser()">
+    <p style="margin-top:8px;font-size:12px;opacity:.75">On the free tier the server DB is <b>ephemeral</b> — if your key stops working after the service idles, click <b>Create account</b> and paste the bootstrap secret to mint a fresh key.</p>
     <div class="row">
       <button class="btn-primary" onclick="saveKey()">Connect</button>
       <button class="btn-ghost" onclick="registerNewUser()">Create account</button>
@@ -506,14 +508,21 @@ function saveKey(){
   closeKeyModal();
   boot();
 }
-/** Register a brand-new user via the API (needs open bootstrap or secret). */
+/** Register a brand-new user via the API. Works with an open bootstrap, or by
+ * pasting the BOOTSTRAP_SECRET in the modal (needed once the DB has any user,
+ * which is always the case after the free-tier ephemeral DB is wiped). */
 async function registerNewUser(){
   const ref = localStorage.getItem('raidos_ref') || undefined;
-  const r = await apiFetch('/api/auth/register', { method:'POST', body: JSON.stringify(ref?{ ref }:{}) });
+  const bootstrapSecret = document.getElementById('bootstrapInput').value.trim() || undefined;
+  const body = {};
+  if (ref) body.ref = ref;
+  if (bootstrapSecret) body.bootstrapSecret = bootstrapSecret;
+  const r = await apiFetch('/api/auth/register', { method:'POST', body: JSON.stringify(body) });
   if (r.ok){
     localStorage.setItem(LS_KEY, r.json.apiKey);
     API_KEY = r.json.apiKey;
     localStorage.removeItem('raidos_ref');
+    document.getElementById('bootstrapInput').value = '';
     closeKeyModal();
     showNote('Account created — save your API key: '+shortAddr(r.json.apiKey), 'ok');
     boot();
