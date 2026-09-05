@@ -2,6 +2,7 @@
   "name": "raidos-app",
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@10.4.1",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

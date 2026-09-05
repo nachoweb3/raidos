@@ -1,0 +1,11 @@
+# pnpm workspace/settings file — this repo is a single standalone package.
+# pnpm 10+ reads onlyBuiltDependencies from this file, NOT from package.json.
+packages:
+  - "."
+
+onlyBuiltDependencies:
+  - better-sqlite3
+  - bigint-buffer
+  - bufferutil
+  - esbuild
+  - utf-8-validate
