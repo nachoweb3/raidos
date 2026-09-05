@@ -21,6 +21,8 @@ export interface PredictionMarket {
   question: string;
   slug: string;
   conditionId: string;
+  /** CLOB token ids, parallel to outcomes — used to place orders. */
+  clobTokenIds: string[];
   outcomes: string[];
   /** Parallel array to outcomes, "0.42" style strings. */
   outcomePrices: number[];
@@ -80,11 +82,18 @@ function mapMarket(m: any): PredictionMarket {
     outcomes = ["Yes", "No"];
     prices = [p, Math.max(0, 1 - p)];
   }
+  // clobTokenIds arrives JSON-encoded (e.g. '["123","456"]')
+  let clobTokenIds: string[] = [];
+  if (Array.isArray(m.clobTokenIds)) clobTokenIds = m.clobTokenIds.map(String);
+  else if (typeof m.clobTokenIds === "string" && m.clobTokenIds.trim()) {
+    try { const parsed = JSON.parse(m.clobTokenIds); if (Array.isArray(parsed)) clobTokenIds = parsed.map(String); } catch {}
+  }
   return {
     id: String(m.id ?? ""),
     question: String(m.question ?? ""),
     slug: String(m.slug ?? ""),
     conditionId: String(m.conditionId ?? ""),
+    clobTokenIds,
     outcomes,
     outcomePrices: prices,
     bestAsk: m.bestAsk != null ? toNumber(m.bestAsk) : null,

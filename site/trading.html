@@ -840,9 +840,11 @@ async function openEvent(slug){
   const markets = e.markets || [];
   document.getElementById('eventModalTitle').textContent = e.title;
   const rows = markets.map(m => {
+    const tok = (m.clobTokenIds||[]);
     const outs = (m.outcomes||[]).map((o,i)=>{
       const p = m.outcomePrices?.[i] ?? 0;
-      return `<button class="outcome-buy" onclick="buyOutcome('${esc(m.conditionId)}','${esc(o)}',${p})">${esc(o)} · <b>${(p*100).toFixed(0)}¢</b></button>`;
+      const tid = tok[i] ? ` data-tid="${esc(tok[i])}" data-outcome="${esc(o)}" data-price="${p}"` : '';
+      return `<button class="outcome-buy" ${tid} onclick="buyOutcome(this)">${esc(o)} · <b>${(p*100).toFixed(0)}¢</b></button>`;
     }).join('');
     return `<div style="margin-bottom:14px;padding:12px;border:1px solid var(--border);border-radius:10px">
       <div style="font-size:13px;font-weight:700;margin-bottom:8px">${esc(m.question)}</div>
@@ -850,11 +852,40 @@ async function openEvent(slug){
       ${m.endDate ? `<div style="margin-top:8px;font-size:11px;color:var(--muted)">Ends ${esc(String(m.endDate).slice(0,10))} · Liquidity $${fmtUsdc(m.liquidityUsd||0,0)}</div>` : ''}
     </div>`;
   }).join('') || '<div class="empty-state">No open markets in this event.</div>';
-  document.getElementById('eventModalBody').innerHTML = rows + `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Prices are live market quotes from Polymarket. Trading execution is coming next — connect a Polygon wallet to buy shares.</div>`;
+  document.getElementById('eventModalBody').innerHTML = rows + `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Prices are live Polymarket quotes. Pick an outcome to buy shares with your Polygon wallet.</div>`;
   document.getElementById('eventModal').classList.add('show');
 }
-function buyOutcome(conditionId, outcome, price){
-  showNote('Execution coming soon — fund a Polygon wallet and I\'ll wire Polymarket CLOB next', 'err');
+/** Open the buy form for the clicked outcome. */
+function buyOutcome(btn){
+  const tokenId = btn.getAttribute('data-tid');
+  const outcome = btn.getAttribute('data-outcome');
+  const price = btn.getAttribute('data-price');
+  if (!tokenId){ showNote('This market has no tradable token id yet', 'err'); return; }
+  const body = document.getElementById('eventModalBody');
+  body.innerHTML = `<div style="margin-bottom:12px;font-size:13px;font-weight:700">Buy <span style="color:var(--green)">${esc(outcome)}</span> shares</div>
+    <input type="number" id="predPrice" step="0.01" min="0.01" max="0.99" value="${Number(price).toFixed(2)}" placeholder="Price per share (USD)">
+    <input type="number" id="predSize" step="1" min="1" placeholder="Number of shares">
+    <input type="password" id="predPassword" placeholder="Polygon wallet password">
+    <div style="margin-top:6px;font-size:11px;color:var(--muted)">Wallet must hold USDC on Polygon (plus a little POL for the one-time approval). Fund the address from the Wallet tab.</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn-primary" onclick="submitPredictionOrder('${esc(tokenId)}','${esc(outcome)}')">Place order</button>
+      <button class="btn-ghost" onclick="closeModal('eventModal')">Cancel</button>
+    </div>`;
+}
+async function submitPredictionOrder(tokenId, outcome){
+  const price = document.getElementById('predPrice').value;
+  const size = document.getElementById('predSize').value;
+  const password = document.getElementById('predPassword').value;
+  if (!price || !size || !password){ showNote('Fill price, shares and wallet password', 'err'); return; }
+  showNote('Signing + submitting order to Polymarket…', 'ok');
+  const r = await apiFetch('/api/prediction/order', { method:'POST', body: JSON.stringify({ tokenId, side:'BUY', price, size, password }) });
+  if (r.ok){
+    const st = r.json.result?.status || 'accepted';
+    showNote('Order ' + st + ' — ' + (r.json.result?.orderId || '') , 'ok');
+    closeModal('eventModal');
+  } else {
+    showNote(r.json.error || 'Order failed', 'err');
+  }
 }
 function closeEventModal(){ document.getElementById('eventModal').classList.remove('show'); }
 function showBottom(id, el){

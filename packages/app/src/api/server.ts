@@ -30,6 +30,7 @@ import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./exec
 import { applySwapToPosition } from "../trading/positions.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
+import { placeClobOrder } from "../market/clob.js";
 
 export interface ServerOptions {
   /** Path to the SQLite database file. */
@@ -417,6 +418,29 @@ export class ApiServer {
       const event = await fetchPredictionEventCached(slug);
       if (!event) throw new HttpError(404, "event not found");
       sendJson(ctx.res, 200, { event, source: "polymarket" });
+    });
+
+    // ── Prediction order execution (auth — places a real Polymarket order) ──
+    this.router.route("POST", "/api/prediction/order", async (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const password = this.str(ctx, "password");
+      const tokenId = this.str(ctx, "tokenId");
+      const side = this.str(ctx, "side").toUpperCase() === "SELL" ? "SELL" : "BUY";
+      const price = this.str(ctx, "price");
+      const size = this.str(ctx, "size");
+
+      const wallet = this.db.getWallet(userId, "polygon");
+      if (!wallet) throw new HttpError(404, "no polygon wallet — create one in the Wallet tab first");
+      const encrypted: EncryptedPayload = typeof wallet.encrypted_key === "string"
+        ? JSON.parse(wallet.encrypted_key)
+        : wallet.encrypted_key;
+      if (!verifyPassword(encrypted, password)) throw new HttpError(401, "wrong wallet password");
+      const privateKey = decrypt(encrypted, password);
+
+      const { ethers } = await import("ethers");
+      const signer = new ethers.Wallet(privateKey);
+      const result = await placeClobOrder(signer, { tokenId, side, price, size });
+      sendJson(ctx.res, 200, { ok: true, result, mode: this.appMode });
     });
 
     // ── Trades ──
