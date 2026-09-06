@@ -1,0 +1,19 @@
+{
+  "name": "Ray 2 — The Social Network for Markets",
+  "short_name": "Ray 2",
+  "description": "Discover people. Discover markets. Discover opportunities. Trade. Share. Build reputation.",
+  "start_url": "/app.html",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23000'/><text y='.78em' x='.2em' font-size='70' fill='%23fff' font-family='sans-serif' font-weight='900'>R2</text></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "social", "trading"]
+}

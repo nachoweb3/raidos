@@ -315,6 +315,10 @@ export class AppDb {
     return info.changes > 0;
   }
 
+  getWaitlistEntry(email: string): { id: number; email: string; created_at: number } | undefined {
+    return this.db.prepare("SELECT id, email, created_at FROM waitlist WHERE email = ?").get(email.trim().toLowerCase()) as any;
+  }
+
   countWaitlist(): number {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM waitlist").get() as { n: number };
     return row.n;

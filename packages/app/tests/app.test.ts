@@ -45,8 +45,8 @@ describe("wallet crypto", () => {
 });
 
 describe("chain configs", () => {
-  it("has all 7 chains configured", () => {
-    expect(CHAIN_IDS.length).toBe(7);
+  it("has all 8 chains configured", () => {
+    expect(CHAIN_IDS.length).toBe(8);
     expect(CHAIN_IDS).toContain("solana");
     expect(CHAIN_IDS).toContain("ethereum");
     expect(CHAIN_IDS).toContain("base");
@@ -54,6 +54,7 @@ describe("chain configs", () => {
     expect(CHAIN_IDS).toContain("arbitrum");
     expect(CHAIN_IDS).toContain("polygon");
     expect(CHAIN_IDS).toContain("robinhood");
+    expect(CHAIN_IDS).toContain("monad");
   });
 
   it("all EVM chains have valid configs", () => {

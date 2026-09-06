@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Ray 2 — The Social Network for Markets</title>
+  <meta name="description" content="Ray 2: Red social para mercados financieros. Descubre personas, activos y oportunidades, analiza y opera en tiempo real.">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23000'/><text y='.76em' x='.22em' font-size='68' fill='%23fff' font-family='sans-serif' font-weight='900'>R2</text></svg>">
+  <link rel="stylesheet" href="css/design-system.css">
+  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    /* ── Mobile-First Shell Layout ── */
+    #appRoot {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding-bottom: calc(64px + var(--safe-bottom));
+      background: var(--bg-canvas);
+    }
+
+    /* ── Top Header ── */
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 90;
+      height: 54px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .app-nav-desktop {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .nav-tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .nav-tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .nav-tab-btn.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--border-mid);
+    }
+
+    /* ── Content Container ── */
+    .app-body {
+      flex: 1;
+      width: 100%;
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 16px 16px 40px;
+    }
+
+    /* ── Mobile Bottom Navigation Bar (iOS / Android Native Feel) ── */
+    .mobile-nav-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: calc(58px + var(--safe-bottom));
+      padding-bottom: var(--safe-bottom);
+      background: rgba(6, 6, 8, 0.88);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      z-index: 100;
+    }
+
+    .mobile-nav-item {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color var(--transition-fast);
+    }
+
+    .mobile-nav-item svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+    }
+
+    .mobile-nav-item.active {
+      color: #ffffff;
+    }
+
+    .mobile-nav-item.active svg {
+      stroke: #ffffff;
+    }
+
+    /* ── Desktop Layout Enhancements ── */
+    @media (min-width: 960px) {
+      #appRoot {
+        padding-bottom: 0;
+      }
+      .mobile-nav-bar {
+        display: none;
+      }
+    }
+
+    /* ── Sub-Tab Filter Pills ── */
+    .pill-tabs-bar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      scrollbar-width: none;
+    }
+    .pill-tabs-bar::-webkit-scrollbar { display: none; }
+
+    .pill-tab {
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .pill-tab:hover {
+      color: #fff;
+      border-color: var(--border-mid);
+    }
+
+    .pill-tab.active {
+      background: #ffffff;
+      color: #000000;
+      border-color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div id="appRoot">
+    <!-- ── TOP HEADER ── -->
+    <header class="app-header">
+      <div style="display:flex; align-items:center; gap:16px">
+        <a href="index.html" class="brand-logo" style="font-size:18px">RAY <span>2</span></a>
+        <div class="brand-badge desktop-only">ALPHA TERMINAL</div>
+      </div>
+
+      <!-- Desktop Nav Tabs -->
+      <nav class="app-nav-desktop desktop-only">
+        <button class="nav-tab-btn active" data-nav="feed">Feed</button>
+        <button class="nav-tab-btn" data-nav="discover">Discover</button>
+        <button class="nav-tab-btn" data-nav="trade">Trade</button>
+        <button class="nav-tab-btn" data-nav="leaderboard">Leaderboard</button>
+        <button class="nav-tab-btn" data-nav="profile">Portfolio</button>
+      </nav>
+
+      <!-- Right Header Actions -->
+      <div style="display:flex; align-items:center; gap:10px">
+        <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TradingEngine.currentChain = this.value;" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
+          <option value="all">◎ Todas las cadenas</option>
+          <option value="solana">Solana</option>
+          <option value="base">Base</option>
+          <option value="ethereum">Ethereum</option>
+          <option value="bsc">BNB Chain</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="polygon">Polygon</option>
+          <option value="monad">Monad</option>
+        </select>
+
+        <button class="btn btn-primary btn-sm" id="headerAuthBtn" onclick="window.App.openWalletModal()">
+          Conectar
+        </button>
+      </div>
+    </header>
+
+    <!-- ── MAIN BODY VIEWS ── -->
+    <main class="app-body">
+
+      <!-- ════ VIEW 1: SOCIAL FEED ════ -->
+      <section id="view-feed" class="view-panel" style="display:block">
+        <div style="display:grid; grid-template-columns:1fr 340px; gap:20px" class="feed-grid">
+          <!-- Main Stream -->
+          <div>
+            <!-- Filter tabs -->
+            <div class="pill-tabs-bar">
+              <button class="pill-tab active" onclick="setFeedFilter(this, 'for_you')">Para ti</button>
+              <button class="pill-tab" onclick="setFeedFilter(this, 'theses')">Tesis de Trading</button>
+              <button class="pill-tab" onclick="setFeedFilter(this, 'smart_money')">🐋 Smart Money</button>
+              <button class="pill-tab" onclick="setFeedFilter(this, 'following')">Siguiendo</button>
+            </div>
+
+            <!-- Quick Post / Thesis prompt -->
+            <div class="glass-panel" style="padding:16px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; cursor:pointer" onclick="window.App.openNewPostModal()">
+              <div style="display:flex; align-items:center; gap:12px; color:var(--text-secondary); font-size:13px">
+                <div class="author-avatar" style="width:32px; height:32px; font-size:11px">ME</div>
+                <span>Comparte una tesis, análisis o nivel de mercado...</span>
+              </div>
+              <button class="btn btn-primary btn-sm">+ Publicar Tesis</button>
+            </div>
+
+            <!-- Feed Posts List -->
+            <div id="feedPostsList"></div>
+          </div>
+
+          <!-- Desktop Sidebar: Whale Radar & Market Alpha -->
+          <aside class="desktop-only" style="display:flex; flex-direction:column; gap:16px">
+            <div class="glass-panel" style="padding:18px">
+              <div style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin-bottom:12px; display:flex; align-items:center; justify-content:space-between">
+                <span>🐋 Radar Smart Money</span>
+                <span class="status-dot" style="background:#22c55e"></span>
+              </div>
+              <p style="font-size:12.5px; color:var(--text-secondary); line-height:1.5; margin-bottom:12px">
+                Billeteras con ROI >300% están acumulando activamente en Solana y Base.
+              </p>
+              <div style="display:flex; flex-direction:column; gap:8px">
+                <div class="asset-pill" onclick="window.App.openTradeForToken('SOL', 'solana', 184.25)">
+                  <span class="pill-sym">$SOL</span>
+                  <span class="pill-price">$184.25</span>
+                  <span class="pill-delta up">+7.4%</span>
+                  <span class="pill-action">TRADE</span>
+                </div>
+                <div class="asset-pill" onclick="window.App.openTradeForToken('VIRTUAL', 'base', 1.85)">
+                  <span class="pill-sym">$VIRTUAL</span>
+                  <span class="pill-price">$1.85</span>
+                  <span class="pill-delta up">+24.1%</span>
+                  <span class="pill-action">TRADE</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="glass-panel" style="padding:18px">
+              <div style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin-bottom:12px">
+                Traders Destacados
+              </div>
+              <div style="display:flex; flex-direction:column; gap:10px" id="sidebarTraders">
+                <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px">
+                  <div style="display:flex; align-items:center; gap:8px">
+                    <div class="author-avatar" style="width:26px; height:26px; font-size:10px">VK</div>
+                    <span style="font-weight:700">@0xValk</span>
+                  </div>
+                  <span style="color:var(--delta-green); font-family:var(--font-mono); font-weight:700">+580%</span>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px">
+                  <div style="display:flex; align-items:center; gap:8px">
+                    <div class="author-avatar" style="width:26px; height:26px; font-size:10px">SL</div>
+                    <span style="font-weight:700">@sol_whale</span>
+                  </div>
+                  <span style="color:var(--delta-green); font-family:var(--font-mono); font-weight:700">+410%</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ════ VIEW 2: DISCOVER ════ -->
+      <section id="view-discover" class="view-panel" style="display:none">
+        <!-- Search & Chain Bar -->
+        <div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap">
+          <input type="text" placeholder="Buscar token, símbolo o contrato..." oninput="window.DiscoverEngine.setSearch(this.value)" style="flex:1; min-width:240px">
+        </div>
+
+        <!-- Categories Pill Bar -->
+        <div class="pill-tabs-bar">
+          <button class="pill-tab active" onclick="setDiscoverCategory(this, 'TRENDING')">⚡ TRENDING</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'GAINERS')">🚀 GAINERS</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'VOLUME')">📊 VOLUME</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'SMART MONEY')">🐋 SMART MONEY</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'MEMECOINS')">🐸 MEMECOINS</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'AI')">🤖 AI</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'RWA')">🏛️ RWA</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'PERPS')">📈 PERPS</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'LOSERS')">📉 LOSERS</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'NEW')">✨ NEW</button>
+          <button class="pill-tab" onclick="setDiscoverCategory(this, 'WATCHLIST')">★ WATCHLIST</button>
+        </div>
+
+        <!-- Tokens Table / List -->
+        <div class="glass-panel" id="discoverTokensList"></div>
+      </section>
+
+      <!-- ════ VIEW 3: TRADING TERMINAL ════ -->
+      <section id="view-trade" class="view-panel" style="display:none">
+        <!-- Token Header Bar -->
+        <div class="glass-panel" style="padding:16px 20px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px">
+          <div style="display:flex; align-items:center; gap:14px">
+            <div>
+              <h2 id="terminalSymbol" style="font-size:20px; font-weight:800; letter-spacing:-0.03em">SOL / USDC</h2>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:2px">
+                <span class="brand-badge" id="terminalChain">SOLANA</span>
+                <span style="font-size:11px; color:var(--text-tertiary)">Jupiter DEX Routing · Sub-second execution</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:baseline; gap:12px">
+            <span id="terminalPrice" style="font-size:26px; font-weight:900; font-family:var(--font-mono)">$184.25</span>
+            <span style="font-size:13px; font-weight:700; font-family:var(--font-mono); color:var(--delta-green)">+7.42% 24h</span>
+          </div>
+        </div>
+
+        <!-- Terminal Grid: Chart + Order Panel -->
+        <div style="display:grid; grid-template-columns:1fr 340px; gap:16px" class="trade-grid">
+          <!-- Chart Column -->
+          <div class="glass-panel" style="padding:16px; display:flex; flex-direction:column">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px; color:var(--text-tertiary); font-family:var(--font-mono)">
+              <div style="display:flex; gap:6px">
+                <button class="btn btn-ghost btn-sm active" style="padding:3px 8px">5m</button>
+                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">15m</button>
+                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">1h</button>
+                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">4h</button>
+                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">1d</button>
+              </div>
+              <div style="color:var(--delta-green)">● FEED EN VIVO</div>
+            </div>
+
+            <!-- Lightweight Chart Mount -->
+            <div id="tvChartContainer" style="width:100%; height:380px"></div>
+          </div>
+
+          <!-- Order Form Column -->
+          <div class="glass-panel" style="padding:20px; display:flex; flex-direction:column; gap:16px">
+            <!-- Buy / Sell toggle -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; background:rgba(255,255,255,0.04); padding:4px; border-radius:var(--radius-md)">
+              <button class="btn btn-sm active" id="btnSideBuy" onclick="setTradeSide('BUY')" style="background:#fff; color:#000">BUY / LONG</button>
+              <button class="btn btn-ghost btn-sm" id="btnSideSell" onclick="setTradeSide('SELL')">SELL / SHORT</button>
+            </div>
+
+            <!-- Market / Limit toggle -->
+            <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-secondary)">
+              <span style="cursor:pointer; font-weight:700; color:#fff" onclick="window.TradingEngine.setOrderType('MARKET')">● MARKET</span>
+              <span style="cursor:pointer" onclick="window.TradingEngine.setOrderType('LIMIT')">○ LIMIT</span>
+            </div>
+
+            <!-- Amount Input -->
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-tertiary); margin-bottom:6px">
+                <span>Pagar en USDC</span>
+                <span>Saldo: $2,500.00</span>
+              </div>
+              <input type="number" id="orderAmountInput" placeholder="0.00 USDC" oninput="window.TradingEngine.calculateEstOutput()" style="width:100%; font-size:16px; font-family:var(--font-mono)">
+            </div>
+
+            <!-- Percentage chips -->
+            <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(25)">25%</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(50)">50%</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(75)">75%</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(100)">MAX</button>
+            </div>
+
+            <!-- Leverage Slider -->
+            <div style="border-top:1px solid var(--border-subtle); padding-top:12px">
+              <div style="display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:6px">
+                <span style="color:var(--text-tertiary)">Apalancamiento</span>
+                <strong id="leverageVal" class="mono" style="color:#fff">1x</strong>
+              </div>
+              <input type="range" min="1" max="20" value="1" oninput="window.TradingEngine.setLeverage(this.value)" style="width:100%">
+            </div>
+
+            <!-- Summary -->
+            <div style="font-size:11.5px; color:var(--text-tertiary); font-family:var(--font-mono); display:flex; flex-direction:column; gap:4px">
+              <div style="display:flex; justify-content:space-between">
+                <span>Recibir estimado:</span>
+                <strong style="color:#fff" id="estReceiveAmount">—</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between">
+                <span>Comisión USDC (0.3%):</span>
+                <span id="estFeeAmount">$0.00</span>
+              </div>
+            </div>
+
+            <!-- Execute Button -->
+            <button class="btn btn-primary btn-lg" id="executeOrderBtn" onclick="window.TradingEngine.executeTrade()">
+              BUY SOL
+            </button>
+          </div>
+        </div>
+
+        <!-- Active Positions Section -->
+        <div class="glass-panel" style="margin-top:18px; padding:0; overflow:hidden">
+          <div style="padding:14px 18px; border-bottom:1px solid var(--border-subtle); font-size:12px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">
+            Posiciones Abiertas & PnL en Tiempo Real
+          </div>
+          <div id="activePositionsTable"></div>
+        </div>
+      </section>
+
+      <!-- ════ VIEW 4: LEADERBOARD ════ -->
+      <section id="view-leaderboard" class="view-panel" style="display:none">
+        <div style="margin-bottom:20px">
+          <h2 style="font-size:22px; font-weight:800; margin-bottom:6px">Ranking de Traders On-Chain</h2>
+          <p style="font-size:13px; color:var(--text-secondary)">
+            Rendimiento auditado de manera criptográfica sobre contratos inteligentes. Sigue a los mejores o réplicalos automáticamente.
+          </p>
+        </div>
+
+        <!-- Period Tabs -->
+        <div class="pill-tabs-bar">
+          <button class="pill-tab active" onclick="setLeaderboardPeriod(this, 'all')">ALL TIME</button>
+          <button class="pill-tab" onclick="setLeaderboardPeriod(this, '30d')">30 DÍAS</button>
+          <button class="pill-tab" onclick="setLeaderboardPeriod(this, '7d')">7 DÍAS</button>
+          <button class="pill-tab" onclick="setLeaderboardPeriod(this, '24h')">24 HORAS</button>
+          <button class="pill-tab" onclick="setLeaderboardPeriod(this, 'rising')">🔥 RISING TRADERS</button>
+        </div>
+
+        <!-- Leaderboard List -->
+        <div id="leaderboardList"></div>
+      </section>
+
+      <!-- ════ VIEW 5: PORTFOLIO & WALLET ════ -->
+      <section id="view-profile" class="view-panel" style="display:none">
+        <div class="glass-panel" style="padding:28px; margin-bottom:20px">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px">
+            <div style="display:flex; align-items:center; gap:16px">
+              <div class="author-avatar" style="width:54px; height:54px; font-size:20px">ME</div>
+              <div>
+                <h2 style="font-size:20px; font-weight:800">Mi Cuenta de Trading</h2>
+                <div style="font-size:12px; color:var(--text-tertiary); font-family:var(--font-mono)">
+                  Wallet no custodial cifrada con AES-GCM (PBKDF2)
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="window.App.openWalletModal()">Gestionar Billeteras</button>
+          </div>
+
+          <!-- Portfolio Stats -->
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:16px; margin-top:24px">
+            <div style="padding:14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)">
+              <div style="font-size:11px; color:var(--text-tertiary)">BALANCE ESTIMADO</div>
+              <div class="mono" style="font-size:20px; font-weight:800; color:#fff; margin-top:4px">$2,516.39</div>
+            </div>
+            <div style="padding:14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)">
+              <div style="font-size:11px; color:var(--text-tertiary)">PNL REALIZADO</div>
+              <div class="mono" style="font-size:20px; font-weight:800; color:var(--delta-green); margin-top:4px">+$16.39</div>
+            </div>
+            <div style="padding:14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)">
+              <div style="font-size:11px; color:var(--text-tertiary)">WIN RATE</div>
+              <div class="mono" style="font-size:20px; font-weight:800; color:#fff; margin-top:4px">100%</div>
+            </div>
+            <div style="padding:14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)">
+              <div style="font-size:11px; color:var(--text-tertiary)">POSICIONES ABIERTAS</div>
+              <div class="mono" style="font-size:20px; font-weight:800; color:#fff; margin-top:4px">1</div>
+            </div>
+          </div>
+
+          <!-- Creator attribution & links -->
+          <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border-subtle); text-align:center; font-size:13px; color:var(--text-secondary)">
+            Designed by <a href="https://x.com/nacho_web3_" target="_blank" rel="noopener noreferrer" style="color:#ffffff; font-weight:700; text-decoration:underline; text-underline-offset:3px">@nacho_web3_ on 𝕏</a>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px; font-family:var(--font-mono)">
+              Ray 2 · Mobile-First Social Trading Terminal · © 2027
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ── MOBILE BOTTOM NAVIGATION BAR ── -->
+    <nav class="mobile-nav-bar mobile-only">
+      <button class="mobile-nav-item active" data-nav="feed">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>Feed</span>
+      </button>
+
+      <button class="mobile-nav-item" data-nav="discover">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        <span>Discover</span>
+      </button>
+
+      <button class="mobile-nav-item" data-nav="trade">
+        <svg viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        <span>Trade</span>
+      </button>
+
+      <button class="mobile-nav-item" data-nav="leaderboard">
+        <svg viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-2.34"/><path d="M14 14.66V17c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-2.34"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+        <span>Ranks</span>
+      </button>
+
+      <button class="mobile-nav-item" data-nav="profile">
+        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span>Perfil</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ════ MODALS ════ -->
+
+  <!-- 1. Wallet Connect Modal -->
+  <div class="modal-backdrop" id="walletModal">
+    <div class="modal-window" style="padding:28px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 style="font-size:18px; font-weight:800">Conectar a Ray 2</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeWalletModal()">✕</button>
+      </div>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:18px">
+        Firma un mensaje gratuito sin gas para iniciar sesión con tu identidad on-chain.
+      </p>
+
+      <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px">
+        <button class="btn btn-secondary btn-lg" onclick="window.App.connectPhantom()" style="justify-content:flex-start">
+          <span>◎</span> Phantom (Solana)
+        </button>
+        <button class="btn btn-secondary btn-lg" onclick="window.App.connectMetaMask()" style="justify-content:flex-start">
+          <span>🦊</span> MetaMask (EVM / Base / Ethereum)
+        </button>
+      </div>
+
+      <div style="text-align:center; margin:16px 0; font-size:11px; color:var(--text-tertiary)">— O INGRESA CON CLAVE API —</div>
+      <input type="password" id="apiKeyManualInput" placeholder="raidos_key..." style="width:100%; margin-bottom:10px">
+      <button class="btn btn-primary" style="width:100%" onclick="saveManualKey()">Guardar Clave</button>
+    </div>
+  </div>
+
+  <!-- 2. New Thesis / Post Modal -->
+  <div class="modal-backdrop" id="newPostModal">
+    <div class="modal-window" style="padding:28px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 style="font-size:18px; font-weight:800">Publicar Tesis o Análisis</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeNewPostModal()">✕</button>
+      </div>
+
+      <form onsubmit="handleCreateThesis(event)" style="display:flex; flex-direction:column; gap:12px">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+          <div>
+            <label style="font-size:11px; color:var(--text-tertiary)">Activo ($TICKER)</label>
+            <input type="text" id="thesisToken" placeholder="SOL" style="width:100%; text-transform:uppercase" required>
+          </div>
+          <div>
+            <label style="font-size:11px; color:var(--text-tertiary)">Dirección</label>
+            <select id="thesisDirection" style="width:100%">
+              <option value="LONG">LONG (Alcista)</option>
+              <option value="SHORT">SHORT (Bajista)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px">
+          <div>
+            <label style="font-size:10px; color:var(--text-tertiary)">Entrada</label>
+            <input type="text" id="thesisEntry" placeholder="$184" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:10px; color:var(--text-tertiary)">TP (Target)</label>
+            <input type="text" id="thesisTp" placeholder="$215" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:10px; color:var(--text-tertiary)">SL (Stop Loss)</label>
+            <input type="text" id="thesisSl" placeholder="$172" style="width:100%">
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:11px; color:var(--text-tertiary)">Tesis y Fundamentos (Menciona $TICKERS para activos interactivos)</label>
+          <textarea id="thesisText" rows="4" placeholder="Explica por qué estás tomando esta posición. Cualquier mención como $SOL o $BRETT será interactiva." style="width:100%" required></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg">PUBLICAR EN EL FEED</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. Closed Beta Access Gate Modal -->
+  <div class="modal-backdrop" id="accessGateModal">
+    <div class="modal-window" style="padding:32px; text-align:center">
+      <div class="brand-badge" style="margin-bottom:12px">CLOSED BETA ONLY</div>
+      <h3 style="font-size:20px; font-weight:800; margin-bottom:8px">Ray 2 Early Access</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:20px; line-height:1.5">
+        Introduce tu código de invitación personal para desbloquear la aplicación en desarrollo.
+      </p>
+
+      <form onsubmit="handleGateCode(event)" style="display:flex; flex-direction:column; gap:12px">
+        <input type="text" id="gateCodeInput" placeholder="Código (ej. ALPHA2027)" style="text-transform:uppercase; text-align:center; font-size:15px; font-weight:700" required>
+        <div id="gateError" style="font-size:12px; color:var(--delta-red); display:none">Código no válido.</div>
+        <button type="submit" class="btn btn-primary btn-lg">DESBLOQUEAR TERMINAL</button>
+      </form>
+
+      <div style="margin-top:16px">
+        <a href="index.html" style="font-size:12px; color:var(--text-tertiary)">← Volver a la Landing & Solicitar Acceso</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Share Card Canvas Modal -->
+  <div class="modal-backdrop" id="shareCardModal">
+    <div class="modal-window" style="padding:24px; max-width:640px; text-align:center">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 style="font-size:16px; font-weight:800">Resultado Verificado On-Chain</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeShareModal()">✕</button>
+      </div>
+      <canvas id="shareCardCanvas" style="width:100%; border-radius:var(--radius-lg); border:1px solid var(--border-subtle); margin-bottom:16px"></canvas>
+      <button class="btn btn-primary" onclick="downloadCanvas()">DESCARGAR TARJETA</button>
+    </div>
+  </div>
+
+  <!-- 5. Copy Trade Modal -->
+  <div class="modal-backdrop" id="copyTradeModal">
+    <div class="modal-window" style="padding:28px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 style="font-size:18px; font-weight:800">Configurar Copy Trade</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeCopyModal()">✕</button>
+      </div>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px" id="copyTraderName">
+        Copiando operaciones
+      </p>
+
+      <div style="display:flex; flex-direction:column; gap:12px; font-size:12px">
+        <div>
+          <label style="color:var(--text-tertiary)">Monto máximo por operación (USDC)</label>
+          <input type="number" value="100" style="width:100%; margin-top:4px">
+        </div>
+        <div>
+          <label style="color:var(--text-tertiary)">Slippage Máximo</label>
+          <input type="text" value="0.5%" style="width:100%; margin-top:4px">
+        </div>
+  <!-- 6. Quick Asset Detail & Swap Bottom Sheet -->
+  <div class="modal-backdrop" id="assetPreviewModal">
+    <div class="modal-window" style="padding:24px">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div style="width:40px; height:40px; border-radius:50%; background:#141417; border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; color:#fff" id="previewIcon">
+            SOL
+          </div>
+          <div>
+            <div style="display:flex; align-items:center; gap:8px">
+              <h3 style="font-size:18px; font-weight:800" id="previewTitle">$SOL</h3>
+              <span class="brand-badge" id="previewChain">SOLANA</span>
+              <span class="elite-badge high" id="previewScore">⚡ 94/100</span>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary)" id="previewSubtitle">Ecosistema Principal</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="closeAssetPreview()">✕</button>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:baseline; padding:12px 16px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-md); margin-bottom:16px">
+        <div>
+          <div style="font-size:11px; color:var(--text-tertiary)">PRECIO EN VIVO</div>
+          <div class="mono" style="font-size:22px; font-weight:800; color:#fff" id="previewPrice">$184.25</div>
+        </div>
+        <div class="mono" style="font-size:14px; font-weight:700; color:var(--delta-green)" id="previewDelta">+7.42% 24h</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px">
+        <button class="btn btn-primary btn-lg" onclick="quickBuyFromPreview()">
+          COMPRAR AHORA
+        </button>
+        <button class="btn btn-secondary btn-lg" onclick="goToTerminalFromPreview()">
+          VER GRÁFICO →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── APP SCRIPT MODULES ── -->
+  <script type="module" src="js/app.js"></script>
+
+  <script>
+    // Inline helpers for filters
+    function setFeedFilter(btn, filter) {
+      btn.parentElement.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.FeedEngine.setFilter(filter);
+    }
+
+    function setDiscoverCategory(btn, cat) {
+      btn.parentElement.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.DiscoverEngine.setCategory(cat);
+    }
+
+    function setLeaderboardPeriod(btn, period) {
+      btn.parentElement.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.SocialEngine.setPeriod(period);
+    }
+
+    function setTradeSide(side) {
+      document.getElementById('btnSideBuy').classList.toggle('active', side === 'BUY');
+      document.getElementById('btnSideSell').classList.toggle('active', side === 'SELL');
+      window.TradingEngine.setSide(side);
+    }
+
+    function handleCreateThesis(e) {
+      e.preventDefault();
+      const token = document.getElementById('thesisToken').value.trim().toUpperCase();
+      const direction = document.getElementById('thesisDirection').value;
+      const entryPrice = document.getElementById('thesisEntry').value.trim();
+      const targetPrice = document.getElementById('thesisTp').value.trim();
+      const stopLoss = document.getElementById('thesisSl').value.trim();
+      const text = document.getElementById('thesisText').value.trim();
+
+      window.FeedEngine.addNewPost({ token, direction, entryPrice, targetPrice, stopLoss, text });
+      window.App.closeNewPostModal();
+    }
+
+    async function handleGateCode(e) {
+      e.preventDefault();
+      const code = document.getElementById('gateCodeInput').value.trim();
+      try {
+        const res = await fetch('/api/auth/access-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        const data = await res.json();
+        if (res.ok && data.valid) {
+          sessionStorage.setItem('ray2_beta_unlocked', '1');
+          window.App.closeAccessCodeModal();
+        } else {
+          document.getElementById('gateError').style.display = 'block';
+        }
+      } catch {
+        if (code.toUpperCase() === 'ALPHA2027' || code.toUpperCase() === 'RAY2') {
+          sessionStorage.setItem('ray2_beta_unlocked', '1');
+          window.App.closeAccessCodeModal();
+        } else {
+          document.getElementById('gateError').style.display = 'block';
+        }
+      }
+    }
+
+    function saveManualKey() {
+      const key = document.getElementById('apiKeyManualInput').value.trim();
+      if (key) {
+        localStorage.setItem('raidos_key', key);
+        sessionStorage.setItem('ray2_beta_unlocked', '1');
+        window.App.closeWalletModal();
+        window.App.checkUserAuth();
+      }
+    }
+
+    function downloadCanvas() {
+      const canvas = document.getElementById('shareCardCanvas');
+      const link = document.createElement('a');
+      link.download = 'ray2-pnl-card.png';
+      link.href = canvas.toDataURL();
+      link.click();
+    }
+
+    // Quick Asset Preview bottom sheet functions
+    let activePreviewToken = null;
+    function openAssetPreview(token) {
+      activePreviewToken = token;
+      document.getElementById('previewTitle').textContent = '$' + token.symbol;
+      document.getElementById('previewIcon').textContent = token.symbol.slice(0, 3);
+      document.getElementById('previewChain').textContent = (token.chain || 'SOLANA').toUpperCase();
+      document.getElementById('previewPrice').textContent = '$' + Number(token.price || 100).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      document.getElementById('previewDelta').textContent = (token.delta >= 0 ? '+' : '') + Number(token.delta || 0).toFixed(2) + '% 24h';
+      document.getElementById('previewScore').textContent = '⚡ ' + (token.score || 90) + '/100';
+      document.getElementById('assetPreviewModal').classList.add('active');
+    }
+
+    function closeAssetPreview() {
+      document.getElementById('assetPreviewModal').classList.remove('active');
+    }
+
+    function goToTerminalFromPreview() {
+      if (activePreviewToken) {
+        closeAssetPreview();
+        window.App.openTradeForToken(activePreviewToken.symbol, activePreviewToken.chain, activePreviewToken.price);
+      }
+    }
+
+    function quickBuyFromPreview() {
+      if (activePreviewToken) {
+        closeAssetPreview();
+        window.App.openTradeForToken(activePreviewToken.symbol, activePreviewToken.chain, activePreviewToken.price);
+        document.getElementById('orderAmountInput').value = '100';
+        window.TradingEngine.calculateEstOutput();
+      }
+    }
+    window.openAssetPreview = openAssetPreview;
+  </script>
+</body>
+</html>

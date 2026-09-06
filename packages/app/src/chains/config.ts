@@ -172,6 +172,25 @@ const ROBINHOOD: ChainConfig = {
   supportsLaunches: true,
 };
 
+// ── MONAD ───────────────────────────────────────────────────────────────
+
+const MONAD: ChainConfig = {
+  id: "monad",
+  name: "Monad",
+  chainId: 10143,
+  nativeCurrency: "MON",
+  rpcUrl: "https://testnet-rpc.monad.xyz",
+  explorerUrl: "https://explorer.monad.xyz",
+  evm: true,
+  usdcAddress: "0xf817257fed379853cDe0fa4F97AB987181B1E5Ea",
+  usdcDecimals: 6,
+  wrappedNative: "0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701",
+  dexAggregator: "0x",
+  dexApiUrl: "https://api.0x.org",
+  bridgeProvider: "layerzero",
+  supportsLaunches: true,
+};
+
 // ── REGISTRY ────────────────────────────────────────────────────────────
 
 export const CHAINS: Record<string, ChainConfig> = {
@@ -182,6 +201,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   arbitrum: ARBITRUM,
   polygon: POLYGON,
   robinhood: ROBINHOOD,
+  monad: MONAD,
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS) as (keyof typeof CHAINS)[];

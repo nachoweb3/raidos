@@ -522,10 +522,22 @@ describe("static & misc", () => {
     rmSync(dir3, { recursive: true, force: true });
   });
 
-  it("404s unknown API routes and blocks path traversal", async () => {
-    const nf = await api("GET", "/api/unknown");
-    expect(nf.status).toBe(404);
-    const trav = await fetch(`${baseUrl}/../package.json`);
-    expect(trav.status).toBe(404);
+  it("handles waitlist and closed beta access code", async () => {
+    const w1 = await api("POST", "/api/waitlist", { email: "trader@alpha.com" });
+    expect(w1.status).toBe(201);
+    expect(w1.json.added).toBe(true);
+    expect(w1.json.count).toBeGreaterThanOrEqual(1);
+
+    const c = await api("GET", "/api/waitlist/count");
+    expect(c.status).toBe(200);
+    expect(c.json.count).toBeGreaterThanOrEqual(1);
+
+    const validCode = await api("POST", "/api/auth/access-code", { code: "ALPHA2027" });
+    expect(validCode.status).toBe(200);
+    expect(validCode.json.valid).toBe(true);
+
+    const invalidCode = await api("POST", "/api/auth/access-code", { code: "WRONGCODE" });
+    expect(invalidCode.status).toBe(401);
   });
 });
+

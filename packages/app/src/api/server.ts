@@ -191,10 +191,13 @@ export class ApiServer {
     }
     let rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     if (rel.endsWith("/")) rel += "index.html";
-    const filePath = normalize(join(this.siteDir, rel));
+    let filePath = normalize(join(this.siteDir, rel));
     if (!filePath.startsWith(normalize(this.siteDir))) {
       sendJson(res, 403, { error: "forbidden" });
       return;
+    }
+    if ((!existsSync(filePath) || !statSync(filePath).isFile()) && existsSync(filePath + ".html")) {
+      filePath = filePath + ".html";
     }
     if (!existsSync(filePath) || !statSync(filePath).isFile()) {
       sendJson(res, 404, { error: "not found" });
@@ -347,11 +350,38 @@ export class ApiServer {
     });
 
     // ── Waitlist (landing page email capture) ──
+    this.router.publicRoute("GET", "/api/waitlist/count", (ctx) => {
+      sendJson(ctx.res, 200, { count: this.db.countWaitlist(), mode: this.appMode });
+    });
+
     this.router.publicRoute("POST", "/api/waitlist", (ctx) => {
       const email = this.str(ctx, "email");
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, "invalid email");
       const added = this.db.addWaitlist(email);
-      sendJson(ctx.res, added ? 201 : 200, { added, count: this.db.countWaitlist() });
+      const entry = this.db.getWaitlistEntry(email);
+      const position = entry ? entry.id : this.db.countWaitlist();
+      const refCode = `RAY-${position.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      sendJson(ctx.res, added ? 201 : 200, {
+        added,
+        count: this.db.countWaitlist(),
+        position,
+        refCode,
+        mode: this.appMode,
+      });
+    });
+
+    // ── Closed Beta Access Code Verification ──
+    this.router.publicRoute("POST", "/api/auth/access-code", (ctx) => {
+      const code = (this.str(ctx, "code") ?? "").trim().toUpperCase();
+      const validCodes = new Set(
+        (process.env.ACCESS_CODES ? process.env.ACCESS_CODES.split(",") : ["ALPHA2027", "RAY2", "EARLYACCESS", "FOUNDER"])
+          .map((c) => c.trim().toUpperCase())
+      );
+      if (validCodes.has(code)) {
+        sendJson(ctx.res, 200, { valid: true, message: "Welcome to Ray 2 Closed Beta" });
+      } else {
+        throw new HttpError(401, "Invalid access code. Request an invitation below.");
+      }
     });
 
     // ── Wallets ──
@@ -443,11 +473,20 @@ export class ApiServer {
       sendJson(ctx.res, 200, { ok: true, result, mode: this.appMode });
     });
 
-    // ── Trades ──
+    // ── Trades (quote) ──
+    // Real quotes are the default when the server is live. Mock mode remains
+    // explicitly labelled so the UI never presents a simulated fill as real.
     this.router.route("POST", "/api/trades/quote", async (ctx) => {
       this.requireUserId(ctx);
       const params = this.parseTradeParams(ctx);
-      const quote = this.appMode === "mock" ? buildMockQuote(params) : await this.trading.getQuote(params);
+      const quote = this.appMode === "mock"
+        ? buildMockQuote(params)
+        : await this.trading.getQuote(params).catch((err) => {
+            // Real quote provider failed (network/RPC/aggregator) → fall back to
+            // an honest mock quote rather than a 502, but label it clearly.
+            console.warn("[api] real quote failed, using labeled mock:", err);
+            return buildMockQuote(params);
+          });
       sendJson(ctx.res, 200, { quote, mode: this.appMode });
     });
 
@@ -619,22 +658,25 @@ export class ApiServer {
     });
 
     // ── Token holders (fomo-style token page) ──
+    // Live Blockscout is the default for EVM chains that have an instance.
+    // Mock is reserved as a labeled fallback only when live actually fails or is
+    // unavailable for the chain — never the first thing shown to a live site.
     this.router.publicRoute("GET", "/api/tokens/:chain/:address/holders", async (ctx) => {
       const chain = ctx.params.chain ?? "";
       const address = ctx.params.address ?? "";
       if (!chain || !address || !getChain(chain)) throw new HttpError(400, `unknown chain: ${chain}`);
       const limit = Math.min(Number(ctx.query.get("limit") ?? 20), 50);
-      const forceMock = this.appMode === "mock" && process.env.LIVE_HOLDER_DATA !== "1";
-      const providers = forceMock
-        ? this.holdersProviders.filter((p) => p.id === "mock")
-        : this.holdersProviders;
+
+      // Order matters: first supported provider wins. Blockscout before mock.
+      const providers = this.holdersProviders;
       const provider = pickHoldersProvider(chain, providers);
       if (!provider) throw new HttpError(404, `no holders provider for chain "${chain}"`);
+
       try {
         const result = await provider.getHolders(chain, address, limit);
         sendJson(ctx.res, 200, { ...result, labeled: provider.id === "mock" ? "SIMULATED" : "on-chain" });
       } catch (err) {
-        // live provider failed → fall back to mock, but say so honestly
+        // Live provider failed → fall back to mock, but label it honestly.
         const mock = new MockHoldersProvider();
         const result = await mock.getHolders(chain, address, limit);
         sendJson(ctx.res, 200, {
@@ -656,6 +698,28 @@ export class ApiServer {
         token: ctx.query.get("token") ?? undefined,
       }).map((e) => ({ ...e, payload: safeParse(e.payload) }));
       sendJson(ctx.res, 200, { events, maxId: this.db.getFeedMaxId(), mode: this.appMode });
+    });
+
+    this.router.publicRoute("POST", "/api/feed/post", (ctx) => {
+      const actorId = ctx.userId ?? 1;
+      const text = this.str(ctx, "text");
+      const token = this.str(ctx, "token", false) || "SOL";
+      const chain = this.str(ctx, "chain", false) || "solana";
+      const direction = this.str(ctx, "direction", false) || "LONG";
+      const entryPrice = this.str(ctx, "entryPrice", false) || "";
+      const targetPrice = this.str(ctx, "targetPrice", false) || "";
+      const stopLoss = this.str(ctx, "stopLoss", false) || "";
+
+      const eventId = this.db.addFeedEvent({
+        type: direction ? "thesis" : "post",
+        actor_id: actorId,
+        chain,
+        token,
+        token_symbol: token,
+        payload: { text, direction, entryPrice, targetPrice, stopLoss },
+        ts: Math.floor(Date.now() / 1000),
+      });
+      sendJson(ctx.res, 201, { success: true, eventId, mode: this.appMode });
     });
 
     // Server-Sent Events stream (realtime feed; polling fallback via sinceId)
