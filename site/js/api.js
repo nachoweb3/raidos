@@ -171,6 +171,17 @@ export const ApiClient = {
     return this.request("/api/me/referrals");
   }
 
+  async getSubscription() {
+    return this.request("/api/subscription");
+  }
+
+  async subscribe(tierId) {
+    return this.request("/api/subscription", {
+      method: "POST",
+      body: JSON.stringify({ tierId }),
+    });
+  }
+
   async importWallet(chain, privateKey, password, label = "Imported") {
     return this.request("/api/wallets/import", {
       method: "POST",

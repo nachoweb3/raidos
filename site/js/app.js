@@ -9,6 +9,7 @@ import { DiscoverEngine } from "./discover.js";
 import { TradingEngine } from "./trading.js";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
+import { PremiumEngine } from "./premium.js";
 
 export const App = {
   currentView: "feed",
@@ -27,6 +28,7 @@ export const App = {
     TradingEngine.init();
     SocialEngine.init(document.getElementById("leaderboardList"));
     PortfolioEngine.init();
+    PremiumEngine.load();
 
     // 3. Check Auth State
     this.checkUserAuth();

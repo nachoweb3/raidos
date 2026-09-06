@@ -154,6 +154,9 @@ export const PortfolioEngine = {
         TRENCHES · Mobile-First Social Trading Terminal · © 2027
       </div>`;
     el.appendChild(credit);
+
+    // Premium & referrals panels (created/filled by premium.js)
+    window.PremiumEngine?.render();
   },
 
   statCard(label, value, color) {
