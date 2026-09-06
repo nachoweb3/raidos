@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RaidOS — Multi-Chain Trading Terminal</title>
+<title>TRENCHES — Multi-Chain Trading Terminal</title>
 <meta name="description" content="Trade tokens across Solana, Ethereum, Base, BSC, Arbitrum, Polygon, Robinhood Chain, Monad and Arc. USDC-native swaps, token launches, social trading, and leaderboards.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
 <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -256,7 +256,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
     </div>
     <div class="key-result" id="keyResult"></div>
     <p style="margin:10px 0 6px;font-size:12px;opacity:.65">— or paste an API key / create an account —</p>
-    <input type="password" id="keyInput" placeholder="raidos_…" onkeydown="if(event.key==='Enter')saveKey()">
+    <input type="password" id="keyInput" placeholder="trenches_…" onkeydown="if(event.key==='Enter')saveKey()">
     <input type="password" id="bootstrapInput" placeholder="BOOTSTRAP_SECRET (optional — needed to create an account)" onkeydown="if(event.key==='Enter')registerNewUser()">
     <p style="margin-top:8px;font-size:12px;opacity:.75">Wallet login signs a free message — no gas, no keys stored in your browser. Google/X appear when the host enables them.</p>
     <div class="row">
@@ -1240,7 +1240,7 @@ function openShareCard(pnlUsdc, token, chain){
   ctx.strokeStyle = win ? '#21C95E' : '#FF4E51'; ctx.lineWidth = 2; ctx.strokeRect(1,1,478,278);
   // brand
   ctx.fillStyle = '#9899A3'; ctx.font = '600 14px Inter, sans-serif';
-  ctx.fillText('RaidOS · self-reported', 24, 34);
+  ctx.fillText('TRENCHES · self-reported', 24, 34);
   // emoji
   ctx.font = '56px serif'; ctx.fillText(win ? '🏆' : '💀', 24, 108);
   // pnl
@@ -1258,7 +1258,7 @@ function openShareCard(pnlUsdc, token, chain){
 }
 function downloadShareCard(){
   const a = document.createElement('a');
-  a.download = 'raidos-' + (Number(localStorage.getItem('lastPnl'))>=0?'win':'fumble') + '.png';
+  a.download = 'trenches-' + (Number(localStorage.getItem('lastPnl'))>=0?'win':'fumble') + '.png';
   a.href = document.getElementById('shareCanvas').toDataURL('image/png');
   a.click();
 }

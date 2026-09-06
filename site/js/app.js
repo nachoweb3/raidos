@@ -1,5 +1,5 @@
 /**
- * 🚀 RAY 2 APP CONTROLLER — Mobile-First Orchestrator
+ * 🚀 TRENCHES APP CONTROLLER — Mobile-First Orchestrator
  * Coordinates Feed, Discover, Trading Terminal, Social Reputation, and Wallets.
  */
 

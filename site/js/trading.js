@@ -426,7 +426,7 @@ export const TradingEngine = {
     // Watermark brand
     ctx.fillStyle = "#ffffff";
     ctx.font = "900 22px system-ui, sans-serif";
-    ctx.fillText("RAY 2", 36, 52);
+    ctx.fillText("TRENCHES", 36, 52);
 
     ctx.fillStyle = "#71717a";
     ctx.font = "12px monospace";

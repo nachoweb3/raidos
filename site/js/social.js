@@ -10,7 +10,7 @@ export const SocialEngine = {
   container: null,
   activePeriod: "all", // '24h' | '7d' | '30d' | 'all' | 'rising'
   leaders: [],
-  followingSet: new Set(JSON.parse(localStorage.getItem("ray2_following") || '["@0xValk"]')),
+  followingSet: new Set(JSON.parse(localStorage.getItem("trenches_following") || '["@0xValk"]')),
 
   init(containerElement) {
     this.container = containerElement;
@@ -118,7 +118,7 @@ export const SocialEngine = {
     } else {
       this.followingSet.add(handle);
     }
-    localStorage.setItem("ray2_following", JSON.stringify([...this.followingSet]));
+    localStorage.setItem("trenches_following", JSON.stringify([...this.followingSet]));
     this.render();
   },
 

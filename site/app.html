@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Ray 2 — The Social Network for Markets</title>
-  <meta name="description" content="Ray 2: Red social para mercados financieros. Descubre personas, activos y oportunidades, analiza y opera en tiempo real.">
+  <title>TRENCHES — The Social Network for Markets</title>
+  <meta name="description" content="TRENCHES: Red social para mercados financieros. Descubre personas, activos y oportunidades, analiza y opera en tiempo real.">
   <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23000'/><text y='.76em' x='.22em' font-size='68' fill='%23fff' font-family='sans-serif' font-weight='900'>R2</text></svg>">
@@ -486,7 +486,7 @@
           <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border-subtle); text-align:center; font-size:13px; color:var(--text-secondary)">
             Designed by <a href="https://x.com/nacho_web3_" target="_blank" rel="noopener noreferrer" style="color:#ffffff; font-weight:700; text-decoration:underline; text-underline-offset:3px">@nacho_web3_ on 𝕏</a>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px; font-family:var(--font-mono)">
-              Ray 2 · Mobile-First Social Trading Terminal · © 2027
+              TRENCHES · Mobile-First Social Trading Terminal · © 2027
             </div>
           </div>
         </div>
@@ -529,7 +529,7 @@
   <div class="modal-backdrop" id="walletModal">
     <div class="modal-window" style="padding:28px">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
-        <h3 style="font-size:18px; font-weight:800">Conectar a Ray 2</h3>
+        <h3 style="font-size:18px; font-weight:800">Conectar a TRENCHES</h3>
         <button class="btn btn-ghost btn-sm" onclick="window.App.closeWalletModal()">✕</button>
       </div>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:18px">
@@ -546,7 +546,7 @@
       </div>
 
       <div style="text-align:center; margin:16px 0; font-size:11px; color:var(--text-tertiary)">— O INGRESA CON CLAVE API —</div>
-      <input type="password" id="apiKeyManualInput" placeholder="raidos_key..." style="width:100%; margin-bottom:10px">
+      <input type="password" id="apiKeyManualInput" placeholder="trenches_key..." style="width:100%; margin-bottom:10px">
       <button class="btn btn-primary" style="width:100%" onclick="saveManualKey()">Guardar Clave</button>
     </div>
   </div>
@@ -603,7 +603,7 @@
   <div class="modal-backdrop" id="accessGateModal">
     <div class="modal-window" style="padding:32px; text-align:center">
       <div class="brand-badge" style="margin-bottom:12px">CLOSED BETA ONLY</div>
-      <h3 style="font-size:20px; font-weight:800; margin-bottom:8px">Ray 2 Early Access</h3>
+      <h3 style="font-size:20px; font-weight:800; margin-bottom:8px">TRENCHES Early Access</h3>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:20px; line-height:1.5">
         Introduce tu código de invitación personal para desbloquear la aplicación en desarrollo.
       </p>
@@ -747,7 +747,7 @@
         });
         const data = await res.json();
         if (res.ok && data.valid) {
-          sessionStorage.setItem('ray2_beta_unlocked', '1');
+          sessionStorage.setItem('trenches_beta_unlocked', '1');
           window.App.closeAccessCodeModal();
         } else {
           document.getElementById('gateError').style.display = 'block';
@@ -762,7 +762,7 @@
       const key = document.getElementById('apiKeyManualInput').value.trim();
       if (key) {
         localStorage.setItem('raidos_key', key);
-        sessionStorage.setItem('ray2_beta_unlocked', '1');
+        sessionStorage.setItem('trenches_beta_unlocked', '1');
         window.App.closeWalletModal();
         window.App.checkUserAuth();
       }
@@ -771,7 +771,7 @@
     function downloadCanvas() {
       const canvas = document.getElementById('shareCardCanvas');
       const link = document.createElement('a');
-      link.download = 'ray2-pnl-card.png';
+      link.download = 'trenches-pnl-card.png';
       link.href = canvas.toDataURL();
       link.click();
     }

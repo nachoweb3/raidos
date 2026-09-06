@@ -1,6 +1,6 @@
 {
-  "appId": "com.raidos.ray2",
-  "appName": "Ray 2",
+  "appId": "com.raidos.trenches",
+  "appName": "TRENCHES",
   "webDir": "site",
   "bundledWebRuntime": false,
   "server": {

@@ -374,11 +374,11 @@ export class ApiServer {
     this.router.publicRoute("POST", "/api/auth/access-code", (ctx) => {
       const code = (this.str(ctx, "code") ?? "").trim().toUpperCase();
       const validCodes = new Set(
-        (process.env.ACCESS_CODES ? process.env.ACCESS_CODES.split(",") : ["ALPHA2027", "RAY2", "EARLYACCESS", "FOUNDER"])
+        (process.env.ACCESS_CODES ? process.env.ACCESS_CODES.split(",") : ["ALPHA2027", "TRENCHES", "EARLYACCESS", "FOUNDER"])
           .map((c) => c.trim().toUpperCase())
       );
       if (validCodes.has(code)) {
-        sendJson(ctx.res, 200, { valid: true, message: "Welcome to Ray 2 Closed Beta" });
+        sendJson(ctx.res, 200, { valid: true, message: "Welcome to TRENCHES Closed Beta" });
       } else {
         throw new HttpError(401, "Invalid access code. Request an invitation below.");
       }

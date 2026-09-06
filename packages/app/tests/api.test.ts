@@ -47,7 +47,7 @@ describe("auth", () => {
   it("registers the first user without bootstrap secret and returns the key once", async () => {
     const r = await api("POST", "/api/auth/register", {});
     expect(r.status).toBe(201);
-    expect(r.json.apiKey).toMatch(/^raidos_[0-9a-f]{64}$/);
+    expect(r.json.apiKey).toMatch(/^trenches_[0-9a-f]{64}$/);
     expect(typeof r.json.userId).toBe("number");
     firstUserKey = r.json.apiKey;
   });
@@ -75,7 +75,7 @@ describe("auth", () => {
     });
     expect(r.status).toBe(201);
     const j = await r.json();
-    expect(j.apiKey).toMatch(/^raidos_/);
+    expect(j.apiKey).toMatch(/^trenches_/);
     secondUserKey = j.apiKey;
     await s2.stop();
     rmSync(dir2, { recursive: true, force: true });
@@ -85,7 +85,7 @@ describe("auth", () => {
     const r = await api("GET", "/api/wallets");
     expect(r.status).toBe(401);
 
-    const bad = await api("GET", "/api/wallets", undefined, "raidos_deadbeef");
+    const bad = await api("GET", "/api/wallets", undefined, "trenches_deadbeef");
     expect(bad.status).toBe(401);
   });
 
@@ -473,7 +473,7 @@ describe("wallet login (Phantom / MetaMask)", () => {
       chain: "evm", address: signer.address, message: ch.json.message, signature, nonce: ch.json.nonce,
     });
     expect(r.status).toBe(200);
-    expect(r.json.apiKey).toMatch(/^raidos_/);
+    expect(r.json.apiKey).toMatch(/^trenches_/);
     expect(r.json.isNew).toBe(true);
     // Second login with same wallet → same user, fresh key, not new
     const ch2 = await api("POST", "/api/auth/challenge", { chain: "evm" });
@@ -498,7 +498,7 @@ describe("wallet login (Phantom / MetaMask)", () => {
       chain: "solana", address: kp.publicKey.toBase58(), message: ch.json.message, signature, nonce: ch.json.nonce,
     });
     expect(r.status).toBe(200);
-    expect(r.json.apiKey).toMatch(/^raidos_/);
+    expect(r.json.apiKey).toMatch(/^trenches_/);
     expect(r.json.isNew).toBe(true);
   });
 

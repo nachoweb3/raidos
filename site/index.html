@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Ray 2 — The Social Network for Markets</title>
-  <meta name="description" content="Ray 2 es la red social para los mercados. Descubre qué está moviendo el mercado, conecta con traders reales, analiza y opera en tiempo real desde un único ecosistema.">
+  <title>TRENCHES — The Social Network for Markets</title>
+  <meta name="description" content="TRENCHES es la red social para los mercados. Descubre qué está moviendo el mercado, conecta con traders reales, analiza y opera en tiempo real desde un único ecosistema.">
   <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23000'/><text y='.76em' x='.22em' font-size='68' fill='%23fff' font-family='sans-serif' font-weight='900'>R2</text></svg>">
@@ -683,7 +683,7 @@
           <div class="mockup-dot"></div>
           <div class="mockup-dot"></div>
         </div>
-        <div>ray2.internal // social-trading-terminal-v2.7</div>
+        <div>trenches.internal // social-trading-terminal-v2.7</div>
         <div style="color:var(--delta-green)">● LIVE STREAM</div>
       </div>
 
@@ -958,7 +958,7 @@
       </div>
 
       <div class="comp-col new">
-        <h3 style="font-size:16px; color:#ffffff; margin-bottom:6px">EL ESTÁNDAR RAY 2</h3>
+        <h3 style="font-size:16px; color:#ffffff; margin-bottom:6px">EL ESTÁNDAR TRENCHES</h3>
         <p style="font-size:13px; color:var(--text-secondary)">La red social nativa para los mercados.</p>
         <ul class="comp-list">
           <li class="comp-item"><span style="color:var(--delta-green)">✓</span> El contenido y el mercado unidos: un post es una oportunidad operable.</li>
@@ -993,13 +993,13 @@
   <!-- ── FOOTER ── -->
   <footer>
     <div style="margin-bottom:8px">
-      <span style="font-weight:800; color:#fff">RAY 2</span> — The Social Network for Markets.
+      <span style="font-weight:800; color:#fff">TRENCHES</span> — The Social Network for Markets.
     </div>
     <div style="margin-bottom:12px; font-size:13px; color:var(--text-secondary)">
       Designed by <a href="https://x.com/nacho_web3_" target="_blank" rel="noopener noreferrer" style="color:#ffffff; font-weight:700; text-decoration:underline; text-underline-offset:3px">@nacho_web3_ on 𝕏</a>
     </div>
     <div>
-      Powered by RaidOS Engine · Mobile-First for iOS, Android & Web · © 2027
+      Powered by TRENCHES Engine · Mobile-First for iOS, Android & Web · © 2027
     </div>
   </footer>
 
@@ -1011,7 +1011,7 @@
         <button class="btn btn-ghost btn-sm" onclick="closeInviteModal()">✕</button>
       </div>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:20px; line-height:1.5">
-        Ray 2 se encuentra actualmente en fase de acceso cerrado. Introduce tu código de invitación o conecta tu wallet autorizada para ingresar a la aplicación.
+        TRENCHES se encuentra actualmente en fase de acceso cerrado. Introduce tu código de invitación o conecta tu wallet autorizada para ingresar a la aplicación.
       </p>
 
       <form onsubmit="handleAccessCodeSubmit(event)" style="display:flex; flex-direction:column; gap:14px">
@@ -1136,7 +1136,7 @@
 
     function shareOnX() {
       const ref = window.lastWaitlistData?.ref || 'RAY-ALPHA';
-      const text = encodeURIComponent(`Acabo de unirme al early access de Ray 2 — The social network for markets creada por @nacho_web3_.\n\nDescubre alpha, analiza y opera en tiempo real desde un único ecosistema.\n\nÚnete a la waitlist aquí: https://inusaur.online/?ref=${ref}`);
+      const text = encodeURIComponent(`Acabo de unirme al early access de TRENCHES — The social network for markets creada por @nacho_web3_.\n\nDescubre alpha, analiza y opera en tiempo real desde un único ecosistema.\n\nÚnete a la waitlist aquí: https://inusaur.online/?ref=${ref}`);
       window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
     }
 
@@ -1175,7 +1175,7 @@
         const data = await res.json();
         if (res.ok && data.valid) {
           // Store token and grant access to the full app
-          sessionStorage.setItem('ray2_beta_unlocked', '1');
+          sessionStorage.setItem('trenches_beta_unlocked', '1');
           window.location.href = 'app.html';
         } else {
           errEl.textContent = data.error || 'Código de invitación no válido.';

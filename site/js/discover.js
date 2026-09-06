@@ -129,7 +129,7 @@ export const DiscoverEngine = {
   activeChain: "all",
   searchQuery: "",
   tokens: [],
-  watchlist: new Set(JSON.parse(localStorage.getItem("ray2_watchlist") || '["SOL","BRETT","VIRTUAL"]')),
+  watchlist: new Set(JSON.parse(localStorage.getItem("trenches_watchlist") || '["SOL","BRETT","VIRTUAL"]')),
 
   async init(containerElement) {
     this.container = containerElement;
@@ -228,7 +228,7 @@ export const DiscoverEngine = {
     } else {
       this.watchlist.add(symbol);
     }
-    localStorage.setItem("ray2_watchlist", JSON.stringify([...this.watchlist]));
+    localStorage.setItem("trenches_watchlist", JSON.stringify([...this.watchlist]));
     this.render();
   },
 

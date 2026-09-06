@@ -1,5 +1,5 @@
 /**
- * ⚡ RAY 2 API CLIENT — Core Communication Layer
+ * ⚡ TRENCHES API CLIENT — Core Communication Layer
  * Handles authentication, API keys, wallet cryptographic signatures, and live/mock execution.
  */
 
@@ -28,11 +28,11 @@ export const ApiClient = {
   },
 
   isBetaUnlocked() {
-    return sessionStorage.getItem("ray2_beta_unlocked") === "1" || Boolean(this.getApiKey());
+    return sessionStorage.getItem("trenches_beta_unlocked") === "1" || Boolean(this.getApiKey());
   },
 
   unlockBeta() {
-    sessionStorage.setItem("ray2_beta_unlocked", "1");
+    sessionStorage.setItem("trenches_beta_unlocked", "1");
   },
 
   async request(path, opts = {}) {

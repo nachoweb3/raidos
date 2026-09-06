@@ -12,9 +12,9 @@ export function hashApiKey(apiKey: string): string {
   return createHash("sha256").update(apiKey).digest("hex");
 }
 
-/** Generate a fresh API key: `raidos_<32 random bytes hex>` plus its hash. */
+/** Generate a fresh API key: `trenches_<32 random bytes hex>` plus its hash. */
 export function generateApiKey(): { apiKey: string; keyHash: string } {
-  const apiKey = `raidos_${randomBytes(32).toString("hex")}`;
+  const apiKey = `trenches_${randomBytes(32).toString("hex")}`;
   return { apiKey, keyHash: hashApiKey(apiKey) };
 }
 
