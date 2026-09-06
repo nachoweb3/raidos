@@ -1,11 +1,11 @@
 /**
  * 📊 TRADING TERMINAL ENGINE — Execution & Precision Charting (real data layer)
- * Fully integrated with RaidOS backend (/api/trades/quote, /api/trades/execute, /api/positions).
+ * Fully integrated with the TRENCHES backend (/api/trades/quote, /api/trades/execute, /api/positions).
  * Supports Spot Swap, Long/Short, Market/Limit, Leverage, TP/SL, and canvas Share Cards.
  *
- * Price + candles now come from CoinGecko public API (via PriceFeed in discover.js).
- * Execution still goes through the backend; mock mode is labelled honestly when the
- * server is in mock mode.
+ * Price comes from CoinGecko (via PriceFeed). Candles are built by walking the
+ * real 24h price backwards with a seeded random walk — they are indicative,
+ * not exchange OHLC data. No demo positions: positions come from the API only.
  */
 
 import { ApiClient } from "./api.js";
@@ -14,8 +14,8 @@ import { PriceFeed } from "./discover.js";
 export const TradingEngine = {
   currentSymbol: "SOL",
   currentChain: "solana",
-  currentPrice: 184.25,
-  currentDelta24h: 7.42,
+  currentPrice: 0,
+  currentDelta24h: 0,
   chart: null,
   candleSeries: null,
   volumeSeries: null,
@@ -31,7 +31,7 @@ export const TradingEngine = {
   /** Best current real price for the active symbol from PriceFeed. */
   async refreshPrice() {
     const row = PriceFeed.get(this.currentSymbol);
-    this.currentPrice = row.price;
+    this.currentPrice = row.price > 0 ? row.price : this.currentPrice;
     this.currentDelta24h = row.delta24h;
     this.updateTokenDisplay();
   },
@@ -66,9 +66,11 @@ export const TradingEngine = {
     if (chainEl) chainEl.textContent = this.currentChain.toUpperCase();
     if (priceEl) {
       priceEl.textContent =
-        this.currentPrice < 0.01
+        this.currentPrice > 0 && this.currentPrice < 0.01
           ? "$" + this.currentPrice.toFixed(6)
-          : "$" + this.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 });
+          : this.currentPrice > 0
+            ? "$" + this.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })
+            : "—";
     }
     if (deltaEl) {
       const isUp = this.currentDelta24h >= 0;
@@ -178,6 +180,24 @@ export const TradingEngine = {
   generateCandleData() {
     if (!this.candleSeries) return;
 
+    // Seeded random walk (mulberry32) backwards from the real current price.
+    // Same seed + symbol → same candles for the session; labelled as
+    // indicative, not exchange OHLC.
+    let seed = 0;
+    for (const c of this.currentSymbol) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+    seed = (seed + Math.floor(Date.now() / (30 * 60 * 1000))) >>> 0; // rotates every 30min
+    const rand = () => {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    if (this.currentPrice <= 0) {
+      this.candleSeries.setData([]);
+      return;
+    }
+
     const data = [];
     let basePrice = this.currentPrice;
     const now = Math.floor(Date.now() / 1000);
@@ -185,11 +205,11 @@ export const TradingEngine = {
 
     for (let i = 100; i >= 0; i--) {
       const time = now - i * interval;
-      const variation = (Math.random() - 0.49) * 0.02 * basePrice;
+      const variation = (rand() - 0.5) * 0.02 * basePrice;
       const open = basePrice;
       const close = basePrice + variation;
-      const high = Math.max(open, close) + Math.random() * 0.01 * basePrice;
-      const low = Math.min(open, close) - Math.random() * 0.01 * basePrice;
+      const high = Math.max(open, close) + rand() * 0.01 * basePrice;
+      const low = Math.min(open, close) - rand() * 0.01 * basePrice;
       basePrice = close;
 
       data.push({ time, open, high, low, close });
@@ -324,32 +344,18 @@ export const TradingEngine = {
           symbol: p.token_symbol || "TOKEN",
           chain: p.chain,
           side: p.side === "buy" ? "LONG" : "SHORT",
-          sizeUsdc: Number(p.total_cost_usdc || 100),
-          entryPrice: Number(p.avg_entry_price_usdc || 10),
-          currentPrice: Number(p.avg_entry_price_usdc || 10) * 1.05,
-          pnlUsdc: Number(p.realized_pnl_usdc || 12.5),
-          pnlPercent: 5.25,
+          sizeUsdc: Number(p.net_invested_usdc || 0) / 1e6,
+          entryPrice: Number(p.avg_entry_usdc || 0) / 1e6,
+          currentPrice: Number(p.avg_entry_usdc || 0) > 0 ? Number(p.avg_entry_usdc) / 1e6 : 0,
+          pnlUsdc: p.realized_pnl_usdc != null ? Number(p.realized_pnl_usdc) / 1e6 : 0,
+          pnlPercent: 0,
           leverage: 1,
         }));
+      } else {
+        this.positions = [];
       }
     } catch {
-      // Seed initial demo position if empty
-      if (this.positions.length === 0) {
-        this.positions = [
-          {
-            id: "pos_demo_1",
-            symbol: "SOL",
-            chain: "solana",
-            side: "LONG",
-            sizeUsdc: 500,
-            entryPrice: 178.4,
-            currentPrice: 184.25,
-            pnlUsdc: 16.39,
-            pnlPercent: 3.28,
-            leverage: 1,
-          },
-        ];
-      }
+      // Keep whatever we had; never invent positions
     }
     this.renderPositions();
   },

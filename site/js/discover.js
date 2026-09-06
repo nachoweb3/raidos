@@ -102,19 +102,12 @@ export const PriceFeed = {
     return this._fallback(sym);
   },
 
+  /**
+   * No invented prices. If CoinGecko is unreachable and there's no cache,
+   * the token has no price data — callers render "—".
+   */
   _fallback(symbol) {
-    const s = symbol.toUpperCase();
-    if (s === "BTC") return { symbol: s, price: 68420, delta24h: 3.15, vol24h: 0, mcap: 0 };
-    if (s === "ETH") return { symbol: s, price: 2740.1, delta24h: -1.2, vol24h: 0, mcap: 0 };
-    if (s === "SOL") return { symbol: s, price: 184.25, delta24h: 7.42, vol24h: 0, mcap: 0 };
-    if (s === "MON") return { symbol: s, price: 1.2, delta24h: 18.4, vol24h: 0, mcap: 0 };
-    if (s === "BRETT") return { symbol: s, price: 0.142, delta24h: 14.8, vol24h: 0, mcap: 0 };
-    if (s === "VIRTUAL") return { symbol: s, price: 1.85, delta24h: 24.1, vol24h: 0, mcap: 0 };
-    if (s === "JUP") return { symbol: s, price: 0.84, delta24h: 12.1, vol24h: 0, mcap: 0 };
-    if (s === "PENDLE") return { symbol: s, price: 4.95, delta24h: 3.2, vol24h: 0, mcap: 0 };
-    if (s === "PEPE") return { symbol: s, price: 0.0000094, delta24h: -4.1, vol24h: 0, mcap: 0 };
-    if (s === "BONK") return { symbol: s, price: 0.0000215, delta24h: 8.9, vol24h: 0, mcap: 0 };
-    return { symbol: s, price: 1, delta24h: 0, vol24h: 0, mcap: 0 };
+    return { symbol: symbol.toUpperCase(), price: 0, delta24h: 0, vol24h: 0, mcap: 0, noData: true };
   },
 
   async refresh() {

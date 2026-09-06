@@ -69,10 +69,12 @@ export const FeedEngine = {
 
       const isUp = token.delta >= 0;
       const formattedPrice =
-        token.price < 0.01
+        token.price > 0 && token.price < 0.01
           ? token.price.toFixed(6)
-          : token.price.toLocaleString(undefined, { minimumFractionDigits: token.price < 1 ? 4 : 2 });
-      const deltaText = (isUp ? "+" : "") + token.delta.toFixed(2) + "%";
+          : token.price > 0
+            ? token.price.toLocaleString(undefined, { minimumFractionDigits: token.price < 1 ? 4 : 2 })
+            : "—";
+      const deltaText = token.price > 0 ? (isUp ? "+" : "") + token.delta.toFixed(2) + "%" : "n/d";
 
       return `
         <span class="asset-pill" onclick="if(window.openAssetPreview){ window.openAssetPreview({ symbol: '${token.symbol}', chain: '${token.chain}', price: ${token.price}, delta: ${token.delta}, score: ${token.score} }); } else { window.App.openTradeForToken('${token.symbol}', '${token.chain}', ${token.price}); }" title="Click para ver gráfico y operar $${token.symbol}">
