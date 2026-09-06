@@ -40,6 +40,7 @@ function guessChain(symbol) {
   if (s === "BNB") return "bsc";
   if (s === "GMX") return "arbitrum";
   if (s === "MON") return "monad";
+  if (s === "ARC") return "arc";
   return "solana";
 }
 

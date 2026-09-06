@@ -45,8 +45,8 @@ describe("wallet crypto", () => {
 });
 
 describe("chain configs", () => {
-  it("has all 8 chains configured", () => {
-    expect(CHAIN_IDS.length).toBe(8);
+  it("has all 9 chains configured", () => {
+    expect(CHAIN_IDS.length).toBe(9);
     expect(CHAIN_IDS).toContain("solana");
     expect(CHAIN_IDS).toContain("ethereum");
     expect(CHAIN_IDS).toContain("base");
@@ -55,6 +55,7 @@ describe("chain configs", () => {
     expect(CHAIN_IDS).toContain("polygon");
     expect(CHAIN_IDS).toContain("robinhood");
     expect(CHAIN_IDS).toContain("monad");
+    expect(CHAIN_IDS).toContain("arc");
   });
 
   it("all EVM chains have valid configs", () => {
@@ -78,6 +79,17 @@ describe("chain configs", () => {
     expect(rh.rpcUrl).toBe("https://rpc.mainnet.chain.robinhood.com");
     expect(rh.supportsLaunches).toBe(true);
     expect(rh.nativeCurrency).toBe("ETH");
+  });
+
+  it("arc chain is configured", () => {
+    const arc = getChain("arc")!;
+    expect(arc.chainId).toBe(5042002);
+    expect(arc.rpcUrl).toBe("https://rpc.testnet.arc.io");
+    expect(arc.explorerUrl).toBe("https://testnet.arcscan.app");
+    expect(arc.nativeCurrency).toBe("USDC");
+    expect(arc.evm).toBe(true);
+    expect(arc.usdcAddress).toBe("0x3600000000000000000000000000000000000000");
+    expect(getChain(5042002)?.name).toBe("Arc");
   });
 
   it("getChain resolves by id and name", () => {

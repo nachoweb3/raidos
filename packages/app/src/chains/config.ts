@@ -191,6 +191,29 @@ const MONAD: ChainConfig = {
   supportsLaunches: true,
 };
 
+// ── ARC (CIRCLE) ────────────────────────────────────────────────────────
+
+// Circle's stablecoin L1 (testnet — mainnet addresses not yet published).
+// USDC is the native gas token: the native balance uses 18 decimals while the
+// ERC-20 USDC interface (0x3600…0000) uses 6. There is no wrapped-USDC
+// contract — the native token already satisfies IERC20 directly.
+const ARC: ChainConfig = {
+  id: "arc",
+  name: "Arc",
+  chainId: 5042002,
+  nativeCurrency: "USDC",
+  rpcUrl: "https://rpc.testnet.arc.io",
+  explorerUrl: "https://testnet.arcscan.app",
+  evm: true,
+  usdcAddress: "0x3600000000000000000000000000000000000000",
+  usdcDecimals: 6,
+  wrappedNative: "0x3600000000000000000000000000000000000000",
+  dexAggregator: "0x",
+  dexApiUrl: "https://api.0x.org",
+  bridgeProvider: "cctp",
+  supportsLaunches: true,
+};
+
 // ── REGISTRY ────────────────────────────────────────────────────────────
 
 export const CHAINS: Record<string, ChainConfig> = {
@@ -202,6 +225,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   polygon: POLYGON,
   robinhood: ROBINHOOD,
   monad: MONAD,
+  arc: ARC,
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS) as (keyof typeof CHAINS)[];

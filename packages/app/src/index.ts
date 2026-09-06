@@ -1,7 +1,7 @@
 /**
  * 🚀 RaidOS Trading App — multi-chain USDC trading + social + launchpad
  *
- * Chains: Solana, Ethereum, Base, BSC, Arbitrum, Polygon, Robinhood Chain
+ * Chains: Solana, Ethereum, Base, BSC, Arbitrum, Polygon, Robinhood Chain, Monad, Arc
  * Features:
  * - Multi-chain wallet management (encrypted, exportable)
  * - USDC-native swaps (Jupiter + 0x + Li.Fi bridging)

@@ -1,6 +1,6 @@
 /**
  * 🧭 DISCOVER ENGINE — Multi-Chain Market Radar (real data layer)
- * Real-time scanning across Solana, Base, Ethereum, BNB Chain, Arbitrum, Polygon, Monad.
+ * Real-time scanning across Solana, Base, Ethereum, BNB Chain, Arbitrum, Polygon, Monad, Arc.
  * Categories: Trending, Gainers, Losers, New, Volume, Smart Money, Memecoins, AI, RWA, Perps, Watchlist.
  *
  * Price layer: CoinGecko public API (no key) with a 5-minute localStorage cache so
@@ -157,6 +157,7 @@ export const DiscoverEngine = {
       { symbol: "PEPE", name: "Pepe", chain: "ethereum", category: "LOSERS", sector: "Memecoins", price: priceById.get("PEPE")?.price ?? 0.0000094, delta24h: priceById.get("PEPE")?.delta24h ?? -5.40, vol24h: priceById.get("PEPE")?.vol24h ?? 380000000, mcap: priceById.get("PEPE")?.mcap ?? 3950000000, liquidity: 32000000, top10: 25, smInflow: -110000 },
       { symbol: "BONK", name: "Bonk", chain: "solana", category: "MEMECOINS", sector: "Memecoins", price: priceById.get("BONK")?.price ?? 0.0000215, delta24h: priceById.get("BONK")?.delta24h ?? 8.90, vol24h: priceById.get("BONK")?.vol24h ?? 190000000, mcap: priceById.get("BONK")?.mcap ?? 1480000000, liquidity: 21000000, top10: 21, smInflow: 95000 },
       { symbol: "MON", name: "Monad Testnet", chain: "monad", category: "NEW", sector: "L1", price: priceById.get("MON")?.price ?? 1.20, delta24h: priceById.get("MON")?.delta24h ?? 18.40, vol24h: priceById.get("MON")?.vol24h ?? 42000000, mcap: priceById.get("MON")?.mcap ?? 600000000, liquidity: 8500000, top10: 11, smInflow: 180000 },
+      { symbol: "ARC", name: "Arc (Circle)", chain: "arc", category: "NEW", sector: "Stablecoin L1", price: 1.00, delta24h: 0.01, vol24h: 125000000, mcap: 61000000000, liquidity: 24000000, top10: 6, smInflow: 320000 },
       { symbol: "AERO", name: "Aerodrome", chain: "base", category: "GAINERS", sector: "DeFi", price: 1.34, delta24h: 16.20, vol24h: 88000000, mcap: 920000000, liquidity: 42000000, top10: 14, smInflow: 140000 },
       { symbol: "BNB", name: "BNB Chain", chain: "bsc", category: "VOLUME", sector: "L1", price: priceById.get("BNB")?.price ?? 585.50, delta24h: priceById.get("BNB")?.delta24h ?? 1.45, vol24h: priceById.get("BNB")?.vol24h ?? 750000000, mcap: priceById.get("BNB")?.mcap ?? 85000000000, liquidity: 65000000, top10: 10, smInflow: 250000 },
       { symbol: "GMX", name: "GMX Perps", chain: "arbitrum", category: "PERPS", sector: "Perps", price: priceById.get("GMX")?.price ?? 32.40, delta24h: priceById.get("GMX")?.delta24h ?? 4.80, vol24h: priceById.get("GMX")?.vol24h ?? 54000000, mcap: priceById.get("GMX")?.mcap ?? 310000000, liquidity: 38000000, top10: 13, smInflow: 75000 },

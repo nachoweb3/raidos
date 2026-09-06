@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RaidOS — Multi-Chain Trading Terminal</title>
-<meta name="description" content="Trade tokens across Solana, Ethereum, Base, BSC, Arbitrum, Polygon and Robinhood Chain. USDC-native swaps, token launches, social trading, and leaderboards.">
+<meta name="description" content="Trade tokens across Solana, Ethereum, Base, BSC, Arbitrum, Polygon, Robinhood Chain, Monad and Arc. USDC-native swaps, token launches, social trading, and leaderboards.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
 <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -237,6 +237,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
       <option value="arbitrum">🔷 Arbitrum</option>
       <option value="polygon">🟣 Polygon</option>
       <option value="robinhood">🔴 Robinhood</option>
+      <option value="monad">🟪 Monad</option>
+      <option value="arc">🟦 Arc</option>
     </select>
     <button class="wallet-btn" id="authBtn" onclick="openKeyModal()">Connect</button>
   </div>
@@ -353,6 +355,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
               <option value="arbitrum">🔷 Arbitrum</option>
               <option value="polygon">🟣 Polygon</option>
               <option value="robinhood">🔴 Robinhood</option>
+              <option value="monad">🟪 Monad</option>
+              <option value="arc">🟦 Arc</option>
             </select>
             <input type="password" id="walletNewPassword" placeholder="wallet password (never stored)" style="flex:1;min-width:180px;background:var(--bg0)">
             <button class="pct-btns" style="padding:8px 16px" onclick="createWallet()">+ New wallet</button>
@@ -457,6 +461,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
         <option value="ethereum">Ethereum</option>
         <option value="base">Base</option>
         <option value="robinhood">Robinhood</option>
+        <option value="monad">Monad</option>
+        <option value="arc">Arc</option>
       </select>
       <select class="chain-select" id="launchStatusFilter" onchange="renderLaunches()">
         <option value="">Any status</option>
@@ -480,6 +486,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
       <select id="cl-chain" class="chain-select" style="flex:1">
         <option value="solana">Solana</option><option value="ethereum">Ethereum</option>
         <option value="base">Base</option><option value="robinhood">Robinhood</option>
+        <option value="monad">Monad</option><option value="arc">Arc</option>
       </select>
     </div>
     <div class="row" style="margin-top:10px">
@@ -561,6 +568,8 @@ const CHAINS = {
   arbitrum:{name:'Arbitrum',icon:'🔷',usdc:'0xaf88d065e77c8cC2239327C5EDb3A432268e5831',dec:6},
   polygon:{name:'Polygon',icon:'🟣',usdc:'0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',dec:6},
   robinhood:{name:'Robinhood',icon:'🔴',usdc:'0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',dec:18},
+  monad:{name:'Monad',icon:'🟪',usdc:'0xf817257fed379853cDe0fa4F97AB987181B1E5Ea',dec:6},
+  arc:{name:'Arc',icon:'🟦',usdc:'0x3600000000000000000000000000000000000000',dec:6},
 };
 let currentChain='solana', currentSide='buy', chartType='candle', myUserId=null;
 
