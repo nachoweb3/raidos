@@ -45,9 +45,11 @@ export const TradingEngine = {
   setAsset(symbol, chain, price) {
     this.currentSymbol = symbol.toUpperCase();
     this.currentChain = chain || "solana";
-    // Prefer a real price from PriceFeed even when a price is passed in.
+    // Prefer a real price from PriceFeed; ignore 0/null placeholders passed
+    // from rows without live data.
     const row = PriceFeed.get(this.currentSymbol);
-    this.currentPrice = price ?? row.price;
+    const passed = Number(price);
+    this.currentPrice = passed > 0 ? passed : row.price;
     this.currentDelta24h = row.delta24h;
     this.updateTokenDisplay();
     this.generateCandleData();

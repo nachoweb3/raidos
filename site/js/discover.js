@@ -137,65 +137,93 @@ export const DiscoverEngine = {
   },
 
   async loadTokens() {
-    const prices = await PriceFeed.ensureCache();
+    // Real price layer: CoinGecko rows keyed by symbol (never by index —
+    // CoinGecko returns rows ordered by market cap, not by our map order).
+    await PriceFeed.ensureCache();
     const priceById = new Map();
-    const entries = Object.entries(PriceFeed.coinMap);
-    for (let i = 0; i < entries.length; i++) {
-      const [sym, id] = entries[i];
-      const row = prices?.[i];
-      if (row) priceById.set(sym, row);
+    for (const [sym, id] of Object.entries(PriceFeed.coinMap)) {
+      const row = PriceFeed.cache?.find((r) => r.symbol === sym.toUpperCase());
+      if (row && row.price > 0) priceById.set(sym, row);
     }
 
+    const p = (sym, key, fb) => {
+      const row = priceById.get(sym);
+      const v = row?.[key];
+      return Number.isFinite(v) && v !== 0 ? v : fb;
+    };
+
+    // Static universe: only display metadata (name/chain/sector). All numeric
+    // fields come from the real CoinGecko fetch; metrics we cannot source yet
+    // (liquidity, holder concentration, smart-money inflow) are omitted and
+    // shown as "—" instead of invented values.
     const baseUniverse = [
-      { symbol: "SOL", name: "Solana", chain: "solana", category: "TRENDING", sector: "L1", price: priceById.get("SOL")?.price ?? 184.25, delta24h: priceById.get("SOL")?.delta24h ?? 7.42, vol24h: priceById.get("SOL")?.vol24h ?? 1420000000, mcap: priceById.get("SOL")?.mcap ?? 86000000000, liquidity: 45000000, top10: 14, smInflow: 185000 },
-      { symbol: "BTC", name: "Bitcoin", chain: "bitcoin", category: "VOLUME", sector: "L1", price: priceById.get("BTC")?.price ?? 68420.00, delta24h: priceById.get("BTC")?.delta24h ?? 3.15, vol24h: priceById.get("BTC")?.vol24h ?? 4200000000, mcap: priceById.get("BTC")?.mcap ?? 1350000000000, liquidity: 120000000, top10: 8, smInflow: 920000 },
-      { symbol: "ETH", name: "Ethereum", chain: "ethereum", category: "VOLUME", sector: "L1", price: priceById.get("ETH")?.price ?? 2740.10, delta24h: priceById.get("ETH")?.delta24h ?? -1.20, vol24h: priceById.get("ETH")?.vol24h ?? 2100000000, mcap: priceById.get("ETH")?.mcap ?? 329000000000, liquidity: 95000000, top10: 12, smInflow: -45000 },
-      { symbol: "BRETT", name: "Brett", chain: "base", category: "MEMECOINS", sector: "Memecoins", price: priceById.get("BRETT")?.price ?? 0.142, delta24h: priceById.get("BRETT")?.delta24h ?? 14.80, vol24h: priceById.get("BRETT")?.vol24h ?? 92000000, mcap: priceById.get("BRETT")?.mcap ?? 1420000000, liquidity: 18000000, top10: 22, smInflow: 120000 },
-      { symbol: "VIRTUAL", name: "Virtuals Protocol", chain: "base", category: "AI", sector: "AI", price: priceById.get("VIRTUAL")?.price ?? 1.85, delta24h: priceById.get("VIRTUAL")?.delta24h ?? 24.10, vol24h: priceById.get("VIRTUAL")?.vol24h ?? 145000000, mcap: priceById.get("VIRTUAL")?.mcap ?? 1850000000, liquidity: 24000000, top10: 19, smInflow: 340000 },
-      { symbol: "JUP", name: "Jupiter", chain: "solana", category: "TRENDING", sector: "DeFi", price: priceById.get("JUP")?.price ?? 0.84, delta24h: priceById.get("JUP")?.delta24h ?? 12.10, vol24h: priceById.get("JUP")?.vol24h ?? 185000000, mcap: priceById.get("JUP")?.mcap ?? 1150000000, liquidity: 28000000, top10: 16, smInflow: 210000 },
-      { symbol: "PENDLE", name: "Pendle", chain: "ethereum", category: "RWA", sector: "RWA", price: priceById.get("PENDLE")?.price ?? 4.95, delta24h: priceById.get("PENDLE")?.delta24h ?? 3.20, vol24h: priceById.get("PENDLE")?.vol24h ?? 68000000, mcap: priceById.get("PENDLE")?.mcap ?? 780000000, liquidity: 15000000, top10: 15, smInflow: 85000 },
-      { symbol: "PEPE", name: "Pepe", chain: "ethereum", category: "LOSERS", sector: "Memecoins", price: priceById.get("PEPE")?.price ?? 0.0000094, delta24h: priceById.get("PEPE")?.delta24h ?? -5.40, vol24h: priceById.get("PEPE")?.vol24h ?? 380000000, mcap: priceById.get("PEPE")?.mcap ?? 3950000000, liquidity: 32000000, top10: 25, smInflow: -110000 },
-      { symbol: "BONK", name: "Bonk", chain: "solana", category: "MEMECOINS", sector: "Memecoins", price: priceById.get("BONK")?.price ?? 0.0000215, delta24h: priceById.get("BONK")?.delta24h ?? 8.90, vol24h: priceById.get("BONK")?.vol24h ?? 190000000, mcap: priceById.get("BONK")?.mcap ?? 1480000000, liquidity: 21000000, top10: 21, smInflow: 95000 },
-      { symbol: "MON", name: "Monad Testnet", chain: "monad", category: "NEW", sector: "L1", price: priceById.get("MON")?.price ?? 1.20, delta24h: priceById.get("MON")?.delta24h ?? 18.40, vol24h: priceById.get("MON")?.vol24h ?? 42000000, mcap: priceById.get("MON")?.mcap ?? 600000000, liquidity: 8500000, top10: 11, smInflow: 180000 },
-      { symbol: "ARC", name: "Arc (Circle)", chain: "arc", category: "NEW", sector: "Stablecoin L1", price: 1.00, delta24h: 0.01, vol24h: 125000000, mcap: 61000000000, liquidity: 24000000, top10: 6, smInflow: 320000 },
-      { symbol: "AERO", name: "Aerodrome", chain: "base", category: "GAINERS", sector: "DeFi", price: 1.34, delta24h: 16.20, vol24h: 88000000, mcap: 920000000, liquidity: 42000000, top10: 14, smInflow: 140000 },
-      { symbol: "BNB", name: "BNB Chain", chain: "bsc", category: "VOLUME", sector: "L1", price: priceById.get("BNB")?.price ?? 585.50, delta24h: priceById.get("BNB")?.delta24h ?? 1.45, vol24h: priceById.get("BNB")?.vol24h ?? 750000000, mcap: priceById.get("BNB")?.mcap ?? 85000000000, liquidity: 65000000, top10: 10, smInflow: 250000 },
-      { symbol: "GMX", name: "GMX Perps", chain: "arbitrum", category: "PERPS", sector: "Perps", price: priceById.get("GMX")?.price ?? 32.40, delta24h: priceById.get("GMX")?.delta24h ?? 4.80, vol24h: priceById.get("GMX")?.vol24h ?? 54000000, mcap: priceById.get("GMX")?.mcap ?? 310000000, liquidity: 38000000, top10: 13, smInflow: 75000 },
-      { symbol: "POL", name: "Polygon Ecosystem", chain: "polygon", category: "TRENDING", sector: "L2", price: priceById.get("POL")?.price ?? 0.42, delta24h: priceById.get("POL")?.delta24h ?? 2.10, vol24h: priceById.get("POL")?.vol24h ?? 95000000, mcap: priceById.get("POL")?.mcap ?? 3200000000, liquidity: 22000000, top10: 17, smInflow: 40000 },
+      { symbol: "SOL", name: "Solana", chain: "solana", category: "TRENDING", sector: "L1" },
+      { symbol: "BTC", name: "Bitcoin", chain: "bitcoin", category: "VOLUME", sector: "L1" },
+      { symbol: "ETH", name: "Ethereum", chain: "ethereum", category: "VOLUME", sector: "L1" },
+      { symbol: "BRETT", name: "Brett", chain: "base", category: "MEMECOINS", sector: "Memecoins" },
+      { symbol: "VIRTUAL", name: "Virtuals Protocol", chain: "base", category: "AI", sector: "AI" },
+      { symbol: "JUP", name: "Jupiter", chain: "solana", category: "TRENDING", sector: "DeFi" },
+      { symbol: "PENDLE", name: "Pendle", chain: "ethereum", category: "RWA", sector: "RWA" },
+      { symbol: "PEPE", name: "Pepe", chain: "ethereum", category: "LOSERS", sector: "Memecoins" },
+      { symbol: "BONK", name: "Bonk", chain: "solana", category: "MEMECOINS", sector: "Memecoins" },
+      { symbol: "MON", name: "Monad", chain: "monad", category: "NEW", sector: "L1" },
+      { symbol: "ARC", name: "Arc (Circle)", chain: "arc", category: "NEW", sector: "Stablecoin L1", fixedPrice: 1.0 },
+      { symbol: "AERO", name: "Aerodrome", chain: "base", category: "GAINERS", sector: "DeFi" },
+      { symbol: "BNB", name: "BNB Chain", chain: "bsc", category: "VOLUME", sector: "L1" },
+      { symbol: "GMX", name: "GMX", chain: "arbitrum", category: "PERPS", sector: "Perps" },
+      { symbol: "POL", name: "Polygon Ecosystem", chain: "polygon", category: "TRENDING", sector: "L2" },
     ];
 
     this.tokens = baseUniverse.map((t) => {
-      const scoreObj = EliteScoreEngine.calculate({
-        liquidityUsd: t.liquidity,
-        volume24hUsd: t.vol24h,
-        mcapUsd: t.mcap,
-        top10HolderPercent: t.top10,
-        smartMoneyNetInflow: t.smInflow,
-        priceChange24h: t.delta24h,
-      });
-      return { ...t, eliteScore: scoreObj.score, eliteTier: scoreObj.tier, isWatchlist: this.watchlist.has(t.symbol) };
+      const hasLive = priceById.has(t.symbol) || t.fixedPrice !== undefined;
+      const price = t.fixedPrice ?? p(t.symbol, "price", null);
+      const delta24h = t.fixedPrice !== undefined ? 0 : p(t.symbol, "delta24h", 0);
+      const vol24h = p(t.symbol, "vol24h", 0);
+      const mcap = p(t.symbol, "mcap", 0);
+      const scoreObj = hasLive
+        ? EliteScoreEngine.calculate({
+            liquidityUsd: 0,
+            volume24hUsd: vol24h,
+            mcapUsd: mcap,
+            priceChange24h: delta24h,
+          })
+        : { score: null, tier: "NO DATA" };
+      return {
+        ...t,
+        price: price ?? 0,
+        delta24h,
+        vol24h,
+        mcap,
+        liquidity: null,
+        top10: null,
+        smInflow: null,
+        hasLivePrice: hasLive,
+        eliteScore: scoreObj.score,
+        eliteTier: scoreObj.tier,
+        isWatchlist: this.watchlist.has(t.symbol),
+      };
     });
 
     try {
       const launchData = await ApiClient.request("/api/launches?limit=10");
       if (launchData && launchData.launches) {
         for (const l of launchData.launches) {
-          const launchPrice = Number(l.priceUsdc || 0.001);
           this.tokens.unshift({
             symbol: l.symbol,
             name: l.name,
             chain: l.chain,
             category: "NEW",
             sector: "Launchpad",
-            price: launchPrice,
-            delta24h: 15.0,
-            vol24h: 25000,
-            mcap: 100000,
-            liquidity: 50000,
-            top10: 12,
-            smInflow: 10000,
-            eliteScore: 84,
-            eliteTier: "STRONG",
+            price: Number(l.priceUsdc || 0),
+            delta24h: 0,
+            vol24h: 0,
+            mcap: 0,
+            liquidity: null,
+            top10: null,
+            smInflow: null,
+            hasLivePrice: Number(l.priceUsdc || 0) > 0,
+            eliteScore: null,
+            eliteTier: "NEW LAUNCH",
             isWatchlist: this.watchlist.has(l.symbol),
           });
         }
@@ -328,11 +356,17 @@ export const DiscoverEngine = {
     const isUp = t.delta24h >= 0;
     const isSaved = t.isWatchlist;
     const formattedPrice =
-      t.price < 0.01
+      t.price > 0 && t.price < 0.01
         ? "$" + t.price.toFixed(6)
-        : "$" + t.price.toLocaleString(undefined, { minimumFractionDigits: t.price < 1 ? 4 : 2 });
-    const formattedVol = formatNumber(t.vol24h);
-    const formattedMcap = formatNumber(t.mcap);
+        : t.price > 0
+          ? "$" + t.price.toLocaleString(undefined, { minimumFractionDigits: t.price < 1 ? 4 : 2 })
+          : "—";
+    const formattedVol = t.vol24h > 0 ? formatNumber(t.vol24h) : "—";
+    const formattedMcap = t.mcap > 0 ? formatNumber(t.mcap) : "—";
+    const scoreBadge =
+      t.eliteScore !== null && t.eliteScore !== undefined
+        ? `<div class="elite-badge ${t.eliteScore >= 88 ? 'high' : 'mid'}" title="Elite Score Algorítmico">⚡ ${t.eliteScore}/100</div>`
+        : `<div class="elite-badge mid" title="Datos insuficientes para puntuar" style="opacity:0.55">⚡ —</div>`;
 
     return `
       <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
@@ -362,9 +396,7 @@ export const DiscoverEngine = {
           </div>
 
           <div style="text-align:right">
-            <div class="elite-badge ${t.eliteScore >= 88 ? 'high' : 'mid'}" title="Elite Score Algorítmico">
-              ⚡ ${t.eliteScore}/100
-            </div>
+            ${scoreBadge}
             <div style="font-family:var(--font-mono); font-weight:700; font-size:13.5px; margin-top:3px; color:#fff">${formattedPrice}</div>
             <div style="font-family:var(--font-mono); font-size:11.5px; color:${isUp ? 'var(--delta-green)' : 'var(--delta-red)'}">
               ${isUp ? '+' : ''}${t.delta24h.toFixed(2)}%

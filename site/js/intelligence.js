@@ -17,13 +17,17 @@ export const EliteScoreEngine = {
    */
   calculate(metrics) {
     const {
-      liquidityUsd = 250000,
-      volume24hUsd = 1200000,
-      mcapUsd = 15000000,
-      top10HolderPercent = 18,
-      smartMoneyNetInflow = 45000,
-      priceChange24h = 8.5,
+      liquidityUsd = 0,
+      volume24hUsd = 0,
+      mcapUsd = 0,
+      top10HolderPercent = null,
+      smartMoneyNetInflow = null,
+      priceChange24h = 0,
     } = metrics;
+
+    // Unknown inputs (null) score neutral instead of pretending real data
+    // came in: holders/smart-money default to a mid band, missing volumes to
+    // the low band. Scores computed only from what we actually have.
 
     // 1. Liquidity Depth (Max 25 pts)
     // Scales logarithmically: $100k = 10 pts, $1M = 20 pts, $10M+ = 25 pts
@@ -49,16 +53,20 @@ export const EliteScoreEngine = {
 
     // 3. Holder Distribution Entropy (Max 20 pts)
     // Low concentration in top 10 wallets = higher decentralization score
-    let holderScore = 0;
-    if (top10HolderPercent <= 10) holderScore = 20;
+    // null = unknown → neutral mid band, never the max
+    let holderScore = 13;
+    if (top10HolderPercent === null) holderScore = 13;
+    else if (top10HolderPercent <= 10) holderScore = 20;
     else if (top10HolderPercent <= 20) holderScore = 17;
     else if (top10HolderPercent <= 35) holderScore = 13;
     else if (top10HolderPercent <= 50) holderScore = 8;
     else holderScore = 3; // Rug / extreme dump risk
 
     // 4. Smart Money Net Inflow (Max 20 pts)
+    // null = unknown → neutral band
     let smartScore = 10;
-    if (smartMoneyNetInflow > 100000) smartScore = 20;
+    if (smartMoneyNetInflow === null) smartScore = 10;
+    else if (smartMoneyNetInflow > 100000) smartScore = 20;
     else if (smartMoneyNetInflow > 25000) smartScore = 16;
     else if (smartMoneyNetInflow > 0) smartScore = 12;
     else if (smartMoneyNetInflow < -50000) smartScore = 2; // Smart money dumping
