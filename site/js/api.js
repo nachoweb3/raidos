@@ -8,7 +8,7 @@
 // with ?api=https://your-api-host — it persists in localStorage. Clear the
 // override with ?api= (empty) to fall back to same-origin when the API server
 // itself serves this site.
-const API_BASE = (() => {
+export const API_BASE = (() => {
   const q = new URLSearchParams(location.search).get("api");
   if (q !== null) {
     if (q) localStorage.setItem("raidos_api_base", q.replace(/\/+$/, ""));
