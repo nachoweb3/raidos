@@ -3,7 +3,19 @@
  * Handles authentication, API keys, wallet cryptographic signatures, and live/mock execution.
  */
 
-const API_BASE = ""; // Same-origin relative URLs
+// API base: defaults to the hosted RaidOS API so statically-hosted copies of
+// this site (e.g. GitHub Pages) still reach the backend. Override per visitor
+// with ?api=https://your-api-host — it persists in localStorage. Clear the
+// override with ?api= (empty) to fall back to same-origin when the API server
+// itself serves this site.
+const API_BASE = (() => {
+  const q = new URLSearchParams(location.search).get("api");
+  if (q !== null) {
+    if (q) localStorage.setItem("raidos_api_base", q.replace(/\/+$/, ""));
+    else localStorage.removeItem("raidos_api_base");
+  }
+  return (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
+})();
 
 export const ApiClient = {
   getApiKey() {

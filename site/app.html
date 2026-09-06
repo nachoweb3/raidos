@@ -733,11 +733,14 @@
       window.App.closeNewPostModal();
     }
 
+    // API base — mirror js/api.js (static hosting can't proxy /api/*)
+    const API_BASE = (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
+
     async function handleGateCode(e) {
       e.preventDefault();
       const code = document.getElementById('gateCodeInput').value.trim();
       try {
-        const res = await fetch('/api/auth/access-code', {
+        const res = await fetch(API_BASE + '/api/auth/access-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })

@@ -1064,10 +1064,21 @@
   </div>
 
   <script>
+    // API base — mirror js/api.js: hosted API by default (static hosting can't
+    // proxy /api/*), ?api=https://host overrides & persists, ?api= clears.
+    const API_BASE = (() => {
+      const q = new URLSearchParams(location.search).get("api");
+      if (q !== null) {
+        if (q) localStorage.setItem("raidos_api_base", q.replace(/\/+$/, ""));
+        else localStorage.removeItem("raidos_api_base");
+      }
+      return (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
+    })();
+
     // Fetch live waitlist count on load
     async function loadWaitlistCount() {
       try {
-        const res = await fetch('/api/waitlist/count');
+        const res = await fetch(API_BASE + '/api/waitlist/count');
         if (res.ok) {
           const data = await res.json();
           const countEl = document.getElementById('waitlistCount');
@@ -1095,7 +1106,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('/api/waitlist', {
+        const res = await fetch(API_BASE + '/api/waitlist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email })
@@ -1156,7 +1167,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('/api/auth/access-code', {
+        const res = await fetch(API_BASE + '/api/auth/access-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })
@@ -1165,7 +1176,7 @@
         if (res.ok && data.valid) {
           // Store token and grant access to the full app
           sessionStorage.setItem('ray2_beta_unlocked', '1');
-          window.location.href = '/app';
+          window.location.href = 'app.html';
         } else {
           errEl.textContent = data.error || 'Código de invitación no válido.';
           errEl.style.display = 'block';
@@ -1174,7 +1185,7 @@
         // Fallback for offline/demo: accept ALPHA2027
         if (code.toUpperCase() === 'ALPHA2027' || code.toUpperCase() === 'RAY2') {
           sessionStorage.setItem('ray2_beta_unlocked', '1');
-          window.location.href = '/app';
+          window.location.href = 'app.html';
         } else {
           errEl.textContent = 'No se pudo verificar el código.';
           errEl.style.display = 'block';
