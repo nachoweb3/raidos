@@ -1015,7 +1015,7 @@
       </p>
 
       <form onsubmit="handleAccessCodeSubmit(event)" style="display:flex; flex-direction:column; gap:14px">
-        <input type="text" id="accessCodeInput" placeholder="Código de invitación (ej. ALPHA2027)" style="width:100%; text-transform:uppercase" required>
+        <input type="text" id="accessCodeInput" placeholder="Código de invitación" style="width:100%; text-transform:uppercase" required>
         <div id="accessCodeError" style="font-size:12px; color:var(--delta-red); display:none"></div>
         <button type="submit" class="btn btn-primary btn-lg" id="accessCodeBtn">ACCEDER A LA APLICACIÓN</button>
       </form>
@@ -1182,14 +1182,9 @@
           errEl.style.display = 'block';
         }
       } catch (err) {
-        // Fallback for offline/demo: accept ALPHA2027
-        if (code.toUpperCase() === 'ALPHA2027' || code.toUpperCase() === 'RAY2') {
-          sessionStorage.setItem('ray2_beta_unlocked', '1');
-          window.location.href = 'app.html';
-        } else {
-          errEl.textContent = 'No se pudo verificar el código.';
-          errEl.style.display = 'block';
-        }
+        // No offline fallback: codes are only valid if the server verifies them.
+        errEl.textContent = 'No se pudo verificar el código.';
+        errEl.style.display = 'block';
       } finally {
         btn.textContent = 'ACCEDER A LA APLICACIÓN';
         btn.disabled = false;

@@ -609,7 +609,7 @@
       </p>
 
       <form onsubmit="handleGateCode(event)" style="display:flex; flex-direction:column; gap:12px">
-        <input type="text" id="gateCodeInput" placeholder="Código (ej. ALPHA2027)" style="text-transform:uppercase; text-align:center; font-size:15px; font-weight:700" required>
+        <input type="text" id="gateCodeInput" placeholder="Código" style="text-transform:uppercase; text-align:center; font-size:15px; font-weight:700" required>
         <div id="gateError" style="font-size:12px; color:var(--delta-red); display:none">Código no válido.</div>
         <button type="submit" class="btn btn-primary btn-lg">DESBLOQUEAR TERMINAL</button>
       </form>
@@ -753,12 +753,8 @@
           document.getElementById('gateError').style.display = 'block';
         }
       } catch {
-        if (code.toUpperCase() === 'ALPHA2027' || code.toUpperCase() === 'RAY2') {
-          sessionStorage.setItem('ray2_beta_unlocked', '1');
-          window.App.closeAccessCodeModal();
-        } else {
-          document.getElementById('gateError').style.display = 'block';
-        }
+        // No offline fallback: codes are only valid if the server verifies them.
+        document.getElementById('gateError').style.display = 'block';
       }
     }
 
