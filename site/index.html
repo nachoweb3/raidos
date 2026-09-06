@@ -624,7 +624,7 @@
   <!-- ── NAV ── -->
   <header>
     <div class="brand-group">
-      <a href="index.html" class="brand-logo">RAY <span>2</span></a>
+      <a href="index.html" class="brand-logo">TRENCHES</a>
       <span class="brand-badge">CLOSED BETA</span>
     </div>
 
@@ -1043,7 +1043,7 @@
         <div style="font-size:11px; color:var(--text-tertiary); letter-spacing:1px; text-transform:uppercase">TU POSICIÓN EN LA COLA</div>
         <div style="font-size:28px; font-weight:900; color:#ffffff; margin:4px 0" id="userWaitlistPos">#1,421</div>
         <div style="font-size:11px; color:var(--text-secondary); margin-top:6px">
-          Código de referencia: <strong style="color:#fff" id="userRefCode">RAY-ALPHA</strong>
+          Código de referencia: <strong style="color:#fff" id="userRefCode">TRENCHES</strong>
         </div>
       </div>
 
@@ -1115,7 +1115,7 @@
         if (res.ok) {
           input.value = '';
           const pos = data.position ? (1420 + Number(data.position)) : 1421;
-          const ref = data.refCode || 'RAY-ALPHA';
+          const ref = data.refCode || 'TRENCHES';
           window.lastWaitlistData = { pos, ref };
           const posEl = document.getElementById('userWaitlistPos');
           const refEl = document.getElementById('userRefCode');
@@ -1135,13 +1135,13 @@
     }
 
     function shareOnX() {
-      const ref = window.lastWaitlistData?.ref || 'RAY-ALPHA';
+      const ref = window.lastWaitlistData?.ref || 'TRENCHES';
       const text = encodeURIComponent(`Acabo de unirme al early access de TRENCHES — The social network for markets creada por @nacho_web3_.\n\nDescubre alpha, analiza y opera en tiempo real desde un único ecosistema.\n\nÚnete a la waitlist aquí: https://inusaur.online/?ref=${ref}`);
       window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
     }
 
     function copyInviteLink() {
-      const ref = window.lastWaitlistData?.ref || 'RAY-ALPHA';
+      const ref = window.lastWaitlistData?.ref || 'TRENCHES';
       const url = `https://inusaur.online/?ref=${ref}`;
       navigator.clipboard.writeText(url).then(() => {
         const btn = document.getElementById('copyLinkBtn');

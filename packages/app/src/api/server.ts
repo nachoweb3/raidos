@@ -360,7 +360,7 @@ export class ApiServer {
       const added = this.db.addWaitlist(email);
       const entry = this.db.getWaitlistEntry(email);
       const position = entry ? entry.id : this.db.countWaitlist();
-      const refCode = `RAY-${position.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const refCode = `TRN-${position.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
       sendJson(ctx.res, added ? 201 : 200, {
         added,
         count: this.db.countWaitlist(),
