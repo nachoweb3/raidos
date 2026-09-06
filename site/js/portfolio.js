@@ -144,6 +144,16 @@ export const PortfolioEngine = {
     this.appendPositions();
     this.appendTrades();
     this.appendWallets();
+
+    const credit = document.createElement("div");
+    credit.style.cssText =
+      "margin-top:32px; padding-top:20px; border-top:1px solid var(--border-subtle); text-align:center; font-size:13px; color:var(--text-secondary)";
+    credit.innerHTML = `
+      Designed by <a href="https://x.com/nacho_web3_" target="_blank" rel="noopener noreferrer" style="color:#ffffff; font-weight:700; text-decoration:underline; text-underline-offset:3px">@nacho_web3_ on 𝕏</a>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px; font-family:var(--font-mono)">
+        TRENCHES · Mobile-First Social Trading Terminal · © 2027
+      </div>`;
+    el.appendChild(credit);
   },
 
   statCard(label, value, color) {
