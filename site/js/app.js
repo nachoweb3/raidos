@@ -8,6 +8,7 @@ import { FeedEngine } from "./feed.js";
 import { DiscoverEngine } from "./discover.js";
 import { TradingEngine } from "./trading.js";
 import { SocialEngine } from "./social.js";
+import { PortfolioEngine } from "./portfolio.js";
 
 export const App = {
   currentView: "feed",
@@ -25,6 +26,7 @@ export const App = {
     FeedEngine.init(document.getElementById("feedPostsList"));
     TradingEngine.init();
     SocialEngine.init(document.getElementById("leaderboardList"));
+    PortfolioEngine.init();
 
     // 3. Check Auth State
     this.checkUserAuth();
@@ -111,6 +113,8 @@ export const App = {
       DiscoverEngine.render();
     } else if (viewName === "leaderboard") {
       SocialEngine.render();
+    } else if (viewName === "profile") {
+      PortfolioEngine.load();
     }
   },
 

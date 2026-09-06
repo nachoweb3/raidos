@@ -167,6 +167,21 @@ export const ApiClient = {
     });
   },
 
+  async getReferrals() {
+    return this.request("/api/me/referrals");
+  }
+
+  async importWallet(chain, privateKey, password, label = "Imported") {
+    return this.request("/api/wallets/import", {
+      method: "POST",
+      body: JSON.stringify({ chain, privateKey, password, label }),
+    });
+  }
+
+  async deleteWallet(walletId) {
+    return this.request(`/api/wallets/${walletId}`, { method: "DELETE" });
+  }
+
   async search(query, limit = 10) {
     return this.request(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
   },
