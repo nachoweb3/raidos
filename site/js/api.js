@@ -195,5 +195,57 @@ export const ApiClient = {
 
   async search(query, limit = 10) {
     return this.request(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  }
+
+  // ── Prediction markets (Polymarket) ──
+  async getPredictionCategories() {
+    return this.request("/api/prediction/categories");
+  }
+
+  async getPredictionEvents(opts = {}) {
+    const q = new URLSearchParams();
+    if (opts.category) q.set("category", opts.category);
+    if (opts.sort) q.set("sort", opts.sort);
+    q.set("limit", String(opts.limit ?? 30));
+    q.set("offset", String(opts.offset ?? 0));
+    return this.request(`/api/prediction/events?${q.toString()}`);
+  }
+
+  async placePredictionOrder(payload) {
+    return this.request("/api/prediction/order", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ── Launchpad ──
+  async getLaunches(opts = {}) {
+    const q = new URLSearchParams();
+    if (opts.chain) q.set("chain", opts.chain);
+    if (opts.status) q.set("status", opts.status);
+    if (opts.sort) q.set("sort", opts.sort);
+    q.set("limit", String(opts.limit ?? 30));
+    return this.request(`/api/launches?${q.toString()}`);
+  }
+
+  async createLaunch(payload) {
+    return this.request("/api/launches", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async buyLaunchTokens(launchId, usdcAmount) {
+    return this.request(`/api/launches/${launchId}/buy`, {
+      method: "POST",
+      body: JSON.stringify({ usdcAmount }),
+    });
+  }
+
+  async sellLaunchTokens(launchId, tokenAmount) {
+    return this.request(`/api/launches/${launchId}/sell`, {
+      method: "POST",
+      body: JSON.stringify({ tokenAmount }),
+    });
   },
 };

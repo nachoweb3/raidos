@@ -10,6 +10,7 @@ import { TradingEngine } from "./trading.js";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
 import { PremiumEngine } from "./premium.js";
+import { MarketsEngine } from "./markets.js";
 
 export const App = {
   currentView: "feed",
@@ -29,6 +30,7 @@ export const App = {
     SocialEngine.init(document.getElementById("leaderboardList"));
     PortfolioEngine.init();
     PremiumEngine.load();
+    MarketsEngine.init(document.getElementById("marketsContainer"));
 
     // 3. Check Auth State
     this.checkUserAuth();
@@ -117,6 +119,8 @@ export const App = {
       SocialEngine.render();
     } else if (viewName === "profile") {
       PortfolioEngine.load();
+    } else if (viewName === "markets") {
+      MarketsEngine.render();
     }
   },
 
