@@ -250,21 +250,10 @@
                 <span class="status-dot" style="background:#22c55e"></span>
               </div>
               <p style="font-size:12.5px; color:var(--text-secondary); line-height:1.5; margin-bottom:12px">
-                Billeteras con ROI >300% están acumulando activamente en Solana y Base.
+                Mayores movimientos 24h — precios reales de CoinGecko.
               </p>
-              <div style="display:flex; flex-direction:column; gap:8px">
-                <div class="asset-pill" onclick="window.App.openTradeForToken('SOL', 'solana', 184.25)">
-                  <span class="pill-sym">$SOL</span>
-                  <span class="pill-price">$184.25</span>
-                  <span class="pill-delta up">+7.4%</span>
-                  <span class="pill-action">TRADE</span>
-                </div>
-                <div class="asset-pill" onclick="window.App.openTradeForToken('VIRTUAL', 'base', 1.85)">
-                  <span class="pill-sym">$VIRTUAL</span>
-                  <span class="pill-price">$1.85</span>
-                  <span class="pill-delta up">+24.1%</span>
-                  <span class="pill-action">TRADE</span>
-                </div>
+              <div style="display:flex; flex-direction:column; gap:8px" id="moversPills">
+                <p style="font-size:11.5px; color:var(--text-tertiary)">Cargando precios…</p>
               </div>
             </div>
 
@@ -273,20 +262,7 @@
                 Traders Destacados
               </div>
               <div style="display:flex; flex-direction:column; gap:10px" id="sidebarTraders">
-                <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px">
-                  <div style="display:flex; align-items:center; gap:8px">
-                    <div class="author-avatar" style="width:26px; height:26px; font-size:10px">VK</div>
-                    <span style="font-weight:700">@0xValk</span>
-                  </div>
-                  <span style="color:var(--delta-green); font-family:var(--font-mono); font-weight:700">+580%</span>
-                </div>
-                <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px">
-                  <div style="display:flex; align-items:center; gap:8px">
-                    <div class="author-avatar" style="width:26px; height:26px; font-size:10px">SL</div>
-                    <span style="font-weight:700">@sol_whale</span>
-                  </div>
-                  <span style="color:var(--delta-green); font-family:var(--font-mono); font-weight:700">+410%</span>
-                </div>
+                <p style="font-size:11.5px; color:var(--text-tertiary)">Cargando ranking…</p>
               </div>
             </div>
           </aside>
@@ -334,8 +310,8 @@
           </div>
 
           <div style="display:flex; align-items:baseline; gap:12px">
-            <span id="terminalPrice" style="font-size:26px; font-weight:900; font-family:var(--font-mono)">$184.25</span>
-            <span style="font-size:13px; font-weight:700; font-family:var(--font-mono); color:var(--delta-green)">+7.42% 24h</span>
+            <span id="terminalPrice" style="font-size:26px; font-weight:900; font-family:var(--font-mono)">—</span>
+            <span id="terminalDelta" style="font-size:13px; font-weight:700; font-family:var(--font-mono)">—</span>
           </div>
         </div>
 

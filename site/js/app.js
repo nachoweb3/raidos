@@ -38,11 +38,68 @@ export const App = {
     // 4. Start background real-data refresh loops
     this.startRealDataLoops();
 
+    // 4.5 Populate feed sidebars with real data (movers + top traders)
+    this.loadFeedSidebars();
+
     // 5. Setup Navigation Handlers
     this.setupNavigation();
 
     // 6. Setup Viewport Mobile Fixes
     this.setupMobileViewport();
+  },
+
+  /** Populate feed sidebars: real top movers (CoinGecko) + real top traders (API). */
+  async loadFeedSidebars() {
+    // Top movers — from the already-loaded Discover universe (real CoinGecko prices)
+    const moversEl = document.getElementById("moversPills");
+    if (moversEl) {
+      const movers = (DiscoverEngine.tokens || [])
+        .filter((t) => t.hasLivePrice && t.price > 0 && Number.isFinite(t.delta24h))
+        .sort((a, b) => Math.abs(b.delta24h) - Math.abs(a.delta24h))
+        .slice(0, 3);
+      moversEl.innerHTML = movers.length
+        ? movers
+            .map(
+              (t) => `
+            <div class="asset-pill" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})">
+              <span class="pill-sym">$${t.symbol}</span>
+              <span class="pill-price">$${t.price < 0.01 ? t.price.toFixed(6) : t.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              <span class="pill-delta ${t.delta24h >= 0 ? "up" : "down"}">${t.delta24h >= 0 ? "+" : ""}${t.delta24h.toFixed(1)}%</span>
+              <span class="pill-action">TRADE</span>
+            </div>`
+            )
+            .join("")
+        : `<p style="font-size:11.5px; color:var(--text-tertiary)">Precios no disponibles ahora mismo</p>`;
+    }
+
+    // Featured traders — real leaderboard data only
+    const tradersEl = document.getElementById("sidebarTraders");
+    if (tradersEl) {
+      try {
+        const data = await ApiClient.getLeaderboard("all", 3);
+        const leaders = (data?.leaders ?? []).slice(0, 3);
+        tradersEl.innerHTML = leaders.length
+          ? leaders
+              .map((l) => {
+                const handle = String(l.x_handle || `@trader_${l.user_id}`).replace(/[^a-zA-Z0-9_@.\-]/g, "");
+                const initials = handle.replace("@", "").slice(0, 2).toUpperCase();
+                const pnl = Number(l.total_pnl_usdc ?? 0) / 1_000_000;
+                const pnlStr = (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toLocaleString(undefined, { maximumFractionDigits: 0 });
+                return `
+            <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px">
+              <div style="display:flex; align-items:center; gap:8px">
+                <div class="author-avatar" style="width:26px; height:26px; font-size:10px">${initials}</div>
+                <span style="font-weight:700">${handle}</span>
+              </div>
+              <span style="color:${pnl >= 0 ? "var(--delta-green)" : "var(--delta-red)"}; font-family:var(--font-mono); font-weight:700">${pnlStr}</span>
+            </div>`;
+              })
+              .join("")
+          : `<p style="font-size:11.5px; color:var(--text-tertiary)">El ranking está abierto — haz tu primer trade</p>`;
+      } catch (e) {
+        tradersEl.innerHTML = `<p style="font-size:11.5px; color:var(--text-tertiary)">Ranking no disponible ahora mismo</p>`;
+      }
+    }
   },
 
   /** Keep prices, candles and discover tokens fresh in the background. */
@@ -51,6 +108,7 @@ export const App = {
     setInterval(() => {
       try {
         DiscoverEngine.refresh();
+        this.loadFeedSidebars();
       } catch (e) {
         console.warn("[App] discover refresh failed:", e);
       }
