@@ -91,7 +91,7 @@ const BASE: ChainConfig = {
   usdcDecimals: 6,
   wrappedNative: "0x4200000000000000000000000000000000000006",
   dexAggregator: "0x",
-  dexApiUrl: "https://base.api.0x.org",
+  dexApiUrl: "https://api.0x.org", // chain-specific subdomains are deprecated; chainId routes
   bridgeProvider: "lifi",
   supportsLaunches: true,
 };
@@ -129,7 +129,7 @@ const ARBITRUM: ChainConfig = {
   usdcDecimals: 6,
   wrappedNative: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
   dexAggregator: "0x",
-  dexApiUrl: "https://arbitrum.api.0x.org",
+  dexApiUrl: "https://api.0x.org", // chain-specific subdomains are deprecated; chainId routes
   bridgeProvider: "lifi",
   supportsLaunches: true,
 };
@@ -148,7 +148,7 @@ const POLYGON: ChainConfig = {
   usdcDecimals: 6,
   wrappedNative: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
   dexAggregator: "0x",
-  dexApiUrl: "https://polygon.api.0x.org",
+  dexApiUrl: "https://api.0x.org", // chain-specific subdomains are deprecated; chainId routes
   bridgeProvider: "lifi",
   supportsLaunches: true,
 };
