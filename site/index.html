@@ -1076,12 +1076,12 @@
         const data = await res.json();
         if (res.ok) {
           input.value = '';
-          const pos = data.position ? (1420 + Number(data.position)) : 1421;
+          const pos = Number(data.position) || null;
           const ref = data.refCode || 'TRENCHES';
           window.lastWaitlistData = { pos, ref };
           const posEl = document.getElementById('userWaitlistPos');
           const refEl = document.getElementById('userRefCode');
-          if (posEl) posEl.textContent = '#' + pos.toLocaleString();
+          if (posEl && pos) posEl.textContent = '#' + pos.toLocaleString();
           if (refEl) refEl.textContent = ref;
           openSuccessModal();
           loadWaitlistCount();
