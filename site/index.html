@@ -680,7 +680,7 @@
 
       <div class="waitlist-stats">
         <span class="status-dot" style="background:#22c55e; box-shadow:0 0 8px #22c55e"></span>
-        <span><strong id="waitlistCount">1,420+</strong> traders en la lista de espera · Batch 01 abriendo plazas</span>
+        <span><strong id="waitlistCount">—</strong> traders en la lista de espera · Batch 01 abriendo plazas</span>
       </div>
 
       <div class="invite-link" onclick="openInviteModal()">
@@ -697,7 +697,7 @@
           <div class="mockup-dot"></div>
         </div>
         <div>trenches.internal // social-trading-terminal-v2.7</div>
-        <div style="color:var(--delta-green)">● LIVE STREAM</div>
+        <div style="color:var(--delta-green)">● LIVE MARKET DATA</div>
       </div>
 
       <div class="mockup-grid">
@@ -705,64 +705,11 @@
         <div class="mockup-pane-feed" id="feed">
           <div class="pane-header">
             <span>Market Alpha Feed</span>
-            <span class="mono" style="font-size:10px">VERIFIED TRADERS</span>
+            <span class="mono" style="font-size:10px">TOP MOVERS · REAL DATA</span>
           </div>
 
-          <div class="post-card" onclick="selectDemoToken('SOL', 184.25, 7.42)">
-            <div class="post-author">
-              <div class="author-avatar">VK</div>
-              <div class="author-meta">
-                <div class="author-name">Valkyrie @0xValk</div>
-                <div class="author-handle">ROI +312% · 78% Win</div>
-              </div>
-            </div>
-            <p class="post-text">
-              Ruptura de canal alcista en 4H confirmada con volumen institucional. Acumulando fuerte para testear 210.
-            </p>
-            <div class="asset-pill">
-              <span class="pill-sym">$SOL</span>
-              <span class="pill-price">$184.25</span>
-              <span class="pill-delta up">+7.42%</span>
-              <span class="pill-action">TRADE</span>
-            </div>
-          </div>
-
-          <div class="post-card" onclick="selectDemoToken('BRETT', 0.142, 14.8)">
-            <div class="post-author">
-              <div class="author-avatar" style="background:#1e1b4b">🐋</div>
-              <div class="author-meta">
-                <div class="author-name">Whale Radar Alert</div>
-                <div class="author-handle">Smart Money On-Chain</div>
-              </div>
-            </div>
-            <p class="post-text">
-              5 wallets históricamente rentables acumularon 4.2M en Base durante los últimos 15 min.
-            </p>
-            <div class="asset-pill">
-              <span class="pill-sym">$BRETT</span>
-              <span class="pill-price">$0.142</span>
-              <span class="pill-delta up">+14.8%</span>
-              <span class="pill-action">TRADE</span>
-            </div>
-          </div>
-
-          <div class="post-card" onclick="selectDemoToken('ETH', 2740.10, -1.2)">
-            <div class="post-author">
-              <div class="author-avatar">NW</div>
-              <div class="author-meta">
-                <div class="author-name">Nacho Web3</div>
-                <div class="author-handle">@nacho_web3</div>
-              </div>
-            </div>
-            <p class="post-text">
-              El flujo de liquidity en L2s está superando a mainnet por primera vez en 6 meses. Oportunidades en Arbitrum y Base.
-            </p>
-            <div class="asset-pill">
-              <span class="pill-sym">$ETH</span>
-              <span class="pill-price">$2,740.10</span>
-              <span class="pill-delta down">-1.20%</span>
-              <span class="pill-action">TRADE</span>
-            </div>
+          <div id="landingFeed">
+            <p style="padding:14px; font-size:11.5px; color:var(--text-tertiary)">Cargando datos reales del mercado…</p>
           </div>
         </div>
 
@@ -776,8 +723,8 @@
               </div>
             </div>
             <div style="text-align:right">
-              <div class="token-price" id="demoPrice">$184.25</div>
-              <div class="token-delta" id="demoDelta">+7.42% 24h</div>
+              <div class="token-price" id="demoPrice">—</div>
+              <div class="token-delta" id="demoDelta">—</div>
             </div>
           </div>
 
@@ -820,77 +767,11 @@
         <div class="mockup-pane-right" id="discover">
           <div class="pane-header">
             <span>Discover Opportunities</span>
-            <span class="mono" style="font-size:10px">ELITE SCORE</span>
+            <span class="mono" style="font-size:10px">REAL PRICES</span>
           </div>
 
-          <div class="token-row" onclick="selectDemoToken('SOL', 184.25, 7.42)">
-            <div class="token-row-left">
-              <div class="token-icon">◎</div>
-              <div>
-                <div style="font-weight:700; font-size:13px">SOL</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">Solana</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div class="elite-badge high">94/100</div>
-              <div class="mono" style="font-size:11px; color:var(--delta-green); margin-top:2px">+7.42%</div>
-            </div>
-          </div>
-
-          <div class="token-row" onclick="selectDemoToken('VIRTUAL', 1.85, 24.1)">
-            <div class="token-row-left">
-              <div class="token-icon">🔵</div>
-              <div>
-                <div style="font-weight:700; font-size:13px">VIRTUAL</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">Base · AI Agents</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div class="elite-badge high">91/100</div>
-              <div class="mono" style="font-size:11px; color:var(--delta-green); margin-top:2px">+24.1%</div>
-            </div>
-          </div>
-
-          <div class="token-row" onclick="selectDemoToken('BRETT', 0.142, 14.8)">
-            <div class="token-row-left">
-              <div class="token-icon">🔵</div>
-              <div>
-                <div style="font-weight:700; font-size:13px">BRETT</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">Base · Memecoins</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div class="elite-badge mid">88/100</div>
-              <div class="mono" style="font-size:11px; color:var(--delta-green); margin-top:2px">+14.8%</div>
-            </div>
-          </div>
-
-          <div class="token-row" onclick="selectDemoToken('PENDLE', 4.95, 3.2)">
-            <div class="token-row-left">
-              <div class="token-icon">⬡</div>
-              <div>
-                <div style="font-weight:700; font-size:13px">PENDLE</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">Ethereum · RWA</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div class="elite-badge high">89/100</div>
-              <div class="mono" style="font-size:11px; color:var(--delta-green); margin-top:2px">+3.20%</div>
-            </div>
-          </div>
-
-          <div class="token-row" onclick="selectDemoToken('MONAD', 1.20, 18.4)">
-            <div class="token-row-left">
-              <div class="token-icon">🟣</div>
-              <div>
-                <div style="font-weight:700; font-size:13px">MON</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">Monad Testnet</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div class="elite-badge high">92/100</div>
-              <div class="mono" style="font-size:11px; color:var(--delta-green); margin-top:2px">+18.4%</div>
-            </div>
+          <div id="landingDiscover">
+            <p style="padding:14px; font-size:11.5px; color:var(--text-tertiary)">Cargando datos reales del mercado…</p>
           </div>
         </div>
       </div>
@@ -931,7 +812,7 @@
         <div class="pillar-icon">🏆</div>
         <h3 class="pillar-title">Reputación Verificable</h3>
         <p class="pillar-desc">
-          Sin capturas falsas. El PnL, Win Rate y ROI de cada trader se audita directamente sobre la actividad on-chain. Sigue a los mejores o replica sus movimientos con Copy Trade.
+          Sin capturas falsas. El PnL, Win Rate y ROI de cada trader se calcula sobre su actividad real de trading registrada en la plataforma. Sigue a los mejores o replica sus movimientos con Copy Trade.
         </p>
       </div>
 
@@ -975,7 +856,7 @@
         <p style="font-size:13px; color:var(--text-secondary)">La red social nativa para los mercados.</p>
         <ul class="comp-list">
           <li class="comp-item"><span style="color:var(--delta-green)">✓</span> El contenido y el mercado unidos: un post es una oportunidad operable.</li>
-          <li class="comp-item"><span style="color:var(--delta-green)">✓</span> Historial y métricas de traders 100% verificadas por smart contracts.</li>
+          <li class="comp-item"><span style="color:var(--delta-green)">✓</span> Historial y métricas de traders calculadas sobre operaciones reales — sin números inventados.</li>
           <li class="comp-item"><span style="color:var(--delta-green)">✓</span> Mobile-first: navegación fluida para iOS, Android y terminal de escritorio.</li>
           <li class="comp-item"><span style="color:var(--delta-green)">✓</span> Identidad visual minimalista, oscura y de alta tecnología 2027.</li>
         </ul>
@@ -1088,22 +969,90 @@
       return (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
     })();
 
-    // Fetch live waitlist count on load
+    // Fetch live waitlist count on load — the real number, no inflated base
     async function loadWaitlistCount() {
       try {
         const res = await fetch(API_BASE + '/api/waitlist/count');
         if (res.ok) {
           const data = await res.json();
           const countEl = document.getElementById('waitlistCount');
-          if (countEl && data.count) {
-            countEl.textContent = (1420 + Number(data.count)).toLocaleString() + '+';
+          if (countEl && Number.isFinite(Number(data.count))) {
+            countEl.textContent = Number(data.count).toLocaleString();
           }
         }
       } catch (e) {
-        // Fallback gracefully to default
+        // keep the '—' placeholder; never show an invented count
       }
     }
     loadWaitlistCount();
+
+    // ── Real market data for the product mockup (CoinGecko, public API) ──
+    const LANDING_IDS = ['solana','ethereum','brett','virtuals','pendle','monad','binancecoin','bonk'];
+    async function loadLandingMarketData() {
+      try {
+        const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=' + LANDING_IDS.join(',') + '&sparkline=false&price_change_percentage=24h&order=market_cap_desc', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const rows = (await res.json()).map(m => ({
+          symbol: (m.symbol || '').toUpperCase(),
+          name: m.name || '',
+          price: Number(m.current_price ?? 0),
+          delta: Number(m.price_change_percentage_24h ?? 0),
+        })).filter(r => r.symbol && r.price > 0);
+        renderLandingFeed(rows);
+        renderLandingDiscover(rows);
+        const sol = rows.find(r => r.symbol === 'SOL');
+        if (sol) selectDemoToken(sol.symbol, sol.price, sol.delta);
+      } catch (e) {
+        const feedEl = document.getElementById('landingFeed');
+        const discEl = document.getElementById('landingDiscover');
+        if (feedEl) feedEl.innerHTML = '<p style="padding:14px; font-size:11.5px; color:var(--text-tertiary)">Datos de mercado no disponibles ahora mismo</p>';
+        if (discEl) discEl.innerHTML = '<p style="padding:14px; font-size:11.5px; color:var(--text-tertiary)">Datos de mercado no disponibles ahora mismo</p>';
+      }
+    }
+    function fmtPrice(p) {
+      return '$' + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: p < 0.01 ? 6 : 2 });
+    }
+    function renderLandingFeed(rows) {
+      const el = document.getElementById('landingFeed');
+      if (!el) return;
+      const movers = rows.slice().sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 3);
+      el.innerHTML = movers.map(m => `
+        <div class="post-card" onclick="selectDemoToken('${m.symbol}', ${m.price}, ${m.delta})">
+          <div class="post-author">
+            <div class="author-avatar">${m.symbol.slice(0, 2)}</div>
+            <div class="author-meta">
+              <div class="author-name">${m.name}</div>
+              <div class="author-handle">Top mover 24h · datos reales</div>
+            </div>
+          </div>
+          <div class="asset-pill">
+            <span class="pill-sym">$${m.symbol}</span>
+            <span class="pill-price">${fmtPrice(m.price)}</span>
+            <span class="pill-delta ${m.delta >= 0 ? 'up' : 'down'}">${m.delta >= 0 ? '+' : ''}${m.delta.toFixed(2)}%</span>
+            <span class="pill-action">TRADE</span>
+          </div>
+        </div>`).join('');
+    }
+    function renderLandingDiscover(rows) {
+      const el = document.getElementById('landingDiscover');
+      if (!el) return;
+      const icons = { SOL: '◎', ETH: '⬡', BNB: '🟡', BRETT: '🔵', VIRTUAL: '🔵', PENDLE: '⬡', MON: '🟣', BONK: '🐶' };
+      el.innerHTML = rows.slice(0, 5).map(m => `
+        <div class="token-row" onclick="selectDemoToken('${m.symbol}', ${m.price}, ${m.delta})">
+          <div class="token-row-left">
+            <div class="token-icon">${icons[m.symbol] || '🪙'}</div>
+            <div>
+              <div style="font-weight:700; font-size:13px">${m.symbol}</div>
+              <div style="font-size:11px; color:var(--text-tertiary)">${m.name}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono" style="font-size:12px; font-weight:700">${fmtPrice(m.price)}</div>
+            <div class="mono" style="font-size:11px; color:${m.delta >= 0 ? 'var(--delta-green)' : 'var(--delta-red)'}; margin-top:2px">${m.delta >= 0 ? '+' : ''}${m.delta.toFixed(2)}%</div>
+          </div>
+        </div>`).join('');
+    }
+    loadLandingMarketData();
 
     // Handle waitlist submission
     async function handleWaitlistSubmit(e) {
