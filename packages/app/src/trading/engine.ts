@@ -174,21 +174,32 @@ export class TradingEngine {
   }
 
   /** 0x Swap API v2 quote for EVM chains (Permit2 flow) */
+  /** Placeholder taker for quotes without a user wallet (0x v2 requires one;
+   * quotes are price-only in that case — execution always re-quotes with the
+   * real wallet address). */
+  static DEFAULT_TAKER = "0x0000000000000000000000000000000000012345";
+
   private async getEvmQuote(params: TradeParams, config: ChainConfig, fee: string): Promise<TradeQuote> {
     const NATIVE_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    const resolveToken = (t: string) => {
-      if (t.toUpperCase() === "USDC") return config.usdcAddress;
+    const DEFAULT_TAKER = TradingEngine.DEFAULT_TAKER;
+    // Symbols that map to the chain's native gas token even when named
+    // differently from nativeCurrency (e.g. POL replaced MATIC on Polygon).
+    const NATIVE_ALIASES: Record<string, string> = { POL: "MATIC", ETHER: "ETH" };
+    const resolveToken = (raw: string) => {
+      const t = raw.toUpperCase();
+      const normalized = NATIVE_ALIASES[t] ?? t;
+      if (normalized === "USDC") return config.usdcAddress;
       // Native gas token: accept the symbol or the all-zero placeholder and
       // use 0x's native sentinel address.
-      if (t.toUpperCase() === config.nativeCurrency.toUpperCase() || /^0x0{40}$/i.test(t)) return NATIVE_SENTINEL;
-      return t;
+      if (normalized === config.nativeCurrency.toUpperCase() || /^0x0{40}$/i.test(raw)) return NATIVE_SENTINEL;
+      return raw;
     };
     const url = new URL(`${config.dexApiUrl}/swap/permit2/quote`);
     url.searchParams.set("chainId", String(config.chainId));
     url.searchParams.set("sellToken", resolveToken(params.sellToken));
     url.searchParams.set("buyToken", resolveToken(params.buyToken));
     url.searchParams.set("sellAmount", params.amount);
-    if (params.taker) url.searchParams.set("taker", params.taker);
+    url.searchParams.set("taker", params.taker || DEFAULT_TAKER);
     url.searchParams.set("slippageBps", String(params.slippageBps ?? 100));
 
     const res = await fetch(url.toString(), {
