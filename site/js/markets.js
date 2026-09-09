@@ -184,9 +184,18 @@ export const MarketsEngine = {
     }
     const usdc = prompt(`Comprar ${symbol} — monto en USDC (ej: 10):`);
     if (!usdc) return;
+    const usdNum = parseFloat(usdc);
+    if (!Number.isFinite(usdNum) || usdNum <= 0) {
+      alert("❌ Introduce un monto válido en USDC");
+      return;
+    }
+    // API expects micro-USDC (1 USDC = 1e6 units)
+    const usdcMicro = BigInt(Math.round(usdNum * 1e6)).toString();
     try {
-      const res = await ApiClient.buyLaunchTokens(launchId, usdc);
-      alert(`✅ Comprado ${symbol}: ${res.result?.tokenAmount || "?"} tokens`);
+      const res = await ApiClient.buyLaunchTokens(launchId, usdcMicro);
+      const tokens = res.result?.tokenAmount || "?";
+      const priceAfter = res.result?.priceAfter ? (Number(res.result.priceAfter) / 1e6).toPrecision(3) : null;
+      alert(`✅ Comprado ${symbol}: ${Number(tokens).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens${priceAfter ? ` · nuevo precio $${priceAfter}` : ""}`);
       this.loadLaunches();
     } catch (err) {
       alert("❌ " + String(err?.message || err));
@@ -198,11 +207,17 @@ export const MarketsEngine = {
       alert("Conecta tu wallet primero");
       return;
     }
-    const amt = prompt(`Vender ${symbol} — cantidad de tokens:`);
+    const amt = prompt(`Vender ${symbol} — cantidad de tokens (enteros):`);
     if (!amt) return;
+    const tokenNum = Number(amt);
+    if (!Number.isInteger(tokenNum) || tokenNum <= 0) {
+      alert("❌ Introduce una cantidad entera de tokens");
+      return;
+    }
     try {
-      const res = await ApiClient.sellLaunchTokens(launchId, amt);
-      alert(`✅ Vendido: +${res.result?.usdcAmount || "?"} USDC`);
+      const res = await ApiClient.sellLaunchTokens(launchId, amt.trim());
+      const usdcOut = res.result?.usdcAmount ? (Number(res.result.usdcAmount) / 1e6).toFixed(2) : "?";
+      alert(`✅ Vendido: +${usdcOut} USDC`);
       this.loadLaunches();
     } catch (err) {
       alert("❌ " + String(err?.message || err));
@@ -345,9 +360,11 @@ export const MarketsEngine = {
     }
     el.innerHTML = this.launches
       .map((l) => {
-        const mcap = Number(l.marketCapUsd || l.market_cap_usdc || 0) / 1e6;
-        const raised = Number(l.raisedUsd || l.raised_usdc || 0) / 1e6;
-        const progress = Math.min(100, (raised / (Number(l.graduateThresholdUsd || 0) || 1)) * 100);
+        // API returns micro-USDC units (1e6 = $1) and precomputed progressPct
+        const mcap = Number(l.marketCapUsdc || 0) / 1e6;
+        const raised = Number(l.raisedUsdc || 0) / 1e6;
+        const price = Number(l.currentPriceUsdc || 0) / 1e6;
+        const progress = Math.min(100, Number(l.progressPct ?? 0));
         return `
         <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:10px">
           <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:10px">
@@ -356,6 +373,7 @@ export const MarketsEngine = {
               <p style="font-size:13.5px; font-weight:700; color:var(--text-primary)">${escapeHtml(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${escapeHtml(l.symbol)}</span></p>
               <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px">
                 <span>⛓ ${escapeHtml(l.chain)}</span>
+                <span>📊 $${price > 0 ? price.toPrecision(3) : "0"}</span>
                 <span>💰 MC ${fmtUsd(mcap)}</span>
                 <span>👥 ${l.buyersCount ?? l.buyers_count ?? 0}</span>
               </div>
