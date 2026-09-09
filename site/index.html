@@ -1128,13 +1128,27 @@
       btn.textContent = 'VERIFICANDO...';
       btn.disabled = true;
 
-      try {
-        const res = await fetch(API_BASE + '/api/auth/access-code', {
+      const verify = async (base) => {
+        const res = await fetch(base + '/api/auth/access-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })
         });
-        const data = await res.json();
+        return { res, data: await res.json().catch(() => ({})) };
+      };
+      try {
+        let { res, data } = await verify(API_BASE);
+        // Self-heal: a stale/undreachable raidos_api_base in localStorage
+        // (e.g. left over from ?api= dev usage) makes every attempt throw.
+        // On network failure, drop it and retry against the default API.
+        if (!res) throw new Error('network');
+        if (res.status === 0 || (!res.ok && !data.error)) {
+          // fallthrough to catch-like retry below is handled via response shape
+        }
+        if (!res.ok && !data.error && localStorage.getItem('raidos_api_base')) {
+          localStorage.removeItem('raidos_api_base');
+          ({ res, data } = await verify('https://raidos-api.fly.dev'));
+        }
         if (res.ok && data.valid) {
           // Store token and grant access to the full app
           sessionStorage.setItem('trenches_beta_unlocked', '1');
@@ -1145,7 +1159,19 @@
         }
       } catch (err) {
         // No offline fallback: codes are only valid if the server verifies them.
-        errEl.textContent = 'No se pudo verificar el código.';
+        // Retry once against the production API in case the stored base was bad.
+        try {
+          const { res, data } = await verify('https://raidos-api.fly.dev');
+          if (res.ok && data.valid) {
+            localStorage.removeItem('raidos_api_base');
+            sessionStorage.setItem('trenches_beta_unlocked', '1');
+            window.location.href = 'app.html';
+            return;
+          }
+          errEl.textContent = data.error || 'Código de invitación no válido.';
+        } catch {
+          errEl.textContent = 'No se pudo verificar el código — revisa tu conexión e inténtalo de nuevo.';
+        }
         errEl.style.display = 'block';
       } finally {
         btn.textContent = 'ACCEDER A LA APLICACIÓN';

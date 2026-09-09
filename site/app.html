@@ -711,22 +711,47 @@
     async function handleGateCode(e) {
       e.preventDefault();
       const code = document.getElementById('gateCodeInput').value.trim();
-      try {
-        const res = await fetch(API_BASE + '/api/auth/access-code', {
+      const errEl = document.getElementById('gateError');
+      const verify = async (base) => {
+        const res = await fetch(base + '/api/auth/access-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })
         });
-        const data = await res.json();
+        return { res, data: await res.json().catch(() => ({})) };
+      };
+      try {
+        let { res, data } = await verify(API_BASE);
+        // Self-heal a stale raidos_api_base: if the stored base can't verify
+        // (network failure or non-JSON response), retry the production API.
+        const looksBroken = !res || res.status === 0 || (!res.ok && !data.error);
+        if (looksBroken && localStorage.getItem('raidos_api_base')) {
+          localStorage.removeItem('raidos_api_base');
+          ({ res, data } = await verify('https://raidos-api.fly.dev'));
+        }
         if (res.ok && data.valid) {
           sessionStorage.setItem('trenches_beta_unlocked', '1');
-          window.App.closeAccessCodeModal();
+          if (window.App) window.App.closeAccessCodeModal();
         } else {
-          document.getElementById('gateError').style.display = 'block';
+          if (errEl) errEl.textContent = data.error || 'Código de invitación no válido.';
+          if (errEl) errEl.style.display = 'block';
         }
       } catch {
         // No offline fallback: codes are only valid if the server verifies them.
-        document.getElementById('gateError').style.display = 'block';
+        // Last resort: verify against the production API directly.
+        try {
+          const { res, data } = await verify('https://raidos-api.fly.dev');
+          if (res.ok && data.valid) {
+            localStorage.removeItem('raidos_api_base');
+            sessionStorage.setItem('trenches_beta_unlocked', '1');
+            if (window.App) window.App.closeAccessCodeModal();
+            return;
+          }
+          if (errEl) errEl.textContent = data.error || 'Código de invitación no válido.';
+        } catch {
+          if (errEl) errEl.textContent = 'No se pudo verificar el código — revisa tu conexión e inténtalo de nuevo.';
+        }
+        if (errEl) errEl.style.display = 'block';
       }
     }
 
