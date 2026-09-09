@@ -23,26 +23,33 @@ export const App = {
       this.openAccessCodeModal();
     }
 
-    // 2. Initialize Subsystems
-    await DiscoverEngine.init(document.getElementById("discoverTokensList"));
-    FeedEngine.init(document.getElementById("feedPostsList"));
-    TradingEngine.init();
-    SocialEngine.init(document.getElementById("leaderboardList"));
-    PortfolioEngine.init();
-    PremiumEngine.load();
-    MarketsEngine.init(document.getElementById("marketsContainer"));
+    // 2. Navigation FIRST — the UI must respond even if a subsystem fails
+    this.setupNavigation();
 
-    // 3. Check Auth State
-    this.checkUserAuth();
+    // 3. Initialize Subsystems — each isolated so one failure can't kill the app
+    const safeInit = async (name, fn) => {
+      try {
+        await fn();
+      } catch (e) {
+        console.warn(`[App] ${name} init failed (app continues):`, e);
+      }
+    };
+    await safeInit("Discover", () => DiscoverEngine.init(document.getElementById("discoverTokensList")));
+    safeInit("Feed", () => FeedEngine.init(document.getElementById("feedPostsList")));
+    safeInit("Trading", () => TradingEngine.init());
+    safeInit("Social", () => SocialEngine.init(document.getElementById("leaderboardList")));
+    safeInit("Portfolio", () => PortfolioEngine.init());
+    safeInit("Premium", () => PremiumEngine.load());
+    safeInit("Markets", () => MarketsEngine.init(document.getElementById("marketsContainer")));
 
-    // 4. Start background real-data refresh loops
+    // 4. Check Auth State (401 is expected for gate-unlocked users without a key)
+    safeInit("Auth", () => this.checkUserAuth());
+
+    // 5. Start background real-data refresh loops
     this.startRealDataLoops();
 
-    // 4.5 Populate feed sidebars with real data (movers + top traders)
-    this.loadFeedSidebars();
-
-    // 5. Setup Navigation Handlers
-    this.setupNavigation();
+    // 6. Populate feed sidebars with real data (movers + top traders)
+    safeInit("Sidebars", () => this.loadFeedSidebars());
 
     // 6. Setup Viewport Mobile Fixes
     this.setupMobileViewport();
@@ -188,7 +195,12 @@ export const App = {
   },
 
   async checkUserAuth() {
-    const user = await ApiClient.getMe();
+    let user = null;
+    try {
+      user = await ApiClient.getMe();
+    } catch {
+      // 401 / network — expected for gate-unlocked users without an API key
+    }
     const authBtn = document.getElementById("headerAuthBtn");
     if (user && user.userId) {
       this.user = user;

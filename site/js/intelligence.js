@@ -102,56 +102,6 @@ export const EliteScoreEngine = {
   },
 };
 
-export const SmartMoneyRadar = {
-  /** Tracked verified smart wallet clusters */
-  clusters: [
-    { id: "alpha_whales_sol", name: "Tier 1 Solana Accumulators", winRate: 84.2, avgRoi: "+420%", activeWallets: 14 },
-    { id: "base_insiders_evm", name: "Base Ecosystem Alpha Cluster", winRate: 79.1, avgRoi: "+310%", activeWallets: 9 },
-    { id: "perp_hedge_eth", name: "Perp & Delta-Neutral Quant Cluster", winRate: 88.5, avgRoi: "+195%", activeWallets: 6 },
-  ],
-
-  /** Generates realistic on-chain smart money alerts */
-  getRecentEvents() {
-    return [
-      {
-        id: "sm_1",
-        timestamp: Date.now() - 1000 * 60 * 8, // 8 mins ago
-        type: "ACCUMULATION",
-        symbol: "SOL",
-        chain: "solana",
-        walletCount: 7,
-        totalAmountUsdc: "$1,450,000",
-        message: "7 wallets con win-rate histórico del 84% acumularon SOL en los últimos 20 minutos.",
-        eliteScore: 94,
-        price: 184.25,
-        delta: "+7.4%",
-      },
-      {
-        id: "sm_2",
-        timestamp: Date.now() - 1000 * 60 * 24, // 24 mins ago
-        type: "SWEEP",
-        symbol: "BRETT",
-        chain: "base",
-        walletCount: 4,
-        totalAmountUsdc: "$280,000",
-        message: "Cluster de Base 'Early Mover' ejecutó compras escalonadas sin vender posiciones previas.",
-        eliteScore: 88,
-        price: 0.142,
-        delta: "+14.8%",
-      },
-      {
-        id: "sm_3",
-        timestamp: Date.now() - 1000 * 60 * 55, // 55 mins ago
-        type: "ACCUMULATION",
-        symbol: "VIRTUAL",
-        chain: "base",
-        walletCount: 5,
-        totalAmountUsdc: "$620,000",
-        message: "5 wallets institucionales acumulan en rangos de soporte clave de 4 horas.",
-        eliteScore: 91,
-        price: 1.85,
-        delta: "+24.1%",
-      },
-    ];
-  },
-};
+// SmartMoneyRadar removed: it was dead code emitting fabricated wallet
+// clusters and invented on-chain alerts. Real smart-money signals require a
+// wallet-tracking data source the platform doesn't have yet.
