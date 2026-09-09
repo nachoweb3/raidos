@@ -259,6 +259,49 @@ describe("subscriptions", () => {
   });
 });
 
+describe("copy-trade settings", () => {
+  it("returns null settings when none were saved", async () => {
+    const r = await api("GET", "/api/copy-settings", undefined, firstUserKey);
+    expect(r.status).toBe(200);
+    expect(r.json.settings).toBeNull();
+  });
+
+  it("saves and reads back copy settings", async () => {
+    const payload = {
+      enabled: true,
+      maxPerTradeUsdc: 25,
+      maxTotalUsdc: 500,
+      chains: ["solana", "base"],
+    };
+    const save = await api("POST", "/api/copy-settings", payload, firstUserKey);
+    expect(save.status).toBe(200);
+    expect(save.json.settings).toMatchObject({ enabled: true, maxPerTradeUsdc: 25, maxTotalUsdc: 500, chains: ["solana", "base"] });
+
+    const read = await api("GET", "/api/copy-settings", undefined, firstUserKey);
+    expect(read.status).toBe(200);
+    expect(read.json.settings).toMatchObject({ enabled: true, maxPerTradeUsdc: 25, maxTotalUsdc: 500, chains: ["solana", "base"] });
+  });
+
+  it("rejects invalid amounts", async () => {
+    const negative = await api("POST", "/api/copy-settings", { enabled: true, maxPerTradeUsdc: -5, maxTotalUsdc: 100 }, firstUserKey);
+    expect(negative.status).toBe(400);
+
+    const inverted = await api("POST", "/api/copy-settings", { enabled: true, maxPerTradeUsdc: 100, maxTotalUsdc: 50 }, firstUserKey);
+    expect(inverted.status).toBe(400);
+  });
+
+  it("filters unknown chains out of the list", async () => {
+    const r = await api("POST", "/api/copy-settings", { enabled: false, maxPerTradeUsdc: 10, maxTotalUsdc: 100, chains: ["solana", "not-a-chain"] }, firstUserKey);
+    expect(r.status).toBe(200);
+    expect(r.json.settings.chains).toEqual(["solana"]);
+  });
+
+  it("requires authentication", async () => {
+    const r = await api("GET", "/api/copy-settings");
+    expect(r.status).toBe(401);
+  });
+});
+
 describe("positions, feed & leaderboard periods (fomo-style)", () => {
   it("aggregate a full buy→sell position, emit feed events and close with realized PnL", async () => {
     const key = firstUserKey;

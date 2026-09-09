@@ -247,5 +247,17 @@ export const ApiClient = {
       method: "POST",
       body: JSON.stringify({ tokenAmount }),
     });
+  }
+
+  // ── Copy-trade settings ──
+  async getCopySettings() {
+    return this.request("/api/copy-settings");
+  }
+
+  async saveCopySettings(payload) {
+    return this.request("/api/copy-settings", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 };

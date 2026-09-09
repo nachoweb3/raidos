@@ -775,6 +775,54 @@ export class ApiServer {
         throw new HttpError(400, `unknown tier: ${tierId}`);
       }
     });
+
+    // ── Copy-trade settings (preferences only; execution not active in beta) ──
+    this.router.route("GET", "/api/copy-settings", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const row = this.db.getCopySettings(userId);
+      if (!row) {
+        sendJson(ctx.res, 200, { settings: null, mode: this.appMode });
+        return;
+      }
+      let chains: string[] = ["solana", "ethereum", "base"];
+      try {
+        const parsed = JSON.parse(row.chains);
+        if (Array.isArray(parsed)) chains = parsed;
+      } catch {}
+      sendJson(ctx.res, 200, {
+        settings: {
+          enabled: Boolean(row.enabled),
+          maxPerTradeUsdc: Number(row.max_per_trade_usdc ?? 0) / 1e6,
+          maxTotalUsdc: Number(row.max_total_usdc ?? 0) / 1e6,
+          chains,
+        },
+        mode: this.appMode,
+      });
+    });
+
+    this.router.route("POST", "/api/copy-settings", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const enabled = Boolean(ctx.body?.enabled);
+      const maxPerTrade = Number(ctx.body?.maxPerTradeUsdc);
+      const maxTotal = Number(ctx.body?.maxTotalUsdc);
+      if (!Number.isFinite(maxPerTrade) || maxPerTrade <= 0) throw new HttpError(400, "maxPerTradeUsdc must be a positive number");
+      if (!Number.isFinite(maxTotal) || maxTotal < maxPerTrade) throw new HttpError(400, "maxTotalUsdc must be >= maxPerTradeUsdc");
+      const ALLOWED_CHAINS = new Set(["solana", "ethereum", "base", "bsc", "arbitrum", "polygon", "robinhood", "monad", "arc"]);
+      const chains = Array.isArray(ctx.body?.chains)
+        ? (ctx.body.chains as unknown[]).filter((c): c is string => typeof c === "string" && ALLOWED_CHAINS.has(c))
+        : ["solana", "ethereum", "base"];
+      this.db.setCopySettings(userId, {
+        userId,
+        maxPerTradeUsdc: String(Math.round(maxPerTrade * 1e6)),
+        maxTotalUsdc: String(Math.round(maxTotal * 1e6)),
+        enabled: enabled ? 1 : 0,
+        chains,
+      } as never);
+      sendJson(ctx.res, 200, {
+        settings: { enabled, maxPerTradeUsdc: maxPerTrade, maxTotalUsdc: maxTotal, chains },
+        mode: this.appMode,
+      });
+    });
   }
 
   /** Aggregate a buy/sell leg into the user's open position and emit close events. */

@@ -251,21 +251,41 @@ export const App = {
     if (modal) modal.classList.remove("active");
   },
 
-  /** Persist copy-trade preferences locally. Execution is not active in beta. */
-  saveCopySettings() {
+  /** Persist copy-trade preferences server-side. Execution is not active in beta. */
+  async saveCopySettings() {
     const max = parseFloat(document.getElementById("copyMaxAmount")?.value);
     const slip = parseFloat(document.getElementById("copySlippage")?.value);
-    const settings = {
-      trader: this._copyTrader || null,
-      maxAmountUsdc: Number.isFinite(max) && max > 0 ? max : 100,
-      slippagePct: Number.isFinite(slip) && slip >= 0 && slip <= 50 ? slip : 0.5,
-      savedAt: Date.now(),
-    };
+    if (!Number.isFinite(max) || max <= 0) {
+      alert("Introduce un monto máximo válido (USDC)");
+      return;
+    }
+    // Local mirror keeps the per-trader context + slippage, which the current
+    // backend schema doesn't store.
     try {
-      localStorage.setItem("trenches_copy_settings", JSON.stringify(settings));
+      localStorage.setItem("trenches_copy_settings", JSON.stringify({
+        trader: this._copyTrader || null,
+        maxAmountUsdc: max,
+        slippagePct: Number.isFinite(slip) ? slip : 0.5,
+        savedAt: Date.now(),
+      }));
     } catch {}
-    this.closeCopyModal();
-    alert("Configuración guardada. La ejecución automática estará disponible próximamente.");
+    try {
+      await ApiClient.saveCopySettings({
+        enabled: true,
+        maxPerTradeUsdc: max,
+        maxTotalUsdc: max * 10,
+        chains: ["solana", "ethereum", "base"],
+      });
+      this.closeCopyModal();
+      alert("Configuración guardada en tu cuenta. La ejecución automática estará disponible próximamente.");
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (msg.includes("401") || /unauthorized|no auth/i.test(msg)) {
+        alert("Conecta tu wallet para guardar la configuración en tu cuenta");
+      } else {
+        alert("No se pudo guardar: " + msg);
+      }
+    }
   },
 
   // Wallet connection methods
