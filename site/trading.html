@@ -303,7 +303,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
   </div>
 
   <div class="panel" style="grid-column:2">
-    <div class="panel-header">Order Book <span class="dim" style="text-transform:none">demo feed</span></div>
+    <div class="panel-header">Order Book <span class="dim" style="text-transform:none">no disponible</span></div>
     <div class="orderbook" style="padding:8px 14px">
       <div class="ob-header"><span>Bid</span><span>Size</span><span>Depth</span></div>
       <div id="asks"></div>
@@ -929,7 +929,6 @@ async function loadHolders(){
     + (stats.holdersCount ? `<tr><td colspan="4" class="dim" style="text-align:center">${stats.holdersCount.toLocaleString()} total holders</td></tr>` : '');
 }
 function switchChain(c){ currentChain=c; updateTokenBar(); }
-
 // ── TRADE FORM ──
 function setSide(s, el){
   currentSide=s;
@@ -985,14 +984,48 @@ async function executeTrade(){
 }
 function showNote(msg, cls){ const n=document.getElementById('execNote'); n.textContent=msg; n.className='exec-note show '+cls; }
 
-// ── TOKEN BAR / CHART (demo feed, honestly labeled) ──
-function updateTokenBar(){
+// ── TOKEN BAR / CHART (real CoinGecko data, honest when unavailable) ──
+const CG_ID = {
+  solana:'solana', ethereum:'ethereum', bsc:'binancecoin', polygon:'matic-network',
+  arbitrum:'arbitrum', base:'ethereum', monad:'monad', robinhood:null, arc:null,
+};
+const _seriesCache = {}; // chain -> {ts, series, price, delta24h}
+async function updateTokenBar(){
   document.querySelector('#tokenName .chain-badge').textContent = CHAINS[currentChain].name.toUpperCase();
-  // Demo price feed until a market-data provider endpoint ships — clearly simulated
-  const demoPrice = 0.000042;
-  document.getElementById('tokenPrice').textContent = '$'+demoPrice.toFixed(7);
+  const id = CG_ID[currentChain];
+  if (!id){
+    document.getElementById('tokenPrice').textContent = '—';
+    document.getElementById('tokenStats').innerHTML = '<div>24h Vol <span class="stat-val">n/d</span></div><div>Liquidity <span class="stat-val">n/d</span></div><div>Holders <span class="stat-val">n/d</span></div>';
+    window._realSeries = null; initChart(); return;
+  }
+  const cached = _seriesCache[currentChain];
+  if (cached && Date.now()-cached.ts < 5*60*1000){ applySeriesData(cached); return; }
+  document.getElementById('tokenStats').innerHTML = '<div>24h Vol <span class="stat-val">…</span></div><div>Liquidity <span class="stat-val">…</span></div><div>Holders <span class="stat-val">…</span></div>';
+  try {
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=7&interval=5m`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(8000)});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const json = await res.json();
+    const pts = json.prices||[];
+    if (!pts.length) throw new Error('empty');
+    const last = pts[pts.length-1][1];
+    const dayAgo = pts.find(p=>p[0] >= pts[pts.length-1][0]-24*3600*1000) || pts[0];
+    const delta24h = dayAgo[1] > 0 ? ((last-dayAgo[1])/dayAgo[1])*100 : 0;
+    const series = pts.map(p=>({time:Math.floor(p[0]/1000), open:p[1], high:p[1], low:p[1], close:p[1]}));
+    _seriesCache[currentChain] = {ts:Date.now(), series, price:last, delta24h};
+    applySeriesData(_seriesCache[currentChain]);
+  } catch(err){
+    console.warn('[trading] real chart fetch failed:', err);
+    window._realSeries = null;
+    document.getElementById('tokenPrice').textContent = '—';
+    document.getElementById('tokenStats').innerHTML = '<div>24h Vol <span class="stat-val">n/d</span></div><div>Liquidity <span class="stat-val">n/d</span></div><div>Holders <span class="stat-val">n/d</span></div>';
+    initChart();
+  }
+}
+function applySeriesData(c){
+  window._realSeries = c.series;
+  document.getElementById('tokenPrice').textContent = '$'+c.price.toLocaleString(undefined,{maximumFractionDigits:c.price<0.01?7:2});
   document.getElementById('tokenStats').innerHTML =
-    '<div>24h Vol <span class="stat-val">demo</span></div><div>Liquidity <span class="stat-val">demo</span></div><div>Holders <span class="stat-val">demo</span></div>';
+    `<div>24h <span class="stat-val" style="color:${c.delta24h>=0?'#21C95E':'#FF4E51'}">${c.delta24h>=0?'+':''}${c.delta24h.toFixed(2)}%</span></div><div>Vol <span class="stat-val">n/d</span></div><div>Liq <span class="stat-val">n/d</span></div>`;
   initChart();
 }
 let chart, mainSeries;
@@ -1008,9 +1041,11 @@ function initChart(){
   if (last){ ['o','h','l','c'].forEach((k,i)=>{ document.getElementById('oh-'+k).textContent = [last.open,last.high,last.low,last.close][i].toFixed(7); }); }
 }
 function generateData(){
-  const d=[];let t=Math.floor(Date.now()/1000)-86400*7;let p=0.000038;
-  for(let i=0;i<500;i++){t+=120;const c=p+(Math.random()-.48)*p*.03;const o=p;const h=Math.max(o,c)+Math.random()*p*.01;const l=Math.min(o,c)-Math.random()*p*.01;if(chartType==='line')d.push({time:t,value:c});else d.push({time:t,open:o,high:h,low:l,close:c});p=c}
-  return d;
+  // Real price series fetched by updateTokenBar() (CoinGecko). Empty when
+  // unavailable — no invented candles.
+  const s = window._realSeries || [];
+  if (chartType==='line') return s.map(d=>({time:d.time, value:d.close}));
+  return s;
 }
 function setChartType(t,el){
   chartType=t;
@@ -1032,12 +1067,10 @@ function renderDepthChart(){
 }
 function renderOrderBook(){
   const asksEl=document.getElementById('asks');const bidsEl=document.getElementById('bids');
-  let asksHtml='',bidsHtml='';const basePrice=0.000042;
-  for(let i=7;i>=0;i--){const price=basePrice*(1+i*.001);const size=(Math.random()*5000+500).toFixed(0);const depth=(Math.random()*100).toFixed(1);
-    asksHtml+=`<div class="ob-row ask"><span class="red">${price.toFixed(7)}</span><span>${Number(size).toLocaleString()}</span><span class="dim">${depth}%</span><div class="bg-bar" style="width:${depth}%"></div></div>`;}
-  for(let i=0;i<8;i++){const price=basePrice*(1-i*.001);const size=(Math.random()*5000+500).toFixed(0);const depth=(Math.random()*100).toFixed(1);
-    bidsHtml+=`<div class="ob-row bid"><span class="green">${price.toFixed(7)}</span><span>${Number(size).toLocaleString()}</span><span class="dim">${depth}%</span><div class="bg-bar" style="width:${depth}%"></div></div>`;}
-  asksEl.innerHTML=asksHtml;bidsEl.innerHTML=bidsHtml;
+  // No real CLOB feed is wired for this standalone terminal yet — showing an
+  // honest empty state instead of a simulated ladder.
+  asksEl.innerHTML='<div class="ob-row"><span class="dim" style="grid-column:1/-1;text-align:center;padding:8px 0">Libro de órdenes no disponible</span></div>';
+  bidsEl.innerHTML='';
 }
 
 // ── SOCIAL FEED (live from /api/feed with SSE) ──

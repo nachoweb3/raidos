@@ -742,9 +742,18 @@
       document.getElementById('previewTitle').textContent = '$' + token.symbol;
       document.getElementById('previewIcon').textContent = token.symbol.slice(0, 3);
       document.getElementById('previewChain').textContent = (token.chain || 'SOLANA').toUpperCase();
-      document.getElementById('previewPrice').textContent = '$' + Number(token.price || 100).toLocaleString(undefined, { minimumFractionDigits: 2 });
-      document.getElementById('previewDelta').textContent = (token.delta >= 0 ? '+' : '') + Number(token.delta || 0).toFixed(2) + '% 24h';
-      document.getElementById('previewScore').textContent = '⚡ ' + (token.score || 90) + '/100';
+      const hasPrice = Number(token.price) > 0;
+      document.getElementById('previewPrice').textContent = hasPrice
+        ? '$' + Number(token.price).toLocaleString(undefined, { minimumFractionDigits: 2 })
+        : '—';
+      const delta = Number(token.delta);
+      document.getElementById('previewDelta').textContent = Number.isFinite(delta) && delta !== 0
+        ? (delta > 0 ? '+' : '') + delta.toFixed(2) + '% 24h'
+        : '—';
+      document.getElementById('previewDelta').style.color = delta > 0 ? 'var(--delta-green)' : delta < 0 ? 'var(--delta-red)' : 'var(--text-tertiary)';
+      document.getElementById('previewScore').textContent = Number.isFinite(Number(token.score)) && Number(token.score) > 0
+        ? '⚡ ' + Math.round(Number(token.score)) + '/100'
+        : '⚡ —/100';
       document.getElementById('assetPreviewModal').classList.add('active');
     }
 
