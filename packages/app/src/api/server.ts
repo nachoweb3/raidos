@@ -479,6 +479,12 @@ export class ApiServer {
     this.router.route("POST", "/api/trades/quote", async (ctx) => {
       this.requireUserId(ctx);
       const params = this.parseTradeParams(ctx);
+      // 0x v2 wants the taker address; use the user's wallet on the source
+      // chain when it exists (quote stays valid without it).
+      if (params.fromChain !== "solana") {
+        const takerWallet = this.db.getWallet(ctx.userId ?? 0, params.fromChain);
+        if (takerWallet?.address) params.taker = takerWallet.address;
+      }
       const quote = this.appMode === "mock"
         ? buildMockQuote(params)
         : await this.trading.getQuote(params).catch((err) => {
@@ -536,6 +542,8 @@ export class ApiServer {
               ctx: execCtx, chainId: config.chainId, rpcUrl: config.rpcUrl,
               zeroXApiUrl: config.dexApiUrl, sellToken: params.sellToken,
               buyToken: params.buyToken, sellAmount: params.amount, buyAmount: quote.buyAmount,
+              raw: quote.raw ?? undefined, taker: wallet.address,
+              slippageBps: params.slippageBps,
             })
           : await executeSolanaSwap({
               ctx: execCtx, quoteResponse: quote.raw ?? null,

@@ -24,6 +24,8 @@ export interface TradeParams {
   buyToken: string;
   /** Amount in smallest unit (wei/lamports) */
   amount: string;
+  /** Wallet address that would fill the order (required by 0x v2 quotes) */
+  taker?: string;
   /** Slippage tolerance in bps (e.g. 50 = 0.5%) */
   slippageBps?: number;
   /** Trade type */
@@ -171,21 +173,36 @@ export class TradingEngine {
     };
   }
 
-  /** 0x/1inch quote for EVM chains */
+  /** 0x Swap API v2 quote for EVM chains (Permit2 flow) */
   private async getEvmQuote(params: TradeParams, config: ChainConfig, fee: string): Promise<TradeQuote> {
-    const url = new URL(`${config.dexApiUrl}/swap/quote`);
+    const NATIVE_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const resolveToken = (t: string) => {
+      if (t.toUpperCase() === "USDC") return config.usdcAddress;
+      // Native gas token: accept the symbol or the all-zero placeholder and
+      // use 0x's native sentinel address.
+      if (t.toUpperCase() === config.nativeCurrency.toUpperCase() || /^0x0{40}$/i.test(t)) return NATIVE_SENTINEL;
+      return t;
+    };
+    const url = new URL(`${config.dexApiUrl}/swap/permit2/quote`);
     url.searchParams.set("chainId", String(config.chainId));
-    url.searchParams.set("sellToken", params.sellToken);
-    url.searchParams.set("buyToken", params.buyToken);
+    url.searchParams.set("sellToken", resolveToken(params.sellToken));
+    url.searchParams.set("buyToken", resolveToken(params.buyToken));
     url.searchParams.set("sellAmount", params.amount);
+    if (params.taker) url.searchParams.set("taker", params.taker);
+    url.searchParams.set("slippageBps", String(params.slippageBps ?? 100));
 
     const res = await fetch(url.toString(), {
       headers: { "0x-version": "v2", "0x-api-key": process.env.ZERO_X_API_KEY ?? "" },
     });
-    if (!res.ok) throw new Error(`0x quote failed: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`0x quote failed: ${res.status} ${body.slice(0, 200)}`);
+    }
     const data = await res.json() as {
-      buyAmount: string; priceImpactPercentage: string;
-      gas: string; sources: { name: string }[];
+      buyAmount: string; minBuyAmount?: string;
+      issues?: { priceImpact?: unknown };
+      transaction?: { to: string; data: string; value: string; gas?: string; gasPrice?: string };
+      route?: { fills: { tool: { name: string } }[] };
     };
 
     return {
@@ -195,12 +212,13 @@ export class TradingEngine {
       buyToken: params.buyToken,
       sellAmount: params.amount,
       buyAmount: data.buyAmount,
-      priceImpact: data.priceImpactPercentage ?? "0",
+      priceImpact: "0",
       feeUsdc: fee,
-      gasEstimate: data.gas,
-      route: data.sources?.map((s) => s.name).join(" → ") ?? config.dexAggregator,
+      gasEstimate: data.transaction?.gas ?? "0",
+      route: data.route?.fills?.map((f) => f.tool?.name).filter(Boolean).join(" → ") || config.dexAggregator,
       aggregator: config.dexAggregator,
       expiresAt: Date.now() + 60_000,
+      raw: data, // full v2 quote — carries the Permit2 transaction for execution
     };
   }
 
