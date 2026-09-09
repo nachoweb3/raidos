@@ -81,6 +81,18 @@ export const SocialEngine = {
   openCopyModal(trader) {
     const nameEl = document.getElementById("copyTraderName");
     if (nameEl) nameEl.textContent = trader.displayName + " (" + trader.handle + ")";
+    // Remember which trader the modal is configuring (read by App.saveCopySettings)
+    if (window.App) window.App._copyTrader = { handle: trader.handle, userId: trader.userId ?? null };
+    // Pre-fill from previously saved preferences
+    try {
+      const saved = JSON.parse(localStorage.getItem("trenches_copy_settings") || "null");
+      if (saved) {
+        const maxEl = document.getElementById("copyMaxAmount");
+        const slipEl = document.getElementById("copySlippage");
+        if (maxEl && Number.isFinite(saved.maxAmountUsdc)) maxEl.value = saved.maxAmountUsdc;
+        if (slipEl && Number.isFinite(saved.slippagePct)) slipEl.value = saved.slippagePct;
+      }
+    } catch {}
     const modal = document.getElementById("copyTradeModal");
     if (modal) modal.classList.add("active");
   },

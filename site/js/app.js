@@ -251,6 +251,23 @@ export const App = {
     if (modal) modal.classList.remove("active");
   },
 
+  /** Persist copy-trade preferences locally. Execution is not active in beta. */
+  saveCopySettings() {
+    const max = parseFloat(document.getElementById("copyMaxAmount")?.value);
+    const slip = parseFloat(document.getElementById("copySlippage")?.value);
+    const settings = {
+      trader: this._copyTrader || null,
+      maxAmountUsdc: Number.isFinite(max) && max > 0 ? max : 100,
+      slippagePct: Number.isFinite(slip) && slip >= 0 && slip <= 50 ? slip : 0.5,
+      savedAt: Date.now(),
+    };
+    try {
+      localStorage.setItem("trenches_copy_settings", JSON.stringify(settings));
+    } catch {}
+    this.closeCopyModal();
+    alert("Configuración guardada. La ejecución automática estará disponible próximamente.");
+  },
+
   // Wallet connection methods
   async connectPhantom() {
     if (window.solana && window.solana.isPhantom) {

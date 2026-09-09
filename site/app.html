@@ -594,12 +594,25 @@
       <div style="display:flex; flex-direction:column; gap:12px; font-size:12px">
         <div>
           <label style="color:var(--text-tertiary)">Monto máximo por operación (USDC)</label>
-          <input type="number" value="100" style="width:100%; margin-top:4px">
+          <input type="number" id="copyMaxAmount" value="100" min="1" style="width:100%; margin-top:4px">
         </div>
         <div>
-          <label style="color:var(--text-tertiary)">Slippage Máximo</label>
-          <input type="text" value="0.5%" style="width:100%; margin-top:4px">
+          <label style="color:var(--text-tertiary)">Slippage Máximo (%)</label>
+          <input type="text" id="copySlippage" value="0.5" style="width:100%; margin-top:4px">
         </div>
+      </div>
+
+      <div style="margin-top:16px; padding:10px 12px; border:1px solid rgba(249,228,91,.25); background:rgba(249,228,91,.06); border-radius:var(--radius-sm); font-size:11px; color:var(--yellow, #f9e45b); line-height:1.5">
+        ⚠️ Beta: tu configuración se guarda, pero la ejecución automática de operaciones copiadas aún no está activa.
+      </div>
+
+      <div style="display:flex; gap:10px; margin-top:18px">
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="window.App.saveCopySettings()">Guardar configuración</button>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeCopyModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 6. Quick Asset Detail & Swap Bottom Sheet -->
   <div class="modal-backdrop" id="assetPreviewModal">
     <div class="modal-window" style="padding:24px">
