@@ -6,5 +6,8 @@ export default defineConfig({
     environment: "node",
     hookTimeout: 30_000,
     testTimeout: 30_000,
+    // vm.SourceTextModule (used by tests/site-modules.test.ts) requires this flag.
+    pool: "forks",
+    poolOptions: { forks: { execArgv: ["--experimental-vm-modules"] } },
   },
 });
