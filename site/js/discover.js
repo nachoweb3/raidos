@@ -122,6 +122,7 @@ export const DiscoverEngine = {
   activeChain: "all",
   searchQuery: "",
   tokens: [],
+  serverResults: null,
   watchlist: new Set(JSON.parse(localStorage.getItem("trenches_watchlist") || '["SOL","BRETT","VIRTUAL"]')),
 
   async init(containerElement) {
@@ -241,6 +242,30 @@ export const DiscoverEngine = {
   setSearch(query) {
     this.searchQuery = query.toLowerCase().trim();
     this.render();
+    this.scheduleServerSearch();
+  },
+
+  /** Debounced server-wide search: launches + traders beyond the static universe. */
+  scheduleServerSearch() {
+    if (this._searchTimer) clearTimeout(this._searchTimer);
+    if (this.searchQuery.length < 2) {
+      this.serverResults = null;
+      return;
+    }
+    this._searchTimer = setTimeout(async () => {
+      const seq = (this._searchSeq = (this._searchSeq || 0) + 1);
+      try {
+        const data = await ApiClient.search(this.searchQuery, 5);
+        if (seq !== this._searchSeq) return; // stale response
+        this.serverResults = {
+          launches: data?.tokens ?? [],
+          users: data?.users ?? [],
+        };
+      } catch {
+        if (seq === this._searchSeq) this.serverResults = null;
+      }
+      this.render();
+    }, 300);
   },
 
   toggleWatchlist(symbol) {
@@ -301,7 +326,7 @@ export const DiscoverEngine = {
       list = list.sort((a, b) => b.eliteScore - a.eliteScore);
     }
 
-    if (list.length === 0) {
+    if (list.length === 0 && !this.hasServerResults()) {
       this.container.innerHTML = `
         <div style="padding:40px; text-align:center; color:var(--text-tertiary)">
           No se encontraron activos para los filtros seleccionados.
@@ -310,7 +335,72 @@ export const DiscoverEngine = {
       return;
     }
 
-    this.container.innerHTML = list.map((t) => this.renderTokenRow(t)).join("");
+    this.container.innerHTML =
+      list.map((t) => this.renderTokenRow(t)).join("") + this.renderServerResults();
+  },
+
+  hasServerResults() {
+    const r = this.serverResults;
+    return !!(r && (r.launches.length || r.users.length));
+  },
+
+  /** Server-wide matches (launchpad tokens + registered traders) for the active query. */
+  renderServerResults() {
+    if (!this.searchQuery || this.searchQuery.length < 2) return "";
+    const r = this.serverResults;
+    if (!r) return "";
+    const esc = (s) =>
+      String(s ?? "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[c]);
+    const safe = (s) => String(s ?? "").replace(/[^a-zA-Z0-9_@.\\-]/g, "");
+    let html = "";
+    if (r.launches.length) {
+      html +=
+        `<div style="padding:12px 18px 4px; font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">🚀 Launchpad</div>` +
+        r.launches
+          .map(
+            (l) => `
+        <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${safe(l.symbol)}', '${safe(l.chain)}', 0)" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
+          <div style="display:flex; align-items:center; gap:10px; min-width:0">
+            <div style="width:32px; height:32px; border-radius:var(--radius-sm); background:var(--bg-canvas); display:flex; align-items:center; justify-content:center; font-size:14px">🪙</div>
+            <div style="min-width:0">
+              <div style="font-size:13px; font-weight:700; color:var(--text-primary)">${esc(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${esc(l.symbol)}</span></div>
+              <div style="font-size:10.5px; color:var(--text-tertiary)">Launchpad · ${esc(l.chain)}</div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.MarketsEngine && window.MarketsEngine.viewLaunchpad()">Ver</button>
+        </div>`
+          )
+          .join("");
+    }
+    if (r.users.length) {
+      html +=
+        `<div style="padding:12px 18px 4px; font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">👤 Traders</div>` +
+        r.users
+          .map((u) => {
+            const handle = safe(u.x_handle) || `@trader_${u.user_id}`;
+            const name = esc(u.display_name || handle);
+            return `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle)">
+          <div style="display:flex; align-items:center; gap:10px; min-width:0">
+            <div class="author-avatar" style="width:32px; height:32px; font-size:11px">${esc((u.display_name || handle).replace("@", "").slice(0, 2).toUpperCase())}</div>
+            <div style="min-width:0">
+              <div style="font-size:13px; font-weight:700; color:var(--text-primary)">${name}</div>
+              <div style="font-size:10.5px; color:var(--text-tertiary)">${esc(handle)} · ${Number(u.followers_count ?? 0)} seguidores</div>
+            </div>
+          </div>
+        </div>`;
+          })
+          .join("");
+    }
+    if (!html) {
+      return `
+        <div style="padding:18px; text-align:center; font-size:11.5px; color:var(--text-tertiary)">
+          Sin resultados en launchpad o traders para "${esc(this.searchQuery)}"
+        </div>`;
+    }
+    return html;
   },
 
   renderCategoryCounts() {

@@ -228,6 +228,13 @@ export const MarketsEngine = {
     else this.loadLaunches();
   },
 
+  /** Jump to the launchpad from anywhere (e.g. Discover search results). */
+  viewLaunchpad() {
+    this.subTab = "launchpad";
+    if (window.App?.switchView) window.App.switchView("markets");
+    this.render();
+  },
+
   renderShell() {
     const subtabs = `
       <div class="pill-tabs-bar" style="margin-bottom:16px">
