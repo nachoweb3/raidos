@@ -27,6 +27,10 @@ export const ApiClient = {
     else localStorage.removeItem("raidos_key");
   },
 
+  isAuthenticated() {
+    return Boolean(this.getApiKey());
+  },
+
   isBetaUnlocked() {
     return sessionStorage.getItem("trenches_beta_unlocked") === "1" || Boolean(this.getApiKey());
   },
