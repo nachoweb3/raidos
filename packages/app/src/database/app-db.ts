@@ -267,6 +267,55 @@ export class AppDb {
         PRIMARY KEY (period, user_id)
       );
     `);
+
+    // ── Incremental migrations (idempotent, for existing databases) ──
+    // Launchpad social links (Discover advanced filters + market cards).
+    for (const col of ["twitter_url", "telegram_url", "website_url"]) {
+      const has = this.db.prepare("SELECT 1 FROM pragma_table_info('launches') WHERE name = ?").get(col);
+      if (!has) this.db.exec(`ALTER TABLE launches ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+    }
+    // Advanced profile: social links JSON ({twitter, telegram, website, discord}).
+    const hasSocial = this.db.prepare("SELECT 1 FROM pragma_table_info('profiles') WHERE name = 'social_links'").get();
+    if (!hasSocial) this.db.exec("ALTER TABLE profiles ADD COLUMN social_links TEXT NOT NULL DEFAULT '{}'");
+
+    // ── Rewards program (fee-funded trading + referral rewards) ──
+    this.db.exec(`
+      -- Central, admin-editable config. Single row per key; typed accessors below.
+      CREATE TABLE IF NOT EXISTS rewards_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      -- Immutable rewards ledger. UNIQUE(trade_id, reward_type, user_id) makes
+      -- accrual idempotent: retries/duplicated events can never double-pay.
+      CREATE TABLE IF NOT EXISTS rewards_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        reward_type TEXT NOT NULL,            -- TRADING | REFERRAL | BONUS | ADJUSTMENT
+        source TEXT NOT NULL DEFAULT '',      -- 'trade' | 'referral' | 'admin'
+        amount_usdc TEXT NOT NULL,            -- micro-USDC, always >= 0
+        currency TEXT NOT NULL DEFAULT 'USDC',
+        status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING | AVAILABLE | CLAIMED | CANCELLED
+        trade_id INTEGER,
+        referral_id INTEGER,
+        tx_hash TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        claimed_at INTEGER,
+        UNIQUE(trade_id, reward_type, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_rewards_user ON rewards_ledger(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_rewards_status ON rewards_ledger(status);
+
+      -- Anti-fraud account state. NORMAL accrues normally; REVIEW keeps rewards
+      -- PENDING; BLOCKED cannot accrue or claim.
+      CREATE TABLE IF NOT EXISTS rewards_flags (
+        user_id INTEGER PRIMARY KEY,
+        flag TEXT NOT NULL DEFAULT 'NORMAL',  -- NORMAL | REVIEW | BLOCKED
+        reason TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
+    `);
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
@@ -299,6 +348,21 @@ export class AppDb {
     return this.db.prepare(
       "SELECT user_id, ref_code, created_at FROM users WHERE referred_by = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
     ).all(userId, limit, offset) as any[];
+  }
+
+  /** Referred users joined with their confirmed trade volume (for rewards dashboards). */
+  referralVolumes(referrerId: number, limit = 200) {
+    return this.db
+      .prepare(
+        `SELECT u.user_id AS user_id, u.ref_code AS ref_code, u.created_at AS created_at,
+                COALESCE(SUM(CAST(t.sell_amount AS INTEGER)), 0) AS volume_usdc,
+                COUNT(t.id) AS trades
+         FROM users u
+         LEFT JOIN trades t ON t.user_id = u.user_id AND t.status = 'confirmed'
+         WHERE u.referred_by = ?
+         GROUP BY u.user_id ORDER BY u.created_at DESC LIMIT ?`
+      )
+      .all(referrerId, limit) as any[];
   }
 
   countReferrals(userId: number): number {
@@ -450,12 +514,12 @@ export class AppDb {
       const vals = [userId, Math.floor(Date.now() / 1000), ...Object.values(updates)];
       const placeholders = cols.map(() => "?").join(", ");
       // Map camelCase keys to snake_case DB columns
-      const colMap: Record<string, string> = { xHandle: 'x_handle', displayName: 'display_name', avatarUrl: 'avatar_url', followersCount: 'followers_count', followingCount: 'following_count', totalPnlUsdc: 'total_pnl_usdc', winRate: 'win_rate', totalTrades: 'total_trades', totalCalls: 'total_calls', copyTradeFollowers: 'copy_trade_followers', joinedAt: 'joined_at' };
+      const colMap: Record<string, string> = { xHandle: 'x_handle', displayName: 'display_name', avatarUrl: 'avatar_url', followersCount: 'followers_count', followingCount: 'following_count', totalPnlUsdc: 'total_pnl_usdc', winRate: 'win_rate', totalTrades: 'total_trades', totalCalls: 'total_calls', copyTradeFollowers: 'copy_trade_followers', socialLinks: 'social_links', joinedAt: 'joined_at' };
       const dbCols = cols.map((c) => colMap[c] ?? c);
       const placeholders2 = dbCols.map(() => "?").join(", ");
       this.db.prepare(`INSERT INTO profiles (${dbCols.join(", ")}) VALUES (${placeholders2})`).run(...vals);
     } else {
-      const colMap2: Record<string, string> = { xHandle: 'x_handle', displayName: 'display_name', avatarUrl: 'avatar_url', followersCount: 'followers_count', followingCount: 'following_count', totalPnlUsdc: 'total_pnl_usdc', winRate: 'win_rate', totalTrades: 'total_trades', totalCalls: 'total_calls', copyTradeFollowers: 'copy_trade_followers', joinedAt: 'joined_at' };
+      const colMap2: Record<string, string> = { xHandle: 'x_handle', displayName: 'display_name', avatarUrl: 'avatar_url', followersCount: 'followers_count', followingCount: 'following_count', totalPnlUsdc: 'total_pnl_usdc', winRate: 'win_rate', totalTrades: 'total_trades', totalCalls: 'total_calls', copyTradeFollowers: 'copy_trade_followers', socialLinks: 'social_links', joinedAt: 'joined_at' };
       const sets = Object.keys(updates).map((k) => `${colMap2[k] ?? k} = ?`).join(", ");
       const vals = Object.values(updates);
       this.db.prepare(`UPDATE profiles SET ${sets} WHERE user_id = ?`).run(...vals, userId);
@@ -839,6 +903,137 @@ export class AppDb {
     this.db.prepare(
       "INSERT INTO copy_settings (user_id, max_per_trade_usdc, max_total_usdc, enabled, chains) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET max_per_trade_usdc = excluded.max_per_trade_usdc, max_total_usdc = excluded.max_total_usdc, enabled = excluded.enabled, chains = excluded.chains"
     ).run(userId, settings.maxPerTradeUsdc, settings.maxTotalUsdc, settings.enabled ? 1 : 0, JSON.stringify(settings.chains));
+  }
+
+  // ── Rewards program ─────────────────────────────────────────────────
+
+  /** Read a rewards config value (string) or the given default. */
+  getRewardsConfig(key: string, fallback: string): string {
+    const row = this.db.prepare("SELECT value FROM rewards_config WHERE key = ?").get(key) as any;
+    return row?.value ?? fallback;
+  }
+
+  setRewardsConfig(key: string, value: string): void {
+    this.db.prepare(
+      "INSERT INTO rewards_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    ).run(key, value, Math.floor(Date.now() / 1000));
+  }
+
+  getAllRewardsConfig(): Record<string, string> {
+    const rows = this.db.prepare("SELECT key, value FROM rewards_config").all() as any[];
+    const out: Record<string, string> = {};
+    for (const r of rows) out[r.key] = r.value;
+    return out;
+  }
+
+  getRewardFlag(userId: number): { flag: string; reason: string } {
+    const row = this.db.prepare("SELECT flag, reason FROM rewards_flags WHERE user_id = ?").get(userId) as any;
+    return { flag: row?.flag ?? "NORMAL", reason: row?.reason ?? "" };
+  }
+
+  setRewardFlag(userId: number, flag: string, reason = ""): void {
+    this.db.prepare(
+      "INSERT INTO rewards_flags (user_id, flag, reason, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET flag = excluded.flag, reason = excluded.reason, updated_at = excluded.updated_at"
+    ).run(userId, flag, reason, Math.floor(Date.now() / 1000));
+  }
+
+  /**
+   * Append a ledger entry. Returns the row id, or null when the UNIQUE
+   * constraint fired (idempotency: this trade+type+user was already paid).
+   */
+  addRewardEntry(entry: {
+    user_id: number;
+    reward_type: string;
+    source: string;
+    amount_usdc: string;
+    status: string;
+    trade_id: number | null;
+    referral_id: number | null;
+  }): number | null {
+    try {
+      const info = this.db
+        .prepare(
+          "INSERT INTO rewards_ledger (user_id, reward_type, source, amount_usdc, currency, status, trade_id, referral_id, created_at) VALUES (?, ?, ?, ?, 'USDC', ?, ?, ?, ?)"
+        )
+        .run(entry.user_id, entry.reward_type, entry.source, entry.amount_usdc, entry.status, entry.trade_id, entry.referral_id, Math.floor(Date.now() / 1000));
+      return Number(info.lastInsertRowid);
+    } catch (err: any) {
+      if (String(err?.code ?? "").startsWith("SQLITE_CONSTRAINT")) return null; // already paid
+      throw err;
+    }
+  }
+
+  getRewardEntries(userId: number, limit = 100, offset = 0) {
+    return this.db
+      .prepare("SELECT * FROM rewards_ledger WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+      .all(userId, limit, offset) as any[];
+  }
+
+  /** Sum of ledger amounts (micro-USDC) per status for one user. */
+  sumRewardsByStatus(userId: number): { PENDING: bigint; AVAILABLE: bigint; CLAIMED: bigint } {
+    const rows = this.db
+      .prepare("SELECT status, SUM(CAST(amount_usdc AS INTEGER)) AS total FROM rewards_ledger WHERE user_id = ? GROUP BY status")
+      .all(userId) as any[];
+    const out = { PENDING: 0n, AVAILABLE: 0n, CLAIMED: 0n };
+    for (const r of rows) {
+      const v = BigInt(r.total ?? 0);
+      if (r.status === "PENDING") out.PENDING += v;
+      else if (r.status === "AVAILABLE") out.AVAILABLE += v;
+      else if (r.status === "CLAIMED") out.CLAIMED += v;
+    }
+    return out;
+  }
+
+  sumRewardsSince(userId: number, sinceTs: number): bigint {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)), 0) AS total FROM rewards_ledger WHERE user_id = ? AND created_at >= ? AND status != 'CANCELLED'")
+      .get(userId, sinceTs) as any;
+    return BigInt(row?.total ?? 0);
+  }
+
+  /** Promote AVAILABLE (and optionally PENDING) rewards for a user → CLAIMED with tx hash. */
+  markRewardsClaimed(userId: number, txHash: string): bigint {
+    const now = Math.floor(Date.now() / 1000);
+    const sumRow = this.db
+      .prepare("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)), 0) AS total FROM rewards_ledger WHERE user_id = ? AND status = 'AVAILABLE'")
+      .get(userId) as any;
+    const total = BigInt(sumRow?.total ?? 0);
+    if (total > 0n) {
+      this.db
+        .prepare("UPDATE rewards_ledger SET status = 'CLAIMED', tx_hash = ?, claimed_at = ? WHERE user_id = ? AND status = 'AVAILABLE'")
+        .run(txHash, now, userId);
+    }
+    return total;
+  }
+
+  /** Global leaderboard by reward earnings since a timestamp (0 = all time). */
+  topRewardEarners(sinceTs: number, limit = 20) {
+    return this.db
+      .prepare(
+        `SELECT l.user_id AS user_id, SUM(CAST(l.amount_usdc AS INTEGER)) AS total, COUNT(*) AS entries
+         FROM rewards_ledger l
+         WHERE l.status != 'CANCELLED' AND l.created_at >= ?
+         GROUP BY l.user_id ORDER BY total DESC LIMIT ?`
+      )
+      .all(sinceTs, limit) as any[];
+  }
+
+  /** Program-wide metrics (admin + dashboards). */
+  rewardsMetrics() {
+    const one = (sql: string): bigint => {
+      const row = this.db.prepare(sql).get() as any;
+      return BigInt(row?.total ?? 0);
+    };
+    return {
+      totalFeesUsdc: one("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)),0) AS total FROM revenue_events WHERE stream IN ('trading_fee','bridge_fee')"),
+      totalTradingRewards: one("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)),0) AS total FROM rewards_ledger WHERE reward_type = 'TRADING' AND status != 'CANCELLED'"),
+      totalReferralRewards: one("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)),0) AS total FROM rewards_ledger WHERE reward_type = 'REFERRAL' AND status != 'CANCELLED'"),
+      totalClaimed: one("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)),0) AS total FROM rewards_ledger WHERE status = 'CLAIMED'"),
+      totalPending: one("SELECT COALESCE(SUM(CAST(amount_usdc AS INTEGER)),0) AS total FROM rewards_ledger WHERE status = 'PENDING'"),
+      referralVolumeUsdc: one(
+        "SELECT COALESCE(SUM(CAST(t.sell_amount AS INTEGER)),0) AS total FROM trades t JOIN users u ON u.user_id = t.user_id WHERE u.referred_by IS NOT NULL AND t.status = 'confirmed'"
+      ),
+    };
   }
 
   close(): void {

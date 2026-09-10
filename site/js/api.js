@@ -86,13 +86,17 @@ export const ApiClient = {
   },
 
   async loginWallet(chain, address, message, signature, nonce) {
+    // Referral attribution: ?ref=CODE captured on landing is attached to the
+    // FIRST wallet login (server binds referred_by once, immutably).
+    const refCode = sessionStorage.getItem("trenches_ref") || undefined;
     const data = await this.request("/api/auth/wallet", {
       method: "POST",
-      body: JSON.stringify({ chain, address, message, signature, nonce }),
+      body: JSON.stringify({ chain, address, message, signature, nonce, ref: refCode }),
     });
     if (data.apiKey) {
       this.setApiKey(data.apiKey);
       this.unlockBeta();
+      sessionStorage.removeItem("trenches_ref");
     }
     return data;
   },
@@ -193,12 +197,39 @@ export const ApiClient = {
     });
   },
 
-  async deleteWallet(walletId) {
-    return this.request(`/api/wallets/${walletId}`, { method: "DELETE" });
+  async deleteWallet(walletId, password) {
+    return this.request(`/api/wallets/${walletId}`, {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    });
   },
 
   async search(query, limit = 10) {
     return this.request(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  },
+
+  /** Launchpad token metadata (names + logos) by symbol. */
+  async getTokenMeta(symbols) {
+    const q = Array.isArray(symbols) && symbols.length ? `?symbols=${encodeURIComponent(symbols.join(","))}` : "";
+    return this.request(`/api/tokens/meta${q}`);
+  },
+
+  /** Full portfolio snapshot: PnL + per-token holdings in one call. */
+  async getPortfolio() {
+    return this.request("/api/portfolio");
+  },
+
+  // ── Advanced user profile (photo, bio, socials, name) ──
+  async getMyProfile() {
+    return this.request("/api/me/profile");
+  },
+
+  /** PATCH-style update (Router has no PATCH → POST). Send only changed fields. */
+  async updateMyProfile(patch) {
+    return this.request("/api/me/profile", {
+      method: "POST",
+      body: JSON.stringify(patch ?? {}),
+    });
   },
 
   // ── Prediction markets (Polymarket) ──

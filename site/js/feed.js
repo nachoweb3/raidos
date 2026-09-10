@@ -8,6 +8,7 @@
 import { ApiClient, API_BASE } from "./api.js";
 import { EliteScoreEngine } from "./intelligence.js";
 import { PriceFeed } from "./discover.js";
+import { TokenMeta } from "./tokens.js";
 
 /**
  * Resolve a ticker symbol to a real price row from PriceFeed, falling back to
@@ -68,6 +69,7 @@ export const FeedEngine = {
       const token = resolveToken(symbol);
 
       const isUp = token.delta >= 0;
+      const logo = TokenMeta.logoHtml(token.symbol, { size: 18 });
       const formattedPrice =
         token.price > 0 && token.price < 0.01
           ? token.price.toFixed(6)
@@ -78,6 +80,7 @@ export const FeedEngine = {
 
       return `
         <span class="asset-pill" onclick="if(window.openAssetPreview){ window.openAssetPreview({ symbol: '${token.symbol}', chain: '${token.chain}', price: ${token.price}, delta: ${token.delta}, score: ${token.score} }); } else { window.App.openTradeForToken('${token.symbol}', '${token.chain}', ${token.price}); }" title="Click para ver gráfico y operar $${token.symbol}">
+          ${logo}
           <span class="pill-sym">$${token.symbol}</span>
           <span class="pill-price">$${formattedPrice}</span>
           <span class="pill-delta ${isUp ? 'up' : 'down'}">${deltaText}</span>
@@ -271,7 +274,7 @@ export const FeedEngine = {
       const isLong = p.direction === "LONG";
       thesisBadge = `
         <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-md); font-family:var(--font-mono); font-size:11px">
-          <span style="font-weight:800; color:${isLong ? "var(--delta-green)" : "var(--delta-red)"}">${esc(p.direction)} $${esc(p.token)}</span>
+          <span style="display:inline-flex; align-items:center; gap:6px; font-weight:800; color:${isLong ? "var(--delta-green)" : "var(--delta-red)"}">${TokenMeta.logoHtml(p.token, { size: 16 })} ${esc(p.direction)} $${esc(p.token)}</span>
           ${p.entryPrice ? `<span>Entry: <strong>${esc(p.entryPrice)}</strong></span>` : ""}
           ${p.targetPrice ? `<span>TP: <strong style="color:var(--delta-green)">${esc(p.targetPrice)}</strong></span>` : ""}
           ${p.stopLoss ? `<span>SL: <strong style="color:var(--delta-red)">${esc(p.stopLoss)}</strong></span>` : ""}
@@ -288,7 +291,9 @@ export const FeedEngine = {
       <article class="post-card glass-panel-interactive" style="padding:18px; border-bottom:1px solid var(--border-subtle); margin-bottom:12px; border-radius:var(--radius-lg)">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
           <div style="display:flex; align-items:center; gap:10px">
-            <div class="author-avatar" style="width:36px; height:36px; font-size:13px">${esc(p.author.avatar)}</div>
+            ${p.token && p.type !== "thesis" && p.type !== "post"
+              ? TokenMeta.logoHtml(p.token, { size: 36 })
+              : `<div class="author-avatar" style="width:36px; height:36px; font-size:13px">${esc(p.author.avatar)}</div>`}
             <div>
               <div style="display:flex; align-items:center; gap:6px">
                 <span style="font-weight:700; font-size:14px; color:#fff">${esc(p.author.name)}</span>

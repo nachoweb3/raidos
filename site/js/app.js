@@ -9,14 +9,21 @@ import { DiscoverEngine } from "./discover.js";
 import { TradingEngine } from "./trading.js";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
+import { TrenchesEngine } from "./trenches.js";
+import { RewardsEngine } from "./rewards.js";
 import { PremiumEngine } from "./premium.js";
 import { MarketsEngine } from "./markets.js";
+import { TokenMeta } from "./tokens.js";
 
 export const App = {
   currentView: "feed",
   user: null,
 
   async init() {
+    // 0. Referral attribution: capture ?ref=CODE from the link before anything.
+    const refParam = new URLSearchParams(location.search).get("ref");
+    if (refParam) sessionStorage.setItem("trenches_ref", refParam.trim().slice(0, 40));
+
     // 1. Closed Beta Access Gate Check
     if (!ApiClient.isBetaUnlocked()) {
       // If user came without unlocking, prompt access code modal
@@ -41,9 +48,12 @@ export const App = {
     safeInit("Portfolio", () => PortfolioEngine.init());
     safeInit("Premium", () => PremiumEngine.load());
     safeInit("Markets", () => MarketsEngine.init(document.getElementById("marketsContainer")));
+    safeInit("Rewards", () => RewardsEngine.init(document.getElementById("rewardsRoot")));
+    safeInit("Trenches", () => TrenchesEngine.init());
 
     // 4. Check Auth State (401 is expected for gate-unlocked users without a key)
     safeInit("Auth", () => this.checkUserAuth());
+    safeInit("TokenMeta", () => this.loadTokenMeta());
 
     // 5. Start background real-data refresh loops
     this.startRealDataLoops();
@@ -69,6 +79,7 @@ export const App = {
             .map(
               (t) => `
             <div class="asset-pill" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})">
+              ${TokenMeta.logoHtml(t.symbol, { size: 18 })}
               <span class="pill-sym">$${t.symbol}</span>
               <span class="pill-price">$${t.price < 0.01 ? t.price.toFixed(6) : t.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
               <span class="pill-delta ${t.delta24h >= 0 ? "up" : "down"}">${t.delta24h >= 0 ? "+" : ""}${t.delta24h.toFixed(1)}%</span>
@@ -177,6 +188,7 @@ export const App = {
     if (viewName === "trade") {
       setTimeout(() => {
         TradingEngine.initChart();
+        TrenchesEngine.init();
       }, 50);
     } else if (viewName === "discover") {
       DiscoverEngine.render();
@@ -184,6 +196,8 @@ export const App = {
       SocialEngine.render();
     } else if (viewName === "profile") {
       PortfolioEngine.load();
+    } else if (viewName === "rewards") {
+      RewardsEngine.load();
     } else if (viewName === "markets") {
       MarketsEngine.render();
     }
@@ -192,6 +206,17 @@ export const App = {
   openTradeForToken(symbol, chain, price) {
     TradingEngine.setAsset(symbol, chain, price);
     this.switchView("trade");
+    // Reflect the selection in the Trenches board when it loads.
+    setTimeout(() => TrenchesEngine.init(), 80);
+  },
+
+  /** Kick off shared token metadata (launchpad names/logos) once at startup. */
+  async loadTokenMeta() {
+    await TokenMeta.ensureServerMeta();
+    // Re-render surfaces that already rendered before meta arrived.
+    try { DiscoverEngine.render(); } catch {}
+    try { FeedEngine.render(); } catch {}
+    try { TradingEngine.updateTokenDisplay(); } catch {}
   },
 
   async checkUserAuth() {
@@ -359,6 +384,10 @@ window.TradingEngine = TradingEngine;
 window.DiscoverEngine = DiscoverEngine;
 window.FeedEngine = FeedEngine;
 window.SocialEngine = SocialEngine;
+window.PortfolioEngine = PortfolioEngine;
+window.MarketsEngine = MarketsEngine;
+window.TrenchesEngine = TrenchesEngine;
+window.RewardsEngine = RewardsEngine;
 
 document.addEventListener("DOMContentLoaded", () => {
   App.init();

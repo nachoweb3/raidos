@@ -7,6 +7,7 @@
  */
 
 import { ApiClient } from "./api.js";
+import { TokenMeta } from "./tokens.js";
 
 const fmtUsd = (n) =>
   "$" + Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -168,8 +169,15 @@ export const MarketsEngine = {
     const chain = prompt("Cadena (solana, base, ethereum, bsc, arbitrum, polygon, monad, arc, robinhood):", "solana");
     if (!chain) return;
     const description = prompt("Descripción (opcional):") || "";
+    const imageUrl = prompt("URL del logo (opcional, https):", "") || "";
+    const twitterUrl = prompt("X / Twitter (URL opcional, ej: https://x.com/tutoken):", "") || "";
+    const telegramUrl = prompt("Telegram (URL opcional, ej: https://t.me/tutoken):", "") || "";
+    const websiteUrl = prompt("Website (URL opcional):", "") || "";
     try {
-      await ApiClient.createLaunch({ chain: chain.trim().toLowerCase(), name, symbol, description });
+      await ApiClient.createLaunch({
+        chain: chain.trim().toLowerCase(), name, symbol, description, imageUrl,
+        twitterUrl, telegramUrl, websiteUrl,
+      });
       alert("🚀 Lanzamiento creado");
       this.loadLaunches();
     } catch (err) {
@@ -368,14 +376,18 @@ export const MarketsEngine = {
         return `
         <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:10px">
           <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:10px">
-            ${l.imageUrl ? `<img src="${escapeHtml(l.imageUrl)}" alt="" style="width:42px; height:42px; border-radius:var(--radius-sm); object-fit:cover" onerror="this.style.display='none'">` : `<div style="width:42px; height:42px; border-radius:var(--radius-sm); background:var(--bg-canvas); display:flex; align-items:center; justify-content:center; font-size:18px">🪙</div>`}
+            ${TokenMeta.logoHtml(l.symbol, { size: 42, round: false, imageUrl: l.imageUrl })}
             <div style="flex:1; min-width:0">
               <p style="font-size:13.5px; font-weight:700; color:var(--text-primary)">${escapeHtml(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${escapeHtml(l.symbol)}</span></p>
-              <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px">
+              <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap">
                 <span>⛓ ${escapeHtml(l.chain)}</span>
                 <span>📊 $${price > 0 ? price.toPrecision(3) : "0"}</span>
                 <span>💰 MC ${fmtUsd(mcap)}</span>
                 <span>👥 ${l.buyersCount ?? l.buyers_count ?? 0}</span>
+                ${l.status === "graduated" ? '<span title="Graduado a DEX">🎓</span>' : ""}
+                ${l.twitterUrl ? `<a href="${escapeHtml(l.twitterUrl)}" target="_blank" rel="noopener noreferrer" title="X / Twitter" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">𝕏</a>` : ""}
+                ${l.telegramUrl ? `<a href="${escapeHtml(l.telegramUrl)}" target="_blank" rel="noopener noreferrer" title="Telegram" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">✈</a>` : ""}
+                ${l.websiteUrl ? `<a href="${escapeHtml(l.websiteUrl)}" target="_blank" rel="noopener noreferrer" title="Website" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">🌐</a>` : ""}
               </div>
             </div>
             <div style="text-align:right">

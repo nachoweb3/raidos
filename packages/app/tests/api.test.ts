@@ -241,6 +241,40 @@ describe("leaderboard & portfolio", () => {
     expect(r.json.pnl.pnlByToken[MOON]).toBeTruthy();
     expect(Array.isArray(r.json.holdings)).toBe(true);
   });
+
+  it("portfolio holdings carry symbol metadata for ticker swaps and address fallback for mints", async () => {
+    // Ticker swap: UI sends plain "SOL" as buyToken → symbol metadata sticks.
+    const swap = await api(
+      "POST",
+      "/api/trades/execute",
+      { fromChain: "solana", sellToken: USDC, buyToken: "SOL", amount: "5000000", password: "pw123456" },
+      firstUserKey,
+    );
+    expect(swap.status).toBe(200);
+
+    const r = await api("GET", "/api/portfolio", undefined, firstUserKey);
+    expect(r.status).toBe(200);
+    const sol = r.json.holdings.find((h: any) => h.token === "SOL");
+    expect(sol?.symbol).toBe("SOL");
+    expect(sol?.chain).toBe("solana");
+
+    // Mint-address swap (real chain flow): honest address-prefix fallback.
+    const moon = r.json.holdings.find((h: any) => h.token === MOON);
+    expect(moon?.symbol).toBe(MOON.slice(0, 6));
+  });
+
+  it("token meta exposes launchpad symbols with name and image", async () => {
+    // firstUser created a launch in the launchpad describe block; fetch it
+    const launches = await api("GET", "/api/launches?limit=10");
+    expect(launches.status).toBe(200);
+    const sym = launches.json.launches?.[0]?.symbol as string | undefined;
+    if (!sym) return; // no launches created — nothing to assert
+    const r = await api("GET", `/api/tokens/meta?symbols=${encodeURIComponent(sym)}`);
+    expect(r.status).toBe(200);
+    expect(r.json.meta[sym]).toBeTruthy();
+    expect(r.json.meta[sym].name).toBeTruthy();
+    expect(typeof r.json.meta[sym].imageUrl === "string" || r.json.meta[sym].imageUrl === null).toBe(true);
+  });
 });
 
 describe("subscriptions", () => {
@@ -304,14 +338,14 @@ describe("copy-trade settings", () => {
 
 describe("positions, feed & leaderboard periods (fomo-style)", () => {
   it("aggregate a full buy→sell position, emit feed events and close with realized PnL", async () => {
-    const key = firstUserKey;
+    const key = () => firstUserKey;
     // buy 10 USDC of MOON (mock 1:1 → 10_000_000 smallest units)
     const buy = await api("POST", "/api/trades/execute", {
       fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "10000000", password: "pw123456",
-    }, key);
+    }, key());
     expect(buy.status).toBe(200);
 
-    const open = await api("GET", "/api/positions?status=open", undefined, key);
+    const open = await api("GET", "/api/positions?status=open", undefined, key());
     expect(open.status).toBe(200);
     const moonPos = open.json.positions.find((p: any) => p.token === MOON);
     expect(moonPos).toBeTruthy();
@@ -320,10 +354,10 @@ describe("positions, feed & leaderboard periods (fomo-style)", () => {
     // sell everything back to USDC (side=swap token→USDC)
     const sell = await api("POST", "/api/trades/execute", {
       fromChain: "solana", sellToken: MOON, buyToken: USDC, amount: moonPos.amount_remaining, password: "pw123456",
-    }, key);
+    }, key());
     expect(sell.status).toBe(200);
 
-    const after = await api("GET", "/api/positions", undefined, key);
+    const after = await api("GET", "/api/positions", undefined, key());
     const closed = after.json.positions.find((p: any) => p.token === MOON && p.status === "closed");
     expect(closed).toBeTruthy();
     // Mock 1:1 with net-of-fee accounting. Two buys of 10 USDC (fee 0.03 each)
@@ -550,6 +584,103 @@ describe("wallet login (Phantom / MetaMask)", () => {
     expect(r.status).toBe(200);
     expect(r.json).toHaveProperty("google");
     expect(r.json).toHaveProperty("x");
+  });
+});
+
+describe("advanced user profile", () => {
+  // Reuses the first registered user's key (second registrations need a
+  // bootstrap secret this test server doesn't have).
+  const key = () => firstUserKey;
+
+  it("returns an empty default profile with trading stats", async () => {
+    const r = await api("GET", "/api/me/profile", undefined, key());
+    expect(r.status).toBe(200);
+    expect(r.json.profile.displayName).toBe("");
+    expect(r.json.profile.socialLinks).toEqual({});
+    expect(r.json.stats).toHaveProperty("totalPnlUsdc");
+    expect(r.json.stats).toHaveProperty("totalTrades");
+  });
+
+  it("updates name, bio, avatar, handle and socials", async () => {
+    const r = await api(
+      "POST",
+      "/api/me/profile",
+      {
+        displayName: "Nacho",
+        bio: "Degen desde 2017.",
+        avatarUrl: "https://example.com/foto.jpg",
+        xHandle: "@nacho_web3_",
+        socialLinks: { twitter: "https://x.com/nacho_web3_", telegram: "https://t.me/nacho" },
+      },
+      key()
+    );
+    expect(r.status).toBe(200);
+    expect(r.json.profile.displayName).toBe("Nacho");
+    expect(r.json.profile.xHandle).toBe("nacho_web3_"); // @ stripped
+    expect(r.json.profile.avatarUrl).toBe("https://example.com/foto.jpg");
+    expect(r.json.profile.socialLinks.twitter).toBe("https://x.com/nacho_web3_");
+    expect(r.json.profile.socialLinks.telegram).toBe("https://t.me/nacho");
+
+    // Roundtrip
+    const back = await api("GET", "/api/me/profile", undefined, key());
+    expect(back.json.profile.displayName).toBe("Nacho");
+    expect(back.json.profile.socialLinks).toEqual({
+      twitter: "https://x.com/nacho_web3_",
+      telegram: "https://t.me/nacho",
+    });
+  });
+
+  it("rejects invalid socials and avatar", async () => {
+    const bad = await api("POST", "/api/me/profile", { socialLinks: { twitter: "javascript:alert(1)" } }, key());
+    expect(bad.status).toBe(400);
+
+    const badAvatar = await api("POST", "/api/me/profile", { avatarUrl: "http://insecure.com/x.jpg" }, key());
+    expect(badAvatar.status).toBe(400);
+
+    const empty = await api("POST", "/api/me/profile", {}, key());
+    expect(empty.status).toBe(400);
+  });
+
+  it("requires auth", async () => {
+    const r = await api("GET", "/api/me/profile");
+    expect(r.status).toBe(401);
+  });
+
+  it("stores and returns launchpad social links", async () => {
+    const create = await api(
+      "POST",
+      "/api/launches",
+      {
+        chain: "solana",
+        name: "Social Token",
+        symbol: "SOCIAL",
+        twitterUrl: "https://x.com/socialtoken",
+        telegramUrl: "https://t.me/socialtoken",
+        websiteUrl: "https://socialtoken.xyz",
+      },
+      key()
+    );
+    expect(create.status).toBe(201);
+    expect(create.json.launch.twitterUrl).toBe("https://x.com/socialtoken");
+
+    const list = await api("GET", "/api/launches?limit=50");
+    const found = list.json.launches.find((l: any) => l.symbol === "SOCIAL");
+    expect(found).toBeDefined();
+    expect(found.twitterUrl).toBe("https://x.com/socialtoken");
+    expect(found.telegramUrl).toBe("https://t.me/socialtoken");
+    expect(found.websiteUrl).toBe("https://socialtoken.xyz");
+  });
+
+  it("drops non-https launch social links silently", async () => {
+    const create = await api(
+      "POST",
+      "/api/launches",
+      { chain: "solana", name: "Bad Links", symbol: "BADLINK", twitterUrl: "not-a-url", websiteUrl: "https://ok.xyz" },
+      key()
+    );
+    expect(create.status).toBe(201);
+    expect(create.json.launch.twitterUrl).toBe("");
+    expect(create.json.launch.websiteUrl).toBe("https://ok.xyz");
   });
 });
 

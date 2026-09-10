@@ -28,6 +28,7 @@ import { verifyGoogleIdToken, verifyXCode } from "./providers.js";
 import { Router, sendJson, readJsonBody, HttpError, type RequestContext } from "./router.js";
 import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./executors.js";
 import { applySwapToPosition } from "../trading/positions.js";
+import { RewardsEngine } from "../trading/rewards.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
 import { placeClobOrder } from "../market/clob.js";
@@ -59,6 +60,32 @@ const MIME: Record<string, string> = {
   ".map": "application/json",
 };
 
+/**
+ * Canonical on-chain token addresses (verified, well-known mints/contracts)
+ * → display symbol. Used to resolve real tickers when holdings/positions are
+ * keyed by raw address and no position row carries a friendlier symbol.
+ */
+export const WELL_KNOWN_TOKENS: Record<string, { symbol: string; name: string }> = {
+  // Solana
+  EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: { symbol: "USDC", name: "USD Coin" },
+  Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: { symbol: "USDT", name: "Tether USD" },
+  So11111111111111111111111111111111111111112: { symbol: "SOL", name: "Solana (wrapped)" },
+  DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263: { symbol: "BONK", name: "Bonk" },
+  EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm: { symbol: "WIF", name: "dogwifhat" },
+  JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN: { symbol: "JUP", name: "Jupiter" },
+  // Ethereum
+  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": { symbol: "USDC", name: "USD Coin" },
+  "0xdAC17F958D2ee523a2206206994597C13D831ec7": { symbol: "USDT", name: "Tether USD" },
+  "0x6982508145454Ce325dDbE47a25d4ec3d2311933": { symbol: "PEPE", name: "Pepe" },
+  // Base
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913": { symbol: "USDC", name: "USD Coin" },
+  // BSC
+  "0x2170Ed0880ac9A755fd29B2688956BD959F933F8": { symbol: "ETH", name: "Ethereum (BSC)" },
+  "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c": { symbol: "BNB", name: "BNB" },
+  // Polygon
+  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359": { symbol: "USDC", name: "USD Coin" },
+};
+
 export class ApiServer {
   readonly db: AppDb;
   readonly appMode: "live" | "mock";
@@ -69,6 +96,7 @@ export class ApiServer {
   private readonly launchpad: TokenLaunchpad;
   private readonly social: SocialTrading;
   private readonly revenue: RevenueEngine;
+  private readonly rewards: RewardsEngine;
   private readonly history: TradeHistory;
   private readonly router = new Router();
   private readonly siteDir: string | null;
@@ -97,6 +125,7 @@ export class ApiServer {
     this.launchpad = new TokenLaunchpad(this.db);
     this.social = new SocialTrading(this.db);
     this.revenue = new RevenueEngine(this.db);
+    this.rewards = new RewardsEngine(this.db);
     this.history = new TradeHistory(this.db);
 
     this.registerRoutes();
@@ -264,7 +293,9 @@ export class ApiServer {
         displayName = `${address.slice(0, 6)}…${address.slice(-4)}`;
       }
 
-      const login = this.auth.loginWithIdentity(chain, externalId, displayName);
+      // Referral attribution on FIRST wallet login (immutable afterwards).
+      const refRaw = typeof ctx.body?.ref === "string" ? ctx.body.ref.trim() : "";
+      const login = this.auth.loginWithIdentity(chain, externalId, displayName, "", refRaw || undefined);
       sendJson(ctx.res, 200, {
         userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
         provider: chain, displayName, mode: this.appMode,
@@ -305,6 +336,85 @@ export class ApiServer {
       });
     });
 
+    // ── Advanced user profile (photo, bio, socials, name) ──
+    this.router.route("GET", "/api/me/profile", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const row = this.db.getProfile(userId);
+      const socialLinks = parseSocialLinks(row?.social_links);
+      const pnl = this.db.getUserPnl(userId);
+      sendJson(ctx.res, 200, {
+        profile: {
+          userId,
+          displayName: row?.display_name ?? "",
+          bio: row?.bio ?? "",
+          avatarUrl: row?.avatar_url ?? "",
+          xHandle: row?.x_handle ?? "",
+          socialLinks,
+          followersCount: row?.followers_count ?? 0,
+          followingCount: row?.following_count ?? 0,
+          joinedAt: row?.joined_at ?? null,
+        },
+        stats: {
+          totalPnlUsdc: pnl.totalPnlUsdc,
+          winRate: pnl.winRate,
+          totalTrades: pnl.totalTrades,
+          volumeUsdc: pnl.volumeUsdc,
+        },
+        mode: this.appMode,
+      });
+    });
+
+    this.router.route("POST", "/api/me/profile", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const str = (key: string, max: number): string => {
+        const v = ctx.body?.[key];
+        if (v === undefined || v === null) return ""; // absent → no change handled below
+        return String(v).trim().slice(0, max);
+      };
+      const updates: Record<string, string> = {};
+      const displayName = str("displayName", 40);
+      if (displayName !== "") updates.displayName = displayName;
+      const bio = typeof ctx.body?.bio === "string" ? ctx.body.bio.trim().slice(0, 280) : undefined;
+      if (bio !== undefined) updates.bio = bio;
+      const avatarUrl = str("avatarUrl", 300);
+      if (avatarUrl && !/^https:\/\//i.test(avatarUrl)) throw new HttpError(400, "avatarUrl must be an https URL");
+      if (avatarUrl) updates.avatarUrl = avatarUrl;
+      const xHandle = str("xHandle", 30);
+      if (xHandle) updates.xHandle = xHandle.replace(/^@/, "");
+      const socialRaw = ctx.body?.socialLinks;
+      if (socialRaw !== undefined) {
+        if (typeof socialRaw !== "object" || socialRaw === null || Array.isArray(socialRaw)) {
+          throw new HttpError(400, "socialLinks must be an object");
+        }
+        const links: Record<string, string> = {};
+        for (const key of ["twitter", "telegram", "website", "discord"] as const) {
+          const raw = (socialRaw as Record<string, unknown>)[key];
+          if (raw === undefined || raw === null || raw === "") continue;
+          const s = String(raw).trim().slice(0, 300);
+          if (!/^https:\/\/[\w.-]+/i.test(s)) throw new HttpError(400, `socialLinks.${key} must be an https URL`);
+          links[key] = s;
+        }
+        updates.socialLinks = JSON.stringify(links);
+      }
+      if (!Object.keys(updates).length) throw new HttpError(400, "no profile fields to update");
+      this.db.updateProfile(userId, updates);
+      const row = this.db.getProfile(userId);
+      sendJson(ctx.res, 200, {
+        profile: {
+          userId,
+          displayName: row?.display_name ?? "",
+          bio: row?.bio ?? "",
+          avatarUrl: row?.avatar_url ?? "",
+          xHandle: row?.x_handle ?? "",
+          socialLinks: parseSocialLinks(row?.social_links),
+          followersCount: row?.followers_count ?? 0,
+          followingCount: row?.following_count ?? 0,
+          joinedAt: row?.joined_at ?? null,
+        },
+        mode: this.appMode,
+      });
+    });
+
     this.router.route("GET", "/api/me", (ctx) => {
       const userId = this.requireUserId(ctx);
       const user = this.db.getUserById(userId);
@@ -331,6 +441,29 @@ export class ApiServer {
         tokens: this.db.searchLaunches(term, limit).map((l) => this.launchpad.formatLaunchPublic(l)),
         users: this.db.searchUsers(term, limit),
       });
+    });
+
+    // ── Token metadata (public) — name + logo for launchpad tokens by symbol.
+    // The frontend's shared TokenMeta layer consumes this to give every token a
+    // real logo/name; unknown symbols simply won't appear in the response.
+    this.router.publicRoute("GET", "/api/tokens/meta", (ctx) => {
+      const q = (ctx.query.get("symbols") ?? "").toUpperCase();
+      const requested = q.split(",").map((s) => s.trim()).filter(Boolean);
+      const launches = this.db.listAllLaunches(undefined, "latest", 100);
+      const meta: Record<string, { name: string; symbol: string; chain: string; imageUrl: string | null; tokenAddress: string | null }> = {};
+      for (const l of launches) {
+        const sym = (l.symbol ?? "").toUpperCase();
+        if (!sym) continue;
+        if (requested.length > 0 && !requested.includes(sym)) continue;
+        meta[sym] = {
+          name: l.name ?? sym,
+          symbol: sym,
+          chain: l.chain ?? "",
+          imageUrl: l.image_url || null,
+          tokenAddress: l.token_address || null,
+        };
+      }
+      sendJson(ctx.res, 200, { meta, count: Object.keys(meta).length });
     });
 
     // ── Chains (public) ──
@@ -568,6 +701,20 @@ export class ApiServer {
         status: "confirmed", ts: Math.floor(Date.now() / 1000),
       });
 
+      // Rewards: carved out of the REAL fee, only after the trade confirmed.
+      // Idempotent per tradeId — retries can never double-pay.
+      let rewardsInfo: { accrued: boolean; amountUsdc?: string; referralAccrued?: boolean } | null = null;
+      try {
+        rewardsInfo = this.rewards.accrueTradingReward({
+          userId,
+          tradeId,
+          feeUsdc: fee,
+          volumeUsdc: params.amount,
+        });
+      } catch (err) {
+        console.warn("[rewards] accrual failed (trade unaffected):", err);
+      }
+
       // Position aggregation + feed event. USDC appears on exactly one side of
       // every swap (USDC-native routing). Identify it via the chain config's
       // usdcAddress (e.g. EPjFW... on Solana), falling back to a literal "USDC".
@@ -583,10 +730,16 @@ export class ApiServer {
       const tokenAmount = isBuy ? out.buyAmount : params.amount;
       const usdcLeg = isBuy ? params.amount : out.buyAmount;
       const usdcSide = sellTokenIsUsdc ? "sell" : "buy"; // which leg was the USDC
-      this.applyToPosition(userId, params.fromChain, token, usdcSide === "sell" ? "buy" : "sell", tokenAmount, usdcLeg, fee);
+      // Symbol hint: the UI trades plain tickers ("SOL", "BRETT") while real
+      // chain calls pass mints/addresses (long base58/hex). Capture the ticker
+      // so positions, holdings and feed events carry a proper symbol + logo.
+      const looksLikeTicker = /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(token) && !/^0x/i.test(token);
+      const wellKnownHit = WELL_KNOWN_TOKENS[token] ?? WELL_KNOWN_TOKENS[token.toLowerCase()];
+      const symbolHint = looksLikeTicker ? token.toUpperCase() : (wellKnownHit?.symbol ?? "");
+      this.applyToPosition(userId, params.fromChain, token, usdcSide === "sell" ? "buy" : "sell", tokenAmount, usdcLeg, fee, symbolHint);
       this.db.addFeedEvent({
         type: "swap", actor_id: userId, chain: params.fromChain, token,
-        token_symbol: token.slice(0, 6),
+        token_symbol: symbolHint || token.slice(0, 6),
         payload: { side: usdcSide === "sell" ? "buy" : "sell", usdc: usdcLeg, tokens: tokenAmount, txHash: out.txHash },
         ts: Math.floor(Date.now() / 1000),
       });
@@ -595,6 +748,7 @@ export class ApiServer {
         success: true, mode: this.appMode, tradeId, txHash: out.txHash,
         sellAmount: params.amount, buyAmount: out.buyAmount, feeUsdc: fee,
         aggregator: quote.aggregator, route: quote.route,
+        rewards: rewardsInfo,
       });
     });
 
@@ -612,6 +766,12 @@ export class ApiServer {
 
     this.router.route("POST", "/api/launches", async (ctx) => {
       const userId = this.requireUserId(ctx);
+      const sanitizeUrl = (v: unknown): string => {
+        const s = typeof v === "string" ? v.trim() : "";
+        if (!s) return "";
+        if (!/^https:\/\/[\w.-]+/i.test(s)) return ""; // silently drop invalid links
+        return s.slice(0, 300);
+      };
       const launch = await this.launchpad.createLaunch(userId, {
         chain: this.str(ctx, "chain"),
         name: this.str(ctx, "name"),
@@ -619,6 +779,9 @@ export class ApiServer {
         description: this.str(ctx, "description", false),
         imageUrl: this.str(ctx, "imageUrl", false),
         totalSupply: this.str(ctx, "totalSupply", false) || "1000000000000",
+        twitterUrl: sanitizeUrl(ctx.body?.twitterUrl),
+        telegramUrl: sanitizeUrl(ctx.body?.telegramUrl),
+        websiteUrl: sanitizeUrl(ctx.body?.websiteUrl),
       });
       this.revenue.recordLaunchFee(userId, launch.id);
       sendJson(ctx.res, 201, { launch });
@@ -761,10 +924,161 @@ export class ApiServer {
     this.router.route("GET", "/api/portfolio", (ctx) => {
       const userId = this.requireUserId(ctx);
       const pnl = this.db.getUserPnl(userId);
-      const holdings = Object.entries(pnl.pnlByToken).map(([token, v]) => ({
-        token, balance: v.balance, realizedPnlUsdc: v.realizedPnlUsdc,
-      }));
-      sendJson(ctx.res, 200, { pnl, holdings, mode: this.appMode });
+      // Enrich holdings with symbol/chain from the user's positions (pnlByToken
+      // keys are token addresses; positions carry the display metadata).
+      const positions = this.db.getUserPositions(userId, null, 200);
+      const metaByToken = new Map();
+      for (const p of positions) {
+        if (p.token && p.token_symbol) metaByToken.set(p.token, p);
+      }
+      const wellKnownSymbol = (raw: string): string => {
+        const hit = WELL_KNOWN_TOKENS[raw] ?? WELL_KNOWN_TOKENS[raw.toLowerCase()];
+        return hit?.symbol ?? "";
+      };
+      const holdings = Object.entries(pnl.pnlByToken).map(([token, v]) => {
+        const pos = metaByToken.get(token);
+        const posSymbol = pos?.token_symbol || "";
+        // A backend symbol that is just the address prefix is not a symbol.
+        const meaningful = posSymbol && posSymbol.toUpperCase() !== token.slice(0, posSymbol.length).toUpperCase();
+        return {
+          token,
+          symbol: meaningful ? posSymbol.toUpperCase() : wellKnownSymbol(token) || token.slice(0, 6),
+          chain: pos?.chain || "",
+          balance: v.balance,
+          realizedPnlUsdc: v.realizedPnlUsdc,
+        };
+      });
+      sendJson(ctx.res, 200, { pnl, holdings, positions, mode: this.appMode });
+    });
+
+    // ── Rewards (fee-funded trading + referral program) ──
+    this.router.route("GET", "/api/rewards", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const refCode = this.db.getUserById(userId)?.ref_code ?? null;
+      const stats = this.rewards.getStats(userId);
+      const pnl = this.db.getUserPnl(userId);
+      sendJson(ctx.res, 200, {
+        balance: this.rewards.getBalance(userId),
+        stats: { ...stats, myVolumeUsdc: pnl.volumeUsdc, myFeesUsdc: pnl.totalFeesUsdc },
+        flag: this.rewards.getFlag(userId),
+        refCode,
+        mode: this.appMode,
+      });
+    });
+
+    this.router.route("GET", "/api/rewards/balance", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      sendJson(ctx.res, 200, { balance: this.rewards.getBalance(userId), flag: this.rewards.getFlag(userId) });
+    });
+
+    this.router.route("GET", "/api/rewards/stats", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      sendJson(ctx.res, 200, { stats: this.rewards.getStats(userId), program: this.rewards.getProgramMetrics() });
+    });
+
+    this.router.route("GET", "/api/rewards/history", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const entries = this.rewards.getHistory(userId, {
+        type: ctx.query.get("type") ?? undefined,
+        status: ctx.query.get("status") ?? undefined,
+        limit: Math.min(Number(ctx.query.get("limit") ?? 100), 500),
+        offset: Number(ctx.query.get("offset") ?? 0),
+      });
+      sendJson(ctx.res, 200, { entries });
+    });
+
+    this.router.route("POST", "/api/rewards/claim", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      try {
+        const result = this.rewards.claim(userId);
+        sendJson(ctx.res, 200, { ...result, status: "CLAIMED", mode: this.appMode });
+      } catch (err) {
+        throw new HttpError(400, err instanceof Error ? err.message : "claim failed");
+      }
+    });
+
+    this.router.publicRoute("GET", "/api/rewards/leaderboard", (ctx) => {
+      const periodRaw = ctx.query.get("period") ?? "all";
+      const period = (["24h", "7d", "30d", "all"] as const).includes(periodRaw as never) ? (periodRaw as "24h" | "7d" | "30d" | "all") : "all";
+      const rows = this.rewards.getLeaderboard(period, Math.min(Number(ctx.query.get("limit") ?? 20), 100));
+      sendJson(ctx.res, 200, {
+        period,
+        leaders: rows.map((r, i) => ({
+          rank: i + 1,
+          userId: r.user_id,
+          totalUsdc: (Number(BigInt(r.total)) / 1e6).toFixed(2),
+          entries: r.entries,
+        })),
+      });
+    });
+
+    // ── Referrals ──
+    this.router.route("GET", "/api/referrals", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const volumes = this.db.referralVolumes(userId, 200);
+      const user = this.db.getUserById(userId);
+      sendJson(ctx.res, 200, {
+        refCode: user?.ref_code ?? null,
+        referrals: volumes.map((r) => ({
+          userId: r.user_id,
+          joinedAt: r.created_at,
+          volumeUsdc: r.volume_usdc,
+          trades: r.trades,
+          status: Number(r.volume_usdc ?? 0) > 0 ? "active" : "inactive",
+        })),
+      });
+    });
+
+    this.router.route("GET", "/api/referrals/stats", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const s = this.rewards.getStats(userId);
+      sendJson(ctx.res, 200, {
+        total: s.referralsTotal,
+        active: s.referralsActive,
+        inactive: s.referralsInactive,
+        volumeUsdc: s.referralVolumeUsdc,
+        rewardsUsdc: s.referralRewardsUsdc,
+      });
+    });
+
+    this.router.route("GET", "/api/referrals/link", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const user = this.db.getUserById(userId);
+      const code = user?.ref_code ?? null;
+      sendJson(ctx.res, 200, {
+        refCode: code,
+        link: code ? `/join?ref=${code}` : null,
+      });
+    });
+
+    // ── Rewards admin config (protected by ADMIN_SECRET header/body) ──
+    const requireAdmin = (ctx: RequestContext): void => {
+      const secret = process.env.ADMIN_SECRET ?? "";
+      const provided = ctx.req.headers["x-admin-secret"] ?? "";
+      if (!secret || provided !== secret) throw new HttpError(403, "admin secret required");
+    };
+
+    this.router.route("GET", "/api/rewards/config", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      requireAdmin(ctx);
+      sendJson(ctx.res, 200, { config: this.rewards.getConfig(), raw: this.db.getAllRewardsConfig(), metrics: this.rewards.getProgramMetrics() });
+      void userId;
+    });
+
+    this.router.route("POST", "/api/rewards/config", (ctx) => {
+      requireAdmin(ctx);
+      const config = this.rewards.setConfig((ctx.body ?? {}) as Record<string, number | string | boolean>);
+      sendJson(ctx.res, 200, { config });
+    });
+
+    this.router.route("POST", "/api/rewards/flags", (ctx) => {
+      requireAdmin(ctx);
+      const target = Number(ctx.body?.userId);
+      const flag = String(ctx.body?.flag ?? "").toUpperCase();
+      if (!Number.isFinite(target)) throw new HttpError(400, "invalid userId");
+      if (!["NORMAL", "REVIEW", "BLOCKED"].includes(flag)) throw new HttpError(400, "flag must be NORMAL | REVIEW | BLOCKED");
+      this.rewards.setFlag(target, flag as never, String(ctx.body?.reason ?? ""));
+      sendJson(ctx.res, 200, { userId: target, flag, reason: String(ctx.body?.reason ?? "") });
     });
 
     // ── Subscriptions ──
@@ -834,17 +1148,18 @@ export class ApiServer {
   }
 
   /** Aggregate a buy/sell leg into the user's open position and emit close events. */
-  private applyToPosition(userId: number, chain: string, token: string, side: "buy" | "sell", tokenAmount: string, usdcAmount: string, feeUsdc = "0"): void {
+  private applyToPosition(userId: number, chain: string, token: string, side: "buy" | "sell", tokenAmount: string, usdcAmount: string, feeUsdc = "0", symbol = ""): void {
     const existing = this.db.getOpenPosition(userId, chain, token);
     const merged = applySwapToPosition(existing, { side, tokenAmount, usdcAmount, feeUsdc, ts: Math.floor(Date.now() / 1000) });
-    // identity fields must win over merged's placeholders (merged re-derives them)
+    // identity fields must win over merged's placeholders (merged re-derives them);
+    // symbol fills empty metadata (new positions) and backfills legacy empty rows.
     const row = {
       ...merged,
       id: existing?.id,
       user_id: userId,
       chain,
       token,
-      token_symbol: existing?.token_symbol ?? "",
+      token_symbol: existing?.token_symbol || symbol || merged.token_symbol || "",
     };
     this.db.upsertPosition(row);
     if (merged.status === "closed" && merged.realized_pnl_usdc !== null) {
@@ -880,6 +1195,18 @@ export class ApiServer {
 /** Safe JSON.parse for stored payload strings. */
 function safeParse(s: string): unknown {
   try { return JSON.parse(s); } catch { return {}; }
+}
+
+/** Parse a profiles.social_links JSON string into a safe record. */
+function parseSocialLinks(raw: unknown): Record<string, string> {
+  if (typeof raw !== "string" || !raw) return {};
+  const parsed = safeParse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof v === "string" && /^https:\/\//i.test(v)) out[k] = v;
+  }
+  return out;
 }
 
 /** Deterministic offline quote for mock mode (always labeled mock upstream). */

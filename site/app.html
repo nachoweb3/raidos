@@ -137,6 +137,91 @@
       }
     }
 
+    /* ── TRENCHES multi-column terminal ── */
+    .trenches-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 1100px) {
+      .trenches-layout {
+        grid-template-columns: minmax(0, 1fr) 360px;
+      }
+    }
+    .trenches-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 900px) {
+      .trenches-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+    .trenches-col {
+      background: var(--bg-elevated, rgba(255,255,255,0.02));
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      min-height: 420px;
+      max-height: calc(100vh - 210px);
+      overflow: hidden;
+    }
+    .trenches-col-scroll {
+      overflow-y: auto;
+      flex: 1;
+    }
+    .trenches-col-scroll::-webkit-scrollbar { width: 6px; }
+    .trenches-col-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    .trench-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .trench-row:hover { background: rgba(255,255,255,0.045); }
+    .trench-row.selected { background: rgba(255,255,255,0.07); box-shadow: inset 2px 0 0 #fff; }
+    .trench-row img { border-radius: 6px; }
+    .trench-stats {
+      display: flex;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      color: var(--text-tertiary);
+      margin-top: 3px;
+      flex-wrap: wrap;
+    }
+    .trench-stats .up { color: var(--delta-green); }
+    .trench-stats .down { color: var(--delta-red); }
+    .trench-metric {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-align: right;
+      line-height: 1.5;
+    }
+    .trench-buy-btn {
+      border: 1px solid rgba(34,197,94,0.4);
+      color: var(--delta-green);
+      background: rgba(34,197,94,0.08);
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 5px 10px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .trench-buy-btn:hover { background: rgba(34,197,94,0.18); }
+    @keyframes livePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    #trenchesLiveBadge {
+      animation: livePulse 1.6s ease-in-out infinite;
+    }
+
     /* ── Sub-Tab Filter Pills ── */
     .pill-tabs-bar {
       display: flex;
@@ -171,6 +256,12 @@
       color: #000000;
       border-color: #ffffff;
     }
+
+    @keyframes softPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.55; transform: scale(0.94); }
+    }
+    .loading-pulse { animation: softPulse 1.2s ease-in-out infinite; }
   </style>
 </head>
 <body>
@@ -186,9 +277,10 @@
       <nav class="app-nav-desktop desktop-only">
         <button class="nav-tab-btn active" data-nav="feed">Feed</button>
         <button class="nav-tab-btn" data-nav="discover">Discover</button>
-        <button class="nav-tab-btn" data-nav="trade">Trade</button>
+        <button class="nav-tab-btn" data-nav="trade">TRENCHES</button>
         <button class="nav-tab-btn" data-nav="markets">Markets</button>
         <button class="nav-tab-btn" data-nav="leaderboard">Leaderboard</button>
+        <button class="nav-tab-btn" data-nav="rewards">🎁 Rewards</button>
         <button class="nav-tab-btn" data-nav="profile">Portfolio</button>
       </nav>
 
@@ -291,32 +383,105 @@
           <button class="pill-tab" onclick="setDiscoverCategory(this, 'WATCHLIST')">★ WATCHLIST</button>
         </div>
 
+        <!-- Advanced filter chips + panel toggle -->
+        <div style="display:flex; gap:8px; margin:10px 0; flex-wrap:wrap; align-items:center">
+          <button class="pill-tab" id="chipLaunchpad" onclick="window.DiscoverEngine.toggleQuickChip('launchpad', this)">🚀 Launchpad</button>
+          <button class="pill-tab" id="chipGraduated" onclick="window.DiscoverEngine.toggleQuickChip('graduated', this)">🎓 Graduated</button>
+          <button class="pill-tab" id="chipHolded" onclick="window.DiscoverEngine.toggleQuickChip('holded', this)">🐋 Most holded</button>
+          <button class="pill-tab" id="chipNarratives" onclick="window.DiscoverEngine.toggleQuickChip('narratives', this)">🔥 Hot narratives</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.DiscoverEngine.toggleFiltersPanel()" id="filtersToggleBtn" style="margin-left:auto">⚙️ Filtros avanzados</button>
+        </div>
+
+        <div class="glass-panel" id="discoverFiltersPanel" style="display:none; padding:16px 18px; margin-bottom:16px">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px">
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">MCap mín (USD)
+              <input type="number" min="0" id="fMcapMin" placeholder="0" oninput="window.DiscoverEngine.setFilter('mcapMin', this.value)">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">MCap máx (USD)
+              <input type="number" min="0" id="fMcapMax" placeholder="∞" oninput="window.DiscoverEngine.setFilter('mcapMax', this.value)">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Vol 24h mín (USD)
+              <input type="number" min="0" id="fVolMin" placeholder="0" oninput="window.DiscoverEngine.setFilter('volMin', this.value)">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Txns 24h mín
+              <input type="number" min="0" id="fTxnsMin" placeholder="0" oninput="window.DiscoverEngine.setFilter('txnsMin', this.value)">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Liquidez mín (USD)
+              <input type="number" min="0" id="fLiqMin" placeholder="0" oninput="window.DiscoverEngine.setFilter('liqMin', this.value)">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Ordenar por
+              <select id="fSort" onchange="window.DiscoverEngine.setSort(this.value)">
+                <option value="score">⚡ Elite Score</option>
+                <option value="mcap">💰 Market Cap</option>
+                <option value="vol">📊 Volumen 24h</option>
+                <option value="txns">🔁 Txns 24h</option>
+                <option value="liq">💧 Liquidez</option>
+                <option value="change">📈 Cambio 24h</option>
+              </select>
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Narrativa / Sector
+              <select id="fSector" onchange="window.DiscoverEngine.setFilter('sector', this.value)">
+                <option value="">Todos</option>
+                <option>Memecoins</option>
+                <option>AI</option>
+                <option>RWA</option>
+                <option>DeFi</option>
+                <option>Perps</option>
+                <option>L1</option>
+                <option>L2</option>
+                <option>Launchpad</option>
+              </select>
+            </label>
+            <label style="font-size:10.5px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px; justify-content:flex-end; padding-bottom:4px">
+              <input type="checkbox" id="fSocials" onchange="window.DiscoverEngine.setFilter('hasSocials', this.checked)" style="width:16px; height:16px"> Solo con redes
+            </label>
+          </div>
+          <div style="margin-top:12px; display:flex; justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" onclick="window.DiscoverEngine.clearFilters()">✕ Limpiar filtros</button>
+          </div>
+        </div>
+
         <!-- Tokens Table / List -->
         <div class="glass-panel" id="discoverTokensList"></div>
       </section>
 
       <!-- ════ VIEW 3: TRADING TERMINAL ════ -->
       <section id="view-trade" class="view-panel" style="display:none">
-        <!-- Token Header Bar -->
-        <div class="glass-panel" style="padding:16px 20px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px">
-          <div style="display:flex; align-items:center; gap:14px">
-            <div>
-              <h2 id="terminalSymbol" style="font-size:20px; font-weight:800; letter-spacing:-0.03em">SOL / USDC</h2>
-              <div style="display:flex; align-items:center; gap:8px; margin-top:2px">
-                <span class="brand-badge" id="terminalChain">SOLANA</span>
-                <span style="font-size:11px; color:var(--text-tertiary)">Jupiter DEX Routing · Sub-second execution</span>
+        <!-- TRENCHES Header -->
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap">
+          <h2 style="font-size:16px; font-weight:900; letter-spacing:0.06em; display:flex; align-items:center; gap:8px; margin:0">⚡ TRENCHES
+            <span class="brand-badge" id="trenchesLiveBadge" style="font-size:9px; background:rgba(34,197,94,0.12); color:var(--delta-green); border:1px solid rgba(34,197,94,0.3)">LIVE</span>
+          </h2>
+          <input type="text" id="trenchesSearch" placeholder="Filtrar por nombre o símbolo…" oninput="window.TrenchesEngine.setSearch(this.value)" style="flex:1; min-width:160px; max-width:300px; padding:7px 10px; font-size:12px">
+          <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.load(true)" title="Recargar">↻</button>
+          <span id="trenchesCount" style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)"></span>
+        </div>
+
+        <!-- TRENCHES Grid: scan columns + execution sidebar -->
+        <div style="display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:14px; align-items:start" class="trenches-layout">
+          <!-- Scan Columns (New / Soon / Migrated) -->
+          <div class="trenches-grid" id="trenchesColumns"></div>
+
+          <!-- Execution Sidebar -->
+          <div style="display:flex; flex-direction:column; gap:12px; min-width:0">
+          <!-- Token Header Bar (execution terminal) -->
+          <div class="glass-panel" style="padding:14px 16px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
+            <div style="display:flex; align-items:center; gap:12px; min-width:0">
+              <span id="terminalLogo" style="display:inline-flex"></span>
+              <div style="min-width:0">
+                <h2 id="terminalSymbol" style="font-size:17px; font-weight:800; letter-spacing:-0.02em; margin:0">SOL / USDC</h2>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:2px">
+                  <span class="brand-badge" id="terminalChain">SOLANA</span>
+                  <span style="font-size:10px; color:var(--text-tertiary)">Jupiter routing</span>
+                </div>
               </div>
+            </div>
+            <div style="display:flex; align-items:baseline; gap:10px">
+              <span id="terminalPrice" style="font-size:22px; font-weight:900; font-family:var(--font-mono)">—</span>
+              <span id="terminalDelta" style="font-size:12px; font-weight:700; font-family:var(--font-mono)">—</span>
             </div>
           </div>
 
-          <div style="display:flex; align-items:baseline; gap:12px">
-            <span id="terminalPrice" style="font-size:26px; font-weight:900; font-family:var(--font-mono)">—</span>
-            <span id="terminalDelta" style="font-size:13px; font-weight:700; font-family:var(--font-mono)">—</span>
-          </div>
-        </div>
-
-        <!-- Terminal Grid: Chart + Order Panel -->
-        <div style="display:grid; grid-template-columns:1fr 340px; gap:16px" class="trade-grid">
           <!-- Chart Column -->
           <div class="glass-panel" style="padding:16px; display:flex; flex-direction:column">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px; color:var(--text-tertiary); font-family:var(--font-mono)">
@@ -391,6 +556,7 @@
               BUY SOL
             </button>
           </div>
+          </div><!-- /execution sidebar -->
         </div>
 
         <!-- Active Positions Section -->
@@ -400,6 +566,11 @@
           </div>
           <div id="activePositionsTable"></div>
         </div>
+      </section>
+
+      <!-- ════ VIEW: REWARDS ════ -->
+      <section id="view-rewards" class="view-panel" style="display:none">
+        <div id="rewardsRoot"></div>
       </section>
 
       <!-- ════ VIEW: MARKETS (Prediction + Launchpad) ════ -->
@@ -450,7 +621,7 @@
 
       <button class="mobile-nav-item" data-nav="trade">
         <svg viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-        <span>Trade</span>
+        <span>Trenches</span>
       </button>
 
       <button class="mobile-nav-item" data-nav="markets">
@@ -461,6 +632,11 @@
       <button class="mobile-nav-item" data-nav="leaderboard">
         <svg viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-2.34"/><path d="M14 14.66V17c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-2.34"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
         <span>Ranks</span>
+      </button>
+
+      <button class="mobile-nav-item" data-nav="rewards">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13"/><path d="M3 12h18"/><path d="M12 8c-2.5 0-4.5-1.5-4.5-3.5S10 2 12 5c2-3 4.5-1.5 4.5-.5S14.5 8 12 8Z"/></svg>
+        <span>Rewards</span>
       </button>
 
       <button class="mobile-nav-item" data-nav="profile">
@@ -620,8 +796,7 @@
         <div style="display:flex; align-items:center; gap:12px">
           <div style="width:40px; height:40px; border-radius:50%; background:#141417; border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; color:#fff" id="previewIcon">
             SOL
-          </div>
-          <div>
+          </div>          <div>
             <div style="display:flex; align-items:center; gap:8px">
               <h3 style="font-size:18px; font-weight:800" id="previewTitle">$SOL</h3>
               <span class="brand-badge" id="previewChain">SOLANA</span>
@@ -778,7 +953,10 @@
     function openAssetPreview(token) {
       activePreviewToken = token;
       document.getElementById('previewTitle').textContent = '$' + token.symbol;
-      document.getElementById('previewIcon').textContent = token.symbol.slice(0, 3);
+      document.getElementById('previewIcon').outerHTML =
+        '<div id="previewIcon" style="width:40px; height:40px; flex-shrink:0" >' +
+        (window.TokenMeta ? window.TokenMeta.logoHtml(token.symbol, { size: 40 }) : token.symbol.slice(0, 3)) +
+        '</div>';
       document.getElementById('previewChain').textContent = (token.chain || 'SOLANA').toUpperCase();
       const hasPrice = Number(token.price) > 0;
       document.getElementById('previewPrice').textContent = hasPrice
@@ -816,5 +994,54 @@
     }
     window.openAssetPreview = openAssetPreview;
   </script>
+
+  <!-- Edit Profile Modal -->
+  <div class="modal-backdrop" id="editProfileModal">
+    <div class="modal-window" style="padding:28px; max-width:460px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 style="font-size:18px; font-weight:800">Editar Perfil</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.closeEditModal()">✕</button>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px">
+        <div id="editProfileAvatarPreview" style="width:64px; height:64px; border-radius:50%; overflow:hidden; background:rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:20px; flex-shrink:0">ME</div>
+        <div style="font-size:11px; color:var(--text-tertiary)">Foto por URL (https). Sin URL se muestra un avatar con tus iniciales.</div>
+      </div>
+
+      <form onsubmit="window.PortfolioEngine.saveProfileEdit(event)" style="display:flex; flex-direction:column; gap:12px">
+        <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Nombre visible (máx 40)
+          <input type="text" id="epDisplayName" maxlength="40" placeholder="Nacho" style="width:100%">
+        </label>
+        <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Bio (máx 280)
+          <textarea id="epBio" maxlength="280" rows="3" placeholder="Degen desde 2017. Sniper de memes en Solana." style="width:100%; resize:vertical"></textarea>
+        </label>
+        <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Foto (URL https)
+          <input type="url" id="epAvatarUrl" placeholder="https://…/foto.jpg" style="width:100%">
+        </label>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+          <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">X / Twitter (handle)
+            <input type="text" id="epXHandle" maxlength="30" placeholder="nacho_web3_" style="width:100%">
+          </label>
+          <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">X / Twitter (URL)
+            <input type="url" id="epTwitter" placeholder="https://x.com/…" style="width:100%">
+          </label>
+          <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Telegram (URL)
+            <input type="url" id="epTelegram" placeholder="https://t.me/…" style="width:100%">
+          </label>
+          <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px">Discord (URL)
+            <input type="url" id="epDiscord" placeholder="https://discord.gg/…" style="width:100%">
+          </label>
+          <label style="font-size:11px; color:var(--text-tertiary); display:flex; flex-direction:column; gap:4px; grid-column:1 / -1">Website (URL)
+            <input type="url" id="epWebsite" placeholder="https://…" style="width:100%">
+          </label>
+        </div>
+        <div id="editProfileError" style="font-size:11.5px; color:var(--delta-red); display:none"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:4px">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.closeEditModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="epSaveBtn">Guardar perfil</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>

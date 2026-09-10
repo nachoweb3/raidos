@@ -10,6 +10,7 @@
 
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
+import { TokenMeta } from "./tokens.js";
 
 export const TradingEngine = {
   currentSymbol: "SOL",
@@ -61,6 +62,8 @@ export const TradingEngine = {
     const priceEl = document.getElementById("terminalPrice");
     const deltaEl = document.getElementById("terminalDelta");
     const orderBtn = document.getElementById("executeOrderBtn");
+    const logoEl = document.getElementById("terminalLogo");
+    if (logoEl) logoEl.innerHTML = TokenMeta.logoHtml(this.currentSymbol, { size: 44 });
 
     if (symEl) symEl.textContent = `${this.currentSymbol} / USDC`;
     if (chainEl) chainEl.textContent = this.currentChain.toUpperCase();
@@ -341,7 +344,7 @@ export const TradingEngine = {
       if (data && data.positions && data.positions.length > 0) {
         this.positions = data.positions.map((p) => ({
           id: "api_pos_" + p.id,
-          symbol: p.token_symbol || "TOKEN",
+          symbol: TokenMeta.resolveSymbol(p.token, p.token_symbol),
           chain: p.chain,
           side: p.side === "buy" ? "LONG" : "SHORT",
           sizeUsdc: Number(p.net_invested_usdc || 0) / 1e6,
@@ -388,6 +391,7 @@ export const TradingEngine = {
         <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); font-size:12px">
           <div>
             <div style="display:flex; align-items:center; gap:8px">
+              ${TokenMeta.logoHtml(p.symbol, { size: 22 })}
               <strong style="color:#fff">${p.symbol}</strong>
               <span class="elite-badge" style="font-size:9px; color:${p.side === "LONG" ? "var(--delta-green)" : "var(--delta-red)"}">${p.side} ${p.leverage}x</span>
               <span style="font-size:10px; color:var(--text-tertiary)">${p.chain}</span>
@@ -444,6 +448,9 @@ export const TradingEngine = {
     ctx.fillStyle = "#ffffff";
     ctx.font = "700 20px system-ui, sans-serif";
     ctx.fillText(`${position.side} $${position.symbol} (${position.chain.toUpperCase()})`, 36, 110);
+
+    // Token logo (drawn async; over the title once loaded)
+    TokenMeta.drawOnCanvas(ctx, position.symbol, width - 36 - 48, 36, 48).catch(() => {});
 
     // Massive PnL
     const isWin = position.pnlUsdc >= 0;

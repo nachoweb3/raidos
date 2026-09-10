@@ -30,6 +30,7 @@ export interface AuthDb {
   getUserByApiKeyHash(keyHash: string): { user_id: number; api_key_hash: string; created_at: number } | undefined;
   getUserById(userId: number): { user_id: number; ref_code: string | null; created_at: number } | undefined;
   getUserByIdentity(provider: string, externalId: string): { user_id: number } | undefined;
+  getUserByRefCode(refCode: string): { user_id: number } | undefined;
   createIdentity(provider: string, externalId: string, userId: number, displayName?: string, avatarUrl?: string): boolean;
   rotateApiKey(userId: number): string;
   countUsers(): number;
@@ -81,7 +82,8 @@ export class AuthService {
     provider: string,
     externalId: string,
     displayName = "",
-    avatarUrl = ""
+    avatarUrl = "",
+    refCode?: string
   ): { userId: number; apiKey: string; isNew: boolean } {
     let user = this.db.getUserByIdentity(provider, externalId);
     let isNew = false;
@@ -89,8 +91,11 @@ export class AuthService {
       // Fresh identity → create the user first, then link the identity.
       const userId = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
       const { apiKey, keyHash } = generateApiKey();
-      const refCode = userId.toString(36);
-      this.db.createUser(userId, keyHash, refCode);
+      const newRefCode = userId.toString(36);
+      // Referral attribution (immutable afterwards): only valid codes bind, and
+      // self-referrals are structurally impossible here (referrer exists earlier).
+      const referrer = refCode ? this.db.getUserByRefCode(refCode) : undefined;
+      this.db.createUser(userId, keyHash, newRefCode, referrer?.user_id);
       this.db.createIdentity(provider, externalId, userId, displayName, avatarUrl);
       return { userId, apiKey, isNew: true };
     }

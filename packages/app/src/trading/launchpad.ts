@@ -48,6 +48,10 @@ export interface LaunchRow {
   created_at: number;
   /** Graduation timestamp */
   graduated_at: number | null;
+  /** Social links (optional on legacy rows) */
+  twitter_url?: string;
+  telegram_url?: string;
+  website_url?: string;
 }
 
 /** Public launch info (no internal IDs) */
@@ -67,6 +71,9 @@ export interface PublicLaunch {
   buyersCount: number;
   progressPct: number;
   createdAt: number;
+  twitterUrl: string;
+  telegramUrl: string;
+  websiteUrl: string;
 }
 
 /** Bonding curve buy/sell result */
@@ -89,6 +96,9 @@ export interface CreateLaunchParams {
   description: string;
   imageUrl: string;
   totalSupply: string;
+  twitterUrl?: string;
+  telegramUrl?: string;
+  websiteUrl?: string;
 }
 
 export class TokenLaunchpad {
@@ -134,6 +144,9 @@ export class TokenLaunchpad {
       buyers_count: 0,
       created_at: Math.floor(Date.now() / 1000),
       graduated_at: null,
+      twitter_url: params.twitterUrl ?? "",
+      telegram_url: params.telegramUrl ?? "",
+      website_url: params.websiteUrl ?? "",
     });
 
     return this.formatLaunch(this.db.getLaunch(launch)!);
@@ -289,6 +302,9 @@ export class TokenLaunchpad {
       buyersCount: l.buyers_count,
       progressPct: Number((raised * 10000n / threshold) / 100n),
       createdAt: l.created_at,
+      twitterUrl: (l as any).twitter_url ?? "",
+      telegramUrl: (l as any).telegram_url ?? "",
+      websiteUrl: (l as any).website_url ?? "",
     };
   }
 }
