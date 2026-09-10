@@ -352,6 +352,7 @@ export const PortfolioEngine = {
       </div>`;
 
     this.appendHoldings();
+    this.appendOnchainBalances();
     this.appendPositions();
     this.appendTrades();
     this.appendWallets();
@@ -423,6 +424,68 @@ export const PortfolioEngine = {
       }
     );
     this.target().appendChild(panel);
+  },
+
+  /* ── 💰 On-chain balances (read-only scan of the user's wallets) ── */
+
+  /**
+   * Fetch /api/wallets/balances lazily AFTER first paint — RPC scans can
+   * take seconds; the rest of the portfolio must not wait on them.
+   */
+  async appendOnchainBalances() {
+    const target = this.target();
+    if (!target) return;
+    const placeholder = document.createElement("div");
+    placeholder.className = "glass-panel";
+    placeholder.style.cssText = "margin-top:14px; padding:16px 18px";
+    placeholder.innerHTML = `<div class="loading-pulse" style="font-size:12px; color:var(--text-tertiary)">⛓️ Escaneando balances on-chain…</div>`;
+    target.appendChild(placeholder);
+
+    try {
+      const data = await ApiClient.getWalletBalances();
+      const rows = (data?.balances ?? []).filter(
+        (b) => !b.error && (b.usdcAmount > 0 || b.nativeAmount > 0.0001 || (b.tokens ?? []).length > 0),
+      );
+      const panel = document.createElement("div");
+      panel.className = "glass-panel";
+      panel.style.cssText = "margin-top:14px; padding:16px 18px";
+      const totalUsdc = rows.reduce((s, b) => s + Number(b.usdcAmount ?? 0), 0);
+      panel.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px">
+          <div style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">⛓️ Balances On-Chain</div>
+          <div class="mono" style="font-size:12px; font-weight:800; color:#fff">${fmtUsd(totalUsdc)} <span style="color:var(--text-tertiary); font-weight:400; font-size:10.5px">en USDC</span></div>
+        </div>
+        ${rows.length === 0
+          ? `<div style="font-size:11.5px; color:var(--text-tertiary)">Sin balances on-chain todavía (o RPCs no disponibles ahora mismo).</div>`
+          : rows.map((b) => this.renderBalanceRow(b)).join("")}
+      `;
+      placeholder.replaceWith(panel);
+    } catch {
+      placeholder.innerHTML = `<div style="font-size:11.5px; color:var(--text-tertiary)">⛓️ Escaneo on-chain no disponible ahora mismo.</div>`;
+    }
+  },
+
+  renderBalanceRow(b) {
+    const sym = String(b.nativeSymbol ?? "?").toUpperCase();
+    const explorer = b.chain === "solana" ? "https://solscan.io/account/" : "https://etherscan.io/address/";
+    const otherTokens = (b.tokens ?? []).slice(0, 4);
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0">
+          ${TokenMeta.logoHtml(sym, { size: 28 })}
+          <div style="min-width:0">
+            <div style="font-weight:800; font-size:12.5px">${b.chain.toUpperCase()} <span style="font-weight:400; color:var(--text-tertiary); font-size:10.5px">${String(b.label ?? "")}</span></div>
+            <a href="${explorer}${String(b.address ?? "")}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:10px; color:var(--text-tertiary); text-decoration:none">${String(b.address ?? "").slice(0, 10)}…${String(b.address ?? "").slice(-6)}</a>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="mono" style="font-weight:800; font-size:12.5px; color:#fff">${fmtUsd(Number(b.usdcAmount ?? 0))}</div>
+          <div style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)">
+            ${Number(b.nativeAmount ?? 0).toFixed(4)} ${sym}
+            ${otherTokens.length ? ` · +${otherTokens.length} tokens` : ""}
+          </div>
+        </div>
+      </div>`;
   },
 
   /* ── Open positions (from /api/positions rows) ── */

@@ -29,6 +29,7 @@ import { Router, sendJson, readJsonBody, HttpError, type RequestContext } from "
 import { executeSolanaSwap, executeEvmSwap, type ExecutionContext } from "./executors.js";
 import { applySwapToPosition } from "../trading/positions.js";
 import { RewardsEngine } from "../trading/rewards.js";
+import { BalanceScanner } from "../wallets/balances.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
 import { placeClobOrder } from "../market/clob.js";
@@ -92,6 +93,7 @@ export class ApiServer {
   private readonly auth: AuthService;
   private readonly challenges = new ChallengeStore();
   private readonly wallets: WalletManager;
+  private readonly balanceScanner: BalanceScanner;
   private readonly trading: TradingEngine;
   private readonly launchpad: TokenLaunchpad;
   private readonly social: SocialTrading;
@@ -121,6 +123,7 @@ export class ApiServer {
 
     this.auth = new AuthService(this.db);
     this.wallets = new WalletManager(this.db);
+    this.balanceScanner = new BalanceScanner();
     this.trading = new TradingEngine();
     this.launchpad = new TokenLaunchpad(this.db);
     this.social = new SocialTrading(this.db);
@@ -521,6 +524,14 @@ export class ApiServer {
     this.router.route("GET", "/api/wallets", (ctx) => {
       const userId = this.requireUserId(ctx);
       sendJson(ctx.res, 200, { wallets: this.wallets.listWallets(userId) });
+    });
+
+    // Read-only on-chain balances for every wallet (public RPCs, keyless).
+    this.router.route("GET", "/api/wallets/balances", async (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const wallets = this.wallets.listWallets(userId);
+      const balances = await this.balanceScanner.scanWallets(wallets);
+      sendJson(ctx.res, 200, { balances, scannedAt: Math.floor(Date.now() / 1000) });
     });
 
     this.router.route("POST", "/api/wallets", (ctx) => {

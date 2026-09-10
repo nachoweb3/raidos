@@ -118,6 +118,22 @@ describe("wallets", () => {
     const r = await api("POST", "/api/wallets", { chain: "nope", password: "pw" }, firstUserKey);
     expect(r.status).toBe(400);
   });
+
+  it("scans on-chain balances without touching keys (RPC may be offline in CI)", async () => {
+    const r = await api("GET", "/api/wallets/balances", undefined, firstUserKey);
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.json.balances)).toBe(true);
+    expect(r.json.balances.length).toBeGreaterThanOrEqual(1);
+    for (const b of r.json.balances) {
+      expect(typeof b.chain).toBe("string");
+      expect(typeof b.address).toBe("string");
+      // Chain down in CI → error field, never a throw; scan always resolves.
+      if (b.error) continue;
+      expect(typeof b.nativeAmount).toBe("number");
+      expect(typeof b.usdcAmount).toBe("number");
+      expect(Array.isArray(b.tokens)).toBe(true);
+    }
+  });
 });
 
 describe("trades (mock execution)", () => {

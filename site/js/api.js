@@ -168,6 +168,11 @@ export const ApiClient = {
     return this.request("/api/wallets");
   },
 
+  /** Read-only on-chain balances for every wallet (public RPCs, keyless). */
+  async getWalletBalances() {
+    return this.request("/api/wallets/balances");
+  },
+
   async createWallet(chain, password, label = "Primary") {
     return this.request("/api/wallets", {
       method: "POST",

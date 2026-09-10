@@ -176,6 +176,23 @@ export const TokenMeta = {
     return `<div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0" title="${esc(opts.title || this.nameFor(sym))}">${badge}${img}</div>`;
   },
 
+  /**
+   * Render a user avatar: profile image when available, deterministic
+   * initials badge otherwise. Used by trader strips and feed bylines.
+   * opts: { size=28, imageUrl, title }
+   */
+  avatarHtml(name, opts = {}) {
+    const label = String(name || "?").trim();
+    const size = opts.size ?? 28;
+    const initials = esc(label.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase() || "?");
+    const fontPx = Math.max(8, Math.round(size / 2.4));
+    const badge = `<div style="position:absolute;inset:0;border-radius:50%;background:${this.colorFor(label)};border:1px solid var(--border-subtle, rgba(255,255,255,0.08));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${fontPx}px;color:#fff">${initials}</div>`;
+    const img = opts.imageUrl
+      ? `<img src="${esc(opts.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.remove()">`
+      : "";
+    return `<div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0" title="${esc(opts.title || label)}">${badge}${img}</div>`;
+  },
+
   /** Load an image element for canvas drawing (share cards); resolves null on failure. */
   loadImage(url) {
     return new Promise((resolve) => {

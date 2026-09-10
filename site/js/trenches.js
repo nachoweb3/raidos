@@ -70,6 +70,7 @@ export const TrenchesEngine = {
     if (this.loadedOnce) return;
     this.load();
     this.loadMarket();
+    this.loadTraders();
     this.connectStream();
     // Market refresh every 2 minutes (boosts feed changes constantly).
     setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
@@ -102,6 +103,36 @@ export const TrenchesEngine = {
       if (row.mcap > 0) t.mcapUsd = row.mcap;
     }
     if (changed) this.render();
+  },
+
+  /** 🏆 Top traders strip: real PnL ranking from the platform leaderboard. */
+  async loadTraders() {
+    const el = document.getElementById("trenchesTradersStrip");
+    if (!el) return;
+    try {
+      const data = await ApiClient.getLeaderboard("all", 8);
+      const rows = (data?.leaders ?? []).filter((l) => l && (l.display_name || l.x_handle));
+      if (!rows.length) {
+        el.innerHTML = `<span style="font-size:10.5px; color:var(--text-tertiary)">🏆 Aún no hay traders rankeados — opera para entrar en el ranking.</span>`;
+        return;
+      }
+      el.innerHTML = rows.map((l, i) => {
+        const name = String(l.display_name || l.x_handle || "trader").slice(0, 14);
+        const pnl = Number(l.total_pnl_usdc ?? 0) / 1e6;
+        const wr = Number(l.win_rate ?? 0);
+        const pnlCls = pnl >= 0 ? "var(--delta-green)" : "var(--delta-red)";
+        return `
+        <div title="${esc(name)} · WR ${wr.toFixed(0)}% · ${l.total_trades ?? 0} trades" style="display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:999px; padding:3px 10px 3px 4px; white-space:nowrap">
+          <span style="font-size:9px; color:var(--text-tertiary); font-weight:800">#${i + 1}</span>
+          ${window.TokenMeta ? TokenMeta.avatarHtml(name, { size: 18 }) : ""}
+          <span style="font-size:10.5px; font-weight:700; color:#fff">${esc(name)}</span>
+          <span style="font-size:10px; font-family:var(--font-mono); color:${pnlCls}">${pnl >= 0 ? "+" : ""}$${Math.abs(pnl) >= 1000 ? (pnl / 1000).toFixed(1) + "K" : pnl.toFixed(0)}</span>
+          <span style="font-size:9px; color:var(--text-tertiary)">WR ${wr.toFixed(0)}%</span>
+        </div>`;
+      }).join("");
+    } catch {
+      el.innerHTML = "";
+    }
   },
 
   /** Force-refresh DexScreener pair data for every address on the board. */
