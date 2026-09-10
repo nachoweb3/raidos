@@ -900,6 +900,12 @@ export class ApiServer {
         const looksLikeTicker = /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(token) && !/^0x/i.test(token);
         tokenSymbol = known?.symbol ?? (looksLikeTicker ? token.toUpperCase() : token.slice(0, 6).toUpperCase());
       }
+      // Client-supplied ticker wins when the token ref is an address — the UI
+      // knows the live symbol (row context) that a bare address can't provide.
+      const clientSymbol = this.str(ctx, "tokenSymbol", false);
+      if (clientSymbol && /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(clientSymbol)) {
+        tokenSymbol = clientSymbol.toUpperCase();
+      }
 
       const eventId = this.db.addFeedEvent({
         type: direction ? "thesis" : "post",

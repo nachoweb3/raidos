@@ -10,6 +10,8 @@
  */
 
 const DEX_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search?q=";
+const DEX_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/top/v1";
+const DEX_BATCH_URL = "https://api.dexscreener.com/tokens/v1/";
 
 /** Map our chain slugs to DexScreener chainIds (missing → pair accepted anyway). */
 const CHAIN_ALIASES = {
@@ -82,6 +84,7 @@ function pairToRow(p, chainHint) {
     change24h: Number(p.priceChange?.h24 ?? 0),
     socials: normalizeSocials(p.info),
     logo: typeof p.info?.imageUrl === "string" && p.info.imageUrl.startsWith("http") ? p.info.imageUrl : null,
+    createdAtMs: Number(p.pairCreatedAt ?? 0),
     _updatedAt: Date.now(),
   };
 }
@@ -187,6 +190,103 @@ export const DexFeed = {
   /** Socials for a token (symbol or address), or {} when unknown. */
   socialsFor(key) {
     return this.get(key)?.socials ?? {};
+  },
+
+  /**
+   * REAL MARKET TOKENS — what's hot on DEXs right now, independent of our
+   * launchpad. Source: DexScreener's public token-boosts top feed (organic
+   * promotion spend = attention), then batch-resolve full pair data per chain
+   * via /tokens/v1 (30 addresses per call, 1 request per chain).
+   * Returns rows shaped exactly like pairToRow, ranked by 24h volume.
+   */
+  async getTrending({ chains = ["solana"], limit = 24 } = {}) {
+    try {
+      const res = await fetch(DEX_BOOSTS_URL, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return [];
+      const boosts = await res.json();
+      if (!Array.isArray(boosts)) return [];
+
+      // Group boosted addresses by chain (only chains we can trade).
+      const byChain = new Map();
+      for (const b of boosts) {
+        const chainId = String(b?.chainId ?? "").toLowerCase();
+        const addr = String(b?.tokenAddress ?? "");
+        if (!chains.includes(chainId) || !addr) continue;
+        const acc = byChain.get(chainId) ?? [];
+        if (acc.length < 30) acc.push(addr); // batch endpoint cap
+        byChain.set(chainId, acc);
+      }
+
+      const rows = [];
+      for (const [chainId, addrs] of byChain) {
+        try {
+          const r = await fetch(DEX_BATCH_URL + chainId + "/" + addrs.join(","), {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!r.ok) continue;
+          const pairs = await r.json();
+          if (!Array.isArray(pairs)) continue;
+
+          // Keep the deepest pair per base address, then rank by 24h volume.
+          const best = new Map();
+          for (const p of pairs) {
+            const base = String(p?.baseToken?.address ?? "").toLowerCase();
+            if (!base) continue;
+            const cur = best.get(base);
+            if (!cur || Number(p?.liquidity?.usd ?? 0) > Number(cur?.liquidity?.usd ?? 0)) best.set(base, p);
+          }
+          for (const p of best.values()) rows.push(pairToRow(p, chainId));
+        } catch {}
+      }
+
+      rows.sort((a, b) => (b.vol24h + b.liqUsd * 0.1) - (a.vol24h + a.liqUsd * 0.1));
+      for (const row of rows) this._put(row);
+      return rows.slice(0, limit);
+    } catch {
+      return []; // network down — board still shows launchpad + cache
+    }
+  },
+
+  /**
+   * Batch-resolve pair data for explicit addresses (per chain, 30/call).
+   * Complements ensureTokens (sequential search) when we already know where
+   * to look — e.g. hydrating a whole column at once.
+   */
+  async ensureAddresses(refs, { force = false } = {}) {
+    if (!this.cacheUpdatedAt) this._loadStored();
+    const byChain = new Map();
+    for (const ref of refs ?? []) {
+      const addr = String(ref?.address ?? "").trim();
+      const chain = String(ref?.chain ?? "solana").toLowerCase();
+      const aliases = CHAIN_ALIASES[chain] ?? [chain];
+      if (!addr || !aliases.length) continue;
+      if (!force && addr.toLowerCase() in this.cache && this.isFresh()) continue;
+      const acc = byChain.get(aliases[0]) ?? [];
+      if (acc.length < 30) acc.push(addr); // batch endpoint cap
+      byChain.set(aliases[0], acc);
+    }
+    for (const [chainId, addrs] of byChain) {
+      try {
+        const r = await fetch(DEX_BATCH_URL + chainId + "/" + addrs.join(","), {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!r.ok) continue;
+        const pairs = await r.json();
+        if (!Array.isArray(pairs)) continue;
+        for (const p of pairs) {
+          const row = pairToRow(p, chainId);
+          if (row?.address) this.cache[row.address.toLowerCase()] = row;
+          this._put(row);
+        }
+      } catch {}
+    }
+    if (byChain.size) {
+      this.cacheUpdatedAt = Date.now();
+      this._persist();
+    }
+    return this.cache;
   },
 
   /**

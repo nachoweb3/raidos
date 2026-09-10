@@ -15,6 +15,7 @@ import { TokenMeta } from "./tokens.js";
 export const TradingEngine = {
   currentSymbol: "SOL",
   currentChain: "solana",
+  currentTokenAddress: null, // real trade routing needs addresses, not symbols
   currentPrice: 0,
   currentDelta24h: 0,
   chart: null,
@@ -43,9 +44,10 @@ export const TradingEngine = {
     this.updateTokenDisplay();
   },
 
-  setAsset(symbol, chain, price) {
-    this.currentSymbol = symbol.toUpperCase();
+  setAsset(symbol, chain, price, opts = {}) {
+    this.currentSymbol = String(symbol ?? "").toUpperCase();
     this.currentChain = chain || "solana";
+    this.currentTokenAddress = opts.tokenAddress || null;
     // Prefer a real price from PriceFeed; ignore 0/null placeholders passed
     // from rows without live data.
     const row = PriceFeed.get(this.currentSymbol);
@@ -54,6 +56,125 @@ export const TradingEngine = {
     this.currentDelta24h = row.delta24h;
     this.updateTokenDisplay();
     this.generateCandleData();
+    this.loadTheses();
+  },
+
+  /* ── 📊 Tesis de la comunidad (panel lateral del terminal) ───────────── */
+
+  /** Fetch theses for the active token from the public feed. */
+  async loadTheses() {
+    const el = document.getElementById("terminalThesisList");
+    if (!el) return;
+    const key = this.currentTokenAddress || this.currentSymbol;
+    try {
+      const data = await ApiClient.request(`/api/feed?token=${encodeURIComponent(key)}&limit=8`);
+      const events = (data?.events ?? []).filter((e) => e.type === "post" || e.type === "thesis");
+      if (!events.length) {
+        el.innerHTML = `<div style="color:var(--text-tertiary); font-size:11px; line-height:1.5">
+          Sin tesis todavía para <strong>${this.currentSymbol}</strong>. Sé el primero:
+          <a href="#" onclick="window.TradingEngine.openThesisComposer(); return false" style="color:var(--accent)">publica la tuya</a>.
+        </div>`;
+        return;
+      }
+      el.innerHTML = events.map((e) => {
+        const p = e.payload ?? {};
+        const name = e.actor_name || p.authorName || "trader";
+        const text = String(p.text ?? "").slice(0, 140);
+        return `
+        <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:8px; padding:8px 10px">
+          <div style="display:flex; justify-content:space-between; gap:8px; margin-bottom:3px">
+            <strong style="font-size:11px; color:#fff">${this._esc(name)}</strong>
+            <span style="font-size:9.5px; color:var(--text-tertiary)">${this._age(e.created_at)}</span>
+          </div>
+          <div style="font-size:11px; color:var(--text-secondary); line-height:1.45">${this._esc(text)}</div>
+        </div>`;
+      }).join("");
+    } catch {
+      el.innerHTML = `<div style="color:var(--text-tertiary); font-size:11px">No se pudieron cargar las tesis.</div>`;
+    }
+  },
+
+  /** Open the thesis composer pre-filled with the ACTIVE terminal token. */
+  openThesisComposer() {
+    window.App?.openNewPostModal({
+      token: this.currentTokenAddress || this.currentSymbol,
+      symbol: this.currentSymbol,
+      chain: this.currentChain,
+      price: this.currentPrice,
+      imageUrl: null,
+    });
+  },
+
+  _esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[c]);
+  },
+
+  _age(ts) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - Number(ts ?? 0));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    return `${Math.floor(s / 86400)}d`;
+  },
+
+  /**
+   * Resolve the active token to a routable address for Jupiter/0x:
+   * explicit address → DexFeed pair cache → well-known tokens (USDC/SOL…).
+   */
+  resolveTokenAddress(symbol, chain) {
+    const sym = String(symbol ?? "").toUpperCase();
+    if (sym === "USDC") {
+      const wellKnown = {
+        solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        ethereum: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        bsc: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+        polygon: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c935",
+        arbitrum: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      };
+      return wellKnown[chain || "solana"];
+    }
+    if (sym === "SOL" && (chain || "solana") === "solana") {
+      return "So11111111111111111111111111111111111111112"; // wrapped SOL
+    }
+    return (
+      this.currentTokenAddress ||
+      null
+    );
+  },
+
+  /**
+   * ⚡ One-click market buy from Trenches: 0.1 USDC → token, routed by real
+   * address through the normal execution path. Returns the exec result.
+   */
+  async quickMarketBuy(t) {
+    this.setAsset(t.symbol, t.chain, t.priceUsd, { tokenAddress: t.tokenAddress });
+    this.orderSide = "BUY";
+    this.currentTokenAddress = t.tokenAddress || null;
+    const addr = this.resolveTokenAddress(t.symbol, t.chain);
+    if (!addr) {
+      window.App?.openTradeForToken?.(t.symbol, t.chain, t.priceUsd);
+      alert("No se pudo resolver la dirección on-chain de " + t.symbol + " — usa el terminal.");
+      return null;
+    }
+    try {
+      const exec = await ApiClient.executeTrade({
+        fromChain: t.chain || "solana",
+        toChain: t.chain || "solana",
+        sellToken: "USDC",
+        buyToken: addr,
+        amount: "100000", // 0.1 USDC in micro-units
+        type: "swap",
+      }, "demo_pass");
+      alert(`⚡ Comprado ${t.symbol} por 0.1 USDC (tx: ${String(exec?.result?.txHash ?? exec?.txHash ?? "ok").slice(0, 12)}…)`);
+      this.fetchPositions();
+      return exec;
+    } catch (err) {
+      alert("❌ " + String(err?.message || err));
+      return null;
+    }
   },
 
   updateTokenDisplay() {
@@ -290,11 +411,29 @@ export const TradingEngine = {
     btn.disabled = true;
 
     try {
+      // Route by REAL address — Jupiter/0x don't understand tickers. Well-known
+      // tokens resolve to canonical addresses; everything else must have been
+      // selected from a row that carries its address (Trenches/Discover).
+      const buyAddr = this.resolveTokenAddress(
+        this.orderSide === "BUY" ? this.currentSymbol : "USDC",
+        this.currentChain,
+      );
+      const sellAddr = this.resolveTokenAddress(
+        this.orderSide === "BUY" ? "USDC" : this.currentSymbol,
+        this.currentChain,
+      );
+      if (!buyAddr || !sellAddr) {
+        alert(
+          "No hay dirección on-chain para " + this.currentSymbol +
+          " en " + this.currentChain.toUpperCase() + ". Selecciónalo desde TRENCHES o DISCOVER (datos de mercado reales)."
+        );
+        return;
+      }
       const tradeParams = {
         fromChain: this.currentChain,
         toChain: this.currentChain,
-        sellToken: this.orderSide === "BUY" ? "USDC" : this.currentSymbol,
-        buyToken: this.orderSide === "BUY" ? this.currentSymbol : "USDC",
+        sellToken: sellAddr,
+        buyToken: buyAddr,
         amount: String(Math.floor(amount * 1_000_000)), // USDC units
         type: "swap",
       };

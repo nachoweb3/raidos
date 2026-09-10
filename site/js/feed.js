@@ -202,6 +202,7 @@ export const FeedEngine = {
       type: postData.direction ? "thesis" : "post",
       direction: postData.direction,
       token: postData.token,
+      tokenSymbol: postData.tokenSymbol || postData.token,
       entryPrice: postData.entryPrice,
       targetPrice: postData.targetPrice,
       stopLoss: postData.stopLoss,
@@ -220,6 +221,7 @@ export const FeedEngine = {
         body: JSON.stringify({
           text: postData.text,
           token: postData.token,
+          tokenSymbol: postData.tokenSymbol || undefined,
           chain: postData.chain || undefined,
           direction: postData.direction,
           entryPrice: postData.entryPrice,

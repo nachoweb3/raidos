@@ -269,24 +269,27 @@ export const App = {
     const tokenInput = document.getElementById("thesisToken");
     const entryInput = document.getElementById("thesisEntry");
     const header = document.getElementById("thesisTokenPreview");
-    if (tokenInput && p.token) tokenInput.value = String(p.token).toUpperCase().slice(0, 12);
+    // RAW ref in the input (address or ticker — never truncated); the pretty
+    // symbol lives in prefill.symbol and the header strip only.
+    if (tokenInput && p.token) tokenInput.value = String(p.token);
     if (entryInput && Number(p.price) > 0) {
       entryInput.value = "$" + (p.price < 0.01 ? p.price.toFixed(6) : p.price.toPrecision(4));
     }
+    const sym = String(p.symbol ?? p.token ?? "").toUpperCase().slice(0, 12);
     // Context strip: logo + live price of the token being written about.
     if (header) {
       if (p.token) {
         header.style.display = "flex";
         header.innerHTML =
-          (window.TokenMeta ? TokenMeta.logoHtml(String(p.token).toUpperCase(), { size: 26, imageUrl: p.imageUrl }) : "") +
-          `<div style="min-width:0"><div style="font-size:12px; font-weight:800; color:#fff">$${String(p.token).toUpperCase().slice(0, 12)}</div>` +
+          (window.TokenMeta ? TokenMeta.logoHtml(sym, { size: 26, imageUrl: p.imageUrl }) : "") +
+          `<div style="min-width:0"><div style="font-size:12px; font-weight:800; color:#fff">$${sym}</div>` +
           `<div style="font-size:10px; color:var(--text-tertiary); font-family:var(--font-mono)">${Number(p.price) > 0 ? "$" + Number(p.price).toPrecision(4) : String(p.chain ?? "").toUpperCase().slice(0, 12)}</div></div>`;
       } else {
         header.style.display = "none";
         header.innerHTML = "";
       }
     }
-    this._thesisPrefill = p;
+    this._thesisPrefill = { ...p, symbol: sym };
     modal.classList.add("active");
   },
 

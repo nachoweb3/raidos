@@ -21,10 +21,14 @@ import { TokenMeta } from "./tokens.js";
 import { DexFeed } from "./dexfeed.js";
 
 const COLUMNS = [
-  { id: "new", title: "New", icon: "🌱", hint: "Últimos lanzamientos" },
-  { id: "soon", title: "Soon", icon: "🚀", hint: "Cerca de graduar" },
-  { id: "migrated", title: "Migrated", icon: "🎓", hint: "Graduados a DEX" },
+  { id: "new", title: "New Pairs", icon: "🔥", hint: "Mercado real — DexScreener" },
+  { id: "soon", title: "Soon", icon: "🚀", hint: "Curva de graduación" },
+  { id: "migrated", title: "Trending", icon: "📈", hint: "Top volumen 24h" },
 ];
+
+/** Chain aliases for the market columns (DexScreener chainIds). */
+const MARKET_CHAINS = ["solana", "bsc"];
+const MARKET_LIMIT = 24;
 
 /** Micro-USDC → display string, honest "—" for zero/invalid. */
 const fmtMicro = (raw, digits = 2) => {
@@ -51,7 +55,8 @@ const esc = (s) =>
 const safeAttr = (s) => String(s ?? "").replace(/[^a-zA-Z0-9_@.\\-]/g, "");
 
 export const TrenchesEngine = {
-  tokens: [],            // normalized launch rows
+  tokens: [],            // normalized launch rows (our launchpad)
+  market: [],            // real market tokens (DexScreener trending)
   selected: null,        // currently selected token ref
   search: "",
   loading: false,
@@ -59,11 +64,52 @@ export const TrenchesEngine = {
   _es: null,             // EventSource
   _pollTimer: null,
   _seq: 0,
+  _marketAt: 0,
 
   async init() {
     if (this.loadedOnce) return;
-    await this.load();
+    this.load();
+    this.loadMarket();
     this.connectStream();
+    // Market refresh every 2 minutes (boosts feed changes constantly).
+    setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
+  },
+
+  /**
+   * REAL MARKET TOKENS — always populated from DexScreener trending,
+   * regardless of our launchpad. This is what makes the board feel alive on
+   * a fresh install: Solana + BSC pairs with real price, mcap, volume, liq.
+   */
+  async loadMarket(force = false) {
+    const seq = this._seq;
+    try {
+      const rows = await DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT });
+      if (seq !== this._seq && force) return;
+      this.market = rows.map((r) => this.normalizeMarket(r));
+      this._marketAt = Date.now();
+      if (this.loadedOnce) this.render();
+    } catch {}
+  },
+
+  normalizeMarket(r) {
+    return {
+      id: "mkt_" + (r.address || r.symbol),
+      symbol: r.symbol || "???",
+      name: r.name || r.symbol,
+      chain: r.chain || "solana",
+      imageUrl: r.logo,
+      status: "market",
+      priceUsd: r.priceUsd,
+      mcapUsd: r.mcap || r.fdv || 0,
+      raisedUsd: 0,
+      buyers: r.buys24h || 0,
+      progress: 0,
+      socials: r.socials ?? {},
+      tokenAddress: r.address,
+      createdAt: r.createdAtMs ? Math.floor(r.createdAtMs / 1000) : 0,
+      dex: r,
+      isMarket: true,
+    };
   },
 
   /** Fetch launches (all statuses) and normalize into one board. */
@@ -80,6 +126,21 @@ export const TrenchesEngine = {
       this.loadedOnce = true;
       this.render();
       this.enrichDex(); // async — upgrades rows with pair data when it lands
+      // Hydrate launchpad pairs in one batch per chain (real liq/txns fast).
+      DexFeed.ensureAddresses(
+        this.tokens.filter((t) => t.tokenAddress).map((t) => ({ address: t.tokenAddress, chain: t.chain })),
+      ).then(() => {
+        for (const t of this.tokens) {
+          const row = DexFeed.get(t.tokenAddress);
+          if (!row) continue;
+          t.dex = row;
+          if (row.priceUsd > 0) t.priceUsd = row.priceUsd;
+          if (row.mcap > 0) t.mcapUsd = row.mcap;
+          if (row.socials) t.socials = { ...t.socials, ...row.socials };
+          if (row.logo) t.imageUrl = t.imageUrl || row.logo;
+        }
+        this.render();
+      }).catch(() => {});
     } catch (err) {
       if (seq === this._seq) this.renderError(String(err?.message || err));
     } finally {
@@ -175,14 +236,17 @@ export const TrenchesEngine = {
 
   select(t) {
     this.selected = t;
-    window.TradingEngine?.setAsset(t.symbol, t.chain, t.priceUsd || 0);
+    window.TradingEngine?.setAsset(t.symbol, t.chain, t.priceUsd || 0, {
+      tokenAddress: t.tokenAddress ?? undefined,
+      launchId: t.isMarket ? undefined : t.id,
+    });
     this.render();
   },
 
-  /** ⚡ quick buy: 0.1 USDC on the bonding curve with the wallet password flow. */
-  async quickBuy(symbol, event) {
+  /** ⚡ quick buy: 0.1 USDC — bonding curve for launches, DEX swap for market. */
+  async quickBuy(symbol, id, event) {
     event?.stopPropagation();
-    const t = this.tokens.find((x) => x.symbol === symbol);
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (!t) return;
     if (!ApiClient.isAuthenticated?.()) {
       window.App?.openWalletModal?.();
@@ -190,14 +254,14 @@ export const TrenchesEngine = {
     }
     try {
       const usdcMicro = "100000"; // 0.1 USDC
-      if (t.status === "graduated") {
-        // Routed as a market swap against the DEX pair.
-        window.App?.openTradeForToken?.(t.symbol, t.chain, t.priceUsd);
+      if (t.isMarket || t.status === "graduated") {
+        // Real DEX swap routed by address via the execution terminal.
+        await window.TradingEngine?.quickMarketBuy?.(t);
         return;
       }
       const res = await ApiClient.buyLaunchTokens(t.id, usdcMicro);
       const got = res?.result?.tokenAmount;
-      alert(`⚡ Comprado $${t.symbol}: ${Number(got ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens por 0.1 USDC`);
+      alert(`⚡ Comprado ${t.symbol}: ${Number(got ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens por 0.1 USDC`);
       this.load();
     } catch (err) {
       alert("❌ " + String(err?.message || err));
@@ -212,16 +276,26 @@ export const TrenchesEngine = {
 
   visibleIn(columnId, t) {
     if (this.search && !(`${t.name} ${t.symbol}`.toLowerCase().includes(this.search))) return false;
-    if (columnId === "migrated") return t.status === "graduated";
-    if (columnId === "new") return t.status !== "graduated";
-    if (columnId === "soon") return t.status !== "graduated" && t.progress >= 40;
+    if (columnId === "soon") return t.status !== "graduated" && t.status !== "market" && t.progress >= 40;
+    if (columnId === "migrated") {
+      // TRENDING: market tokens ranked by volume; launchpad graduates join by mcap.
+      return t.isMarket || t.status === "graduated";
+    }
+    if (columnId === "new") {
+      // NEW PAIRS: real market pairs < 48h first, then our own launches.
+      return true;
+    }
     return true;
   },
 
   sortFor(columnId, list) {
-    if (columnId === "new") return list.sort((a, b) => b.createdAt - a.createdAt);
     if (columnId === "soon") return list.sort((a, b) => b.progress - a.progress || b.raisedUsd - a.raisedUsd);
-    return list.sort((a, b) => b.mcapUsd - a.mcapUsd);
+    if (columnId === "new") {
+      // freshest real pairs first; our launches interleaved by age
+      return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    // Trending: market tokens already ranked; sort all by volume when known.
+    return list.sort((a, b) => (b.dex?.vol24h ?? 0) - (a.dex?.vol24h ?? 0) || b.mcapUsd - a.mcapUsd);
   },
 
   renderSkeleton() {
@@ -253,16 +327,27 @@ export const TrenchesEngine = {
   render() {
     const el = this.target();
     if (!el) return;
-    const total = this.tokens.length;
+    const total = this.tokens.length + this.market.length;
     const countEl = document.getElementById("trenchesCount");
     if (countEl) countEl.textContent = `${total} tokens`;
 
     el.innerHTML = COLUMNS.map((c) => {
-      const rows = this.sortFor(c.id, this.tokens.filter((t) => this.visibleIn(c.id, t))).slice(0, 30);
+      let pool;
+      if (c.id === "new") {
+        // Real market pairs < 48h first, then our launchpad launches, then the rest.
+        const freshMarket = this.market.filter((t) => t.createdAt && Date.now() / 1000 - t.createdAt < 48 * 3600);
+        const restMarket = this.market.filter((t) => !t.createdAt || Date.now() / 1000 - t.createdAt >= 48 * 3600);
+        pool = [...freshMarket, ...this.tokens, ...restMarket];
+      } else if (c.id === "migrated") {
+        pool = [...this.market, ...this.tokens.filter((t) => t.status === "graduated")];
+      } else {
+        pool = this.tokens.filter((t) => this.visibleIn(c.id, t));
+      }
+      const rows = this.sortFor(c.id, pool).slice(0, 30);
       const rowsHtml = rows.length
         ? rows.map((t) => this.renderRow(t)).join("")
         : `<div style="padding:22px 14px; text-align:center; color:var(--text-tertiary); font-size:11.5px">
-             ${c.id === "soon" ? "Ningún token cerca de graduar todavía." : c.id === "migrated" ? "Sin graduados aún — la primera curva que llene aparecerá aquí." : "Sin lanzamientos todavía. Crea el primero en Markets → Launchpad."}
+             ${c.id === "soon" ? "Ningún token cerca de graduar todavía." : "Conectando con DexScreener…"}
            </div>`;
       return `
       <div class="trenches-col">
@@ -286,8 +371,11 @@ export const TrenchesEngine = {
       t.socials?.website ? `<a href="${esc(t.socials.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Web" style="color:var(--text-tertiary); text-decoration:none; font-size:10px">🌐</a>` : "",
     ].join("");
     const age = t.createdAt ? this.ageLabel(t.createdAt) : "";
+    const idAttr = t.isMarket ? safeAttr(t.id) : String(Number(t.id));
+    const symAttr = safeAttr(t.symbol);
+    const addrAttr = safeAttr(t.tokenAddress ?? "");
     return `
-      <div class="trench-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById('${safeAttr(t.symbol)}', ${Number(t.id)})">
+      <div class="trench-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById('${symAttr}', '${idAttr}')">
         ${TokenMeta.logoHtml(t.symbol, { size: 34, round: false, imageUrl: t.imageUrl })}
         <div style="flex:1; min-width:0">
           <div style="display:flex; align-items:center; gap:6px; min-width:0">
@@ -313,28 +401,34 @@ export const TrenchesEngine = {
             ${chg != null ? `<div class="${chgCls}">${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%</div>` : `<div style="color:var(--text-tertiary)">${esc(t.chain.slice(0, 3).toUpperCase())}</div>`}
           </div>
           <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end">
-            <button class="trench-buy-btn" onclick="window.TrenchesEngine.quickBuy('${safeAttr(t.symbol)}', event)" title="Compra rápida 0.1 USDC">⚡ 0.1</button>
-            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis('${safeAttr(t.symbol)}', ${Number(t.id)}, event)" title="Publicar tesis sobre este token">📊 Tesis</button>
+            <button class="trench-buy-btn" onclick="window.TrenchesEngine.quickBuy('${symAttr}', '${idAttr}', event)" title="Compra rápida 0.1 USDC">⚡ 0.1</button>
+            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis('${symAttr}', '${idAttr}', event)" title="Publicar tesis sobre este token">📊 Tesis</button>
           </div>
         </div>
       </div>`;
   },
 
   selectById(symbol, id) {
-    const t = this.tokens.find((x) => x.symbol === symbol && Number(x.id) === Number(id));
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (t) this.select(t);
   },
 
+  /** Launchpad + market rows in one lookup pool. */
+  allTokens() {
+    return [...this.tokens, ...this.market];
+  },
+
   /** Open the thesis composer pre-filled with this token's live context. */
-  postThesis(symbol, launchId, event) {
+  postThesis(symbol, id, event) {
     event?.stopPropagation();
-    const t = this.tokens.find((x) => x.symbol === symbol && Number(x.id) === Number(launchId));
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (!t) return;
     window.App?.openNewPostModal({
-      token: t.symbol,
+      token: t.tokenAddress || t.symbol,
+      symbol: t.symbol,
       chain: t.chain,
       price: t.priceUsd,
-      launchId: t.status !== "graduated" ? t.id : undefined,
+      launchId: !t.isMarket && t.status !== "graduated" ? t.id : undefined,
       imageUrl: t.imageUrl,
     });
   },
