@@ -805,9 +805,14 @@ export const DiscoverEngine = {
             </div>
           </div>
 
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})" style="width:70px">
-            TRADE
-          </button>
+          <div style="display:flex; flex-direction:column; gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})" style="width:70px">
+              TRADE
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.App.openNewPostModal({ token: '${t.symbol}', chain: '${t.chain}', price: ${t.price}, imageUrl: '${String(t.imageUrl ?? "").replace(/'/g, "")}' })" style="width:70px; font-size:10.5px" title="Publicar tesis sobre este token">
+              📊 TESIS
+            </button>
+          </div>
         </div>
       </div>
     `;

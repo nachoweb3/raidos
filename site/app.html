@@ -214,6 +214,18 @@
       flex-shrink: 0;
     }
     .trench-buy-btn:hover { background: rgba(34,197,94,0.18); }
+    .trench-thesis-btn {
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      background: rgba(255,255,255,0.03);
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 9px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .trench-thesis-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
     @keyframes livePulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.45; }
@@ -507,6 +519,9 @@
               <button class="btn btn-ghost btn-sm" id="btnSideSell" onclick="setTradeSide('SELL')">SELL / SHORT</button>
             </div>
 
+            <!-- Publish thesis for the active token -->
+            <button class="btn btn-ghost btn-sm" id="postThesisBtn" onclick="postThesisFromTerminal()" style="width:100%; font-size:11px" title="Publica tu análisis de este token en el feed">📊 Publicar tesis de este token</button>
+
             <!-- Market / Limit toggle -->
             <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-secondary)">
               <span style="cursor:pointer; font-weight:700; color:#fff" onclick="window.TradingEngine.setOrderType('MARKET')">● MARKET</span>
@@ -683,6 +698,7 @@
       </div>
 
       <form onsubmit="handleCreateThesis(event)" style="display:flex; flex-direction:column; gap:12px">
+        <div id="thesisTokenPreview" style="display:none; align-items:center; gap:10px; padding:10px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-md)"></div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
           <div>
             <label style="font-size:11px; color:var(--text-tertiary)">Activo ($TICKER)</label>
@@ -816,12 +832,15 @@
         <div class="mono" style="font-size:14px; font-weight:700; color:var(--delta-green)" id="previewDelta">—</div>
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px">
-        <button class="btn btn-primary btn-lg" onclick="quickBuyFromPreview()">
-          COMPRAR AHORA
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:16px">
+        <button class="btn btn-primary btn-lg" onclick="quickBuyFromPreview()" style="font-size:12px">
+          COMPRAR
         </button>
-        <button class="btn btn-secondary btn-lg" onclick="goToTerminalFromPreview()">
-          VER GRÁFICO →
+        <button class="btn btn-secondary btn-lg" onclick="goToTerminalFromPreview()" style="font-size:12px">
+          GRÁFICO →
+        </button>
+        <button class="btn btn-secondary btn-lg" onclick="thesisFromPreview()" style="font-size:12px">
+          📊 TESIS
         </button>
       </div>
     </div>
@@ -875,8 +894,13 @@
       const targetPrice = document.getElementById('thesisTp').value.trim();
       const stopLoss = document.getElementById('thesisSl').value.trim();
       const text = document.getElementById('thesisText').value.trim();
+      const prefill = (window.App && window.App._thesisPrefill) || {};
 
-      window.FeedEngine.addNewPost({ token, direction, entryPrice, targetPrice, stopLoss, text });
+      window.FeedEngine.addNewPost({
+        token, direction, entryPrice, targetPrice, stopLoss, text,
+        chain: prefill.chain,
+        launchId: prefill.launchId,
+      });
       window.App.closeNewPostModal();
     }
 
@@ -991,6 +1015,27 @@
         document.getElementById('orderAmountInput').value = '100';
         window.TradingEngine.calculateEstOutput();
       }
+    }
+
+    function thesisFromPreview() {
+      if (activePreviewToken) {
+        closeAssetPreview();
+        window.App.openNewPostModal({
+          token: activePreviewToken.symbol,
+          chain: activePreviewToken.chain,
+          price: activePreviewToken.price,
+        });
+      }
+    }
+
+    function postThesisFromTerminal() {
+      const te = window.TradingEngine;
+      if (!te) return;
+      window.App.openNewPostModal({
+        token: te.currentSymbol,
+        chain: te.currentChain,
+        price: te.currentPrice,
+      });
     }
     window.openAssetPreview = openAssetPreview;
   </script>

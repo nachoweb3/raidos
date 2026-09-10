@@ -102,7 +102,12 @@ export const FeedEngine = {
         author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "T#", verified: false },
         type: e.type,
         direction: p.direction,
+        // token_symbol is the display ticker; e.token may be a launch ref or
+        // address — the thesis badge opens the terminal with it.
         token: e.token_symbol || undefined,
+        rawToken: e.token,
+        chain: e.chain || undefined,
+        launchId: p.launchId || undefined,
         entryPrice: p.entryPrice || undefined,
         targetPrice: p.targetPrice || undefined,
         stopLoss: p.stopLoss || undefined,
@@ -215,10 +220,12 @@ export const FeedEngine = {
         body: JSON.stringify({
           text: postData.text,
           token: postData.token,
+          chain: postData.chain || undefined,
           direction: postData.direction,
           entryPrice: postData.entryPrice,
           targetPrice: postData.targetPrice,
           stopLoss: postData.stopLoss,
+          launchId: postData.launchId || undefined,
         }),
       });
     } catch {
@@ -273,11 +280,12 @@ export const FeedEngine = {
     if (p.type === "thesis" && p.direction) {
       const isLong = p.direction === "LONG";
       thesisBadge = `
-        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-md); font-family:var(--font-mono); font-size:11px">
-          <span style="display:inline-flex; align-items:center; gap:6px; font-weight:800; color:${isLong ? "var(--delta-green)" : "var(--delta-red)"}">${TokenMeta.logoHtml(p.token, { size: 16 })} ${esc(p.direction)} $${esc(p.token)}</span>
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-md); font-family:var(--font-mono); font-size:11px; cursor:pointer" onclick="window.App.openTradeForToken('${String(p.token).replace(/[^a-zA-Z0-9]/g, "")}', '${esc(p.chain || "solana")}', 0)" title="Abrir $${esc(p.token)} en el terminal">
+          <span style="display:inline-flex; align-items:center; gap:6px; font-weight:800; color:${isLong ? "var(--delta-green)" : "var(--delta-red)"}">${TokenMeta.logoHtml(p.tokenSymbol || p.token, { size: 16 })} ${esc(p.direction)} $${esc(p.tokenSymbol || p.token)}</span>
           ${p.entryPrice ? `<span>Entry: <strong>${esc(p.entryPrice)}</strong></span>` : ""}
           ${p.targetPrice ? `<span>TP: <strong style="color:var(--delta-green)">${esc(p.targetPrice)}</strong></span>` : ""}
           ${p.stopLoss ? `<span>SL: <strong style="color:var(--delta-red)">${esc(p.stopLoss)}</strong></span>` : ""}
+          <span style="margin-left:auto; color:var(--text-tertiary)">Operar →</span>
         </div>
       `;
     }

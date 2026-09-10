@@ -682,6 +682,52 @@ describe("advanced user profile", () => {
     expect(create.json.launch.twitterUrl).toBe("");
     expect(create.json.launch.websiteUrl).toBe("https://ok.xyz");
   });
+
+  it("publishes a thesis linked to a launchpad token with resolved symbol", async () => {
+    // Create a launch, then post a thesis bound to its id.
+    const launch = await api("POST", "/api/launches", { chain: "solana", name: "Thesis Token", symbol: "THESIS" }, key());
+    expect(launch.status).toBe(201);
+    const launchId = launch.json.launch.id;
+
+    const post = await api(
+      "POST",
+      "/api/feed/post",
+      {
+        text: "Curve está barata y elNarrador sube. LONG.",
+        token: "THESIS",
+        direction: "LONG",
+        entryPrice: "$0.002",
+        launchId,
+      },
+      key()
+    );
+    expect(post.status).toBe(201);
+    expect(post.json.tokenSymbol).toBe("THESIS");
+
+    const feed = await api("GET", "/api/feed?limit=10");
+    const thesis = feed.json.events.find((e: any) => e.id === post.json.eventId);
+    expect(thesis).toBeDefined();
+    expect(thesis.type).toBe("thesis");
+    expect(thesis.token_symbol).toBe("THESIS");
+    expect(thesis.payload.launchId).toBe(launchId);
+    expect(thesis.payload.text).toContain("barata");
+  });
+
+  it("resolves well-known mint addresses to real tickers in feed posts", async () => {
+    const post = await api(
+      "POST",
+      "/api/feed/post",
+      { text: "Flujos fuertes en el mint canónico", token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", direction: "LONG" },
+      key()
+    );
+    expect(post.status).toBe(201);
+    expect(post.json.tokenSymbol).toBe("USDC");
+  });
+
+  it("rejects oversized feed texts", async () => {
+    const r = await api("POST", "/api/feed/post", { text: "x".repeat(2500) }, key());
+    expect(r.status).toBe(400);
+  });
 });
 
 describe("static & misc", () => {

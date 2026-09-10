@@ -18,6 +18,7 @@ import { TokenMeta } from "./tokens.js";
 export const App = {
   currentView: "feed",
   user: null,
+  _thesisPrefill: null,
 
   async init() {
     // 0. Referral attribution: capture ?ref=CODE from the link before anything.
@@ -256,9 +257,37 @@ export const App = {
     if (modal) modal.classList.remove("active");
   },
 
-  openNewPostModal() {
+  /**
+   * Open the thesis composer. Optional prefill: { token, chain, price, launchId }
+   * — wired from Trenches rows, Discover rows, the terminal and asset previews
+   * so users can publish a thesis for exactly the token they're looking at.
+   */
+  openNewPostModal(prefill) {
     const modal = document.getElementById("newPostModal");
-    if (modal) modal.classList.add("active");
+    if (!modal) return;
+    const p = prefill ?? {};
+    const tokenInput = document.getElementById("thesisToken");
+    const entryInput = document.getElementById("thesisEntry");
+    const header = document.getElementById("thesisTokenPreview");
+    if (tokenInput && p.token) tokenInput.value = String(p.token).toUpperCase().slice(0, 12);
+    if (entryInput && Number(p.price) > 0) {
+      entryInput.value = "$" + (p.price < 0.01 ? p.price.toFixed(6) : p.price.toPrecision(4));
+    }
+    // Context strip: logo + live price of the token being written about.
+    if (header) {
+      if (p.token) {
+        header.style.display = "flex";
+        header.innerHTML =
+          (window.TokenMeta ? TokenMeta.logoHtml(String(p.token).toUpperCase(), { size: 26, imageUrl: p.imageUrl }) : "") +
+          `<div style="min-width:0"><div style="font-size:12px; font-weight:800; color:#fff">$${String(p.token).toUpperCase().slice(0, 12)}</div>` +
+          `<div style="font-size:10px; color:var(--text-tertiary); font-family:var(--font-mono)">${Number(p.price) > 0 ? "$" + Number(p.price).toPrecision(4) : String(p.chain ?? "").toUpperCase().slice(0, 12)}</div></div>`;
+      } else {
+        header.style.display = "none";
+        header.innerHTML = "";
+      }
+    }
+    this._thesisPrefill = p;
+    modal.classList.add("active");
   },
 
   closeNewPostModal() {

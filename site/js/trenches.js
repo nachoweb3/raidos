@@ -312,7 +312,10 @@ export const TrenchesEngine = {
             <div style="color:#fff">${price}</div>
             ${chg != null ? `<div class="${chgCls}">${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%</div>` : `<div style="color:var(--text-tertiary)">${esc(t.chain.slice(0, 3).toUpperCase())}</div>`}
           </div>
-          <button class="trench-buy-btn" onclick="window.TrenchesEngine.quickBuy('${safeAttr(t.symbol)}', event)" title="Compra rápida 0.1 USDC">⚡ 0.1</button>
+          <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end">
+            <button class="trench-buy-btn" onclick="window.TrenchesEngine.quickBuy('${safeAttr(t.symbol)}', event)" title="Compra rápida 0.1 USDC">⚡ 0.1</button>
+            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis('${safeAttr(t.symbol)}', ${Number(t.id)}, event)" title="Publicar tesis sobre este token">📊 Tesis</button>
+          </div>
         </div>
       </div>`;
   },
@@ -320,6 +323,20 @@ export const TrenchesEngine = {
   selectById(symbol, id) {
     const t = this.tokens.find((x) => x.symbol === symbol && Number(x.id) === Number(id));
     if (t) this.select(t);
+  },
+
+  /** Open the thesis composer pre-filled with this token's live context. */
+  postThesis(symbol, launchId, event) {
+    event?.stopPropagation();
+    const t = this.tokens.find((x) => x.symbol === symbol && Number(x.id) === Number(launchId));
+    if (!t) return;
+    window.App?.openNewPostModal({
+      token: t.symbol,
+      chain: t.chain,
+      price: t.priceUsd,
+      launchId: t.status !== "graduated" ? t.id : undefined,
+      imageUrl: t.imageUrl,
+    });
   },
 
   ageLabel(createdAt) {

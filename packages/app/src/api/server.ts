@@ -874,23 +874,43 @@ export class ApiServer {
     this.router.publicRoute("POST", "/api/feed/post", (ctx) => {
       const actorId = ctx.userId ?? 1;
       const text = this.str(ctx, "text");
-      const token = this.str(ctx, "token", false) || "SOL";
+      if (text.length > 2000) throw new HttpError(400, "text too long (max 2000 chars)");
+      const rawToken = this.str(ctx, "token", false) || "SOL";
       const chain = this.str(ctx, "chain", false) || "solana";
       const direction = this.str(ctx, "direction", false) || "LONG";
       const entryPrice = this.str(ctx, "entryPrice", false) || "";
       const targetPrice = this.str(ctx, "targetPrice", false) || "";
       const stopLoss = this.str(ctx, "stopLoss", false) || "";
+      const launchIdRaw = Number(ctx.body?.launchId);
+
+      // Resolve real token metadata: launchpad tokens carry name/image via
+      // their launch row; everything else falls back to the well-known map or
+      // a clean ticker (never an address prefix) for the feed pill.
+      let token = rawToken.slice(0, 120);
+      let tokenSymbol = "";
+      if (Number.isFinite(launchIdRaw) && launchIdRaw > 0) {
+        const launch = this.db.getLaunch(launchIdRaw);
+        if (launch) {
+          token = launch.token_address || String(launch.id); // stable ref for the pill
+          tokenSymbol = String(launch.symbol).toUpperCase();
+        }
+      }
+      if (!tokenSymbol) {
+        const known = WELL_KNOWN_TOKENS[token] ?? WELL_KNOWN_TOKENS[token.toLowerCase()];
+        const looksLikeTicker = /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(token) && !/^0x/i.test(token);
+        tokenSymbol = known?.symbol ?? (looksLikeTicker ? token.toUpperCase() : token.slice(0, 6).toUpperCase());
+      }
 
       const eventId = this.db.addFeedEvent({
         type: direction ? "thesis" : "post",
         actor_id: actorId,
         chain,
         token,
-        token_symbol: token,
-        payload: { text, direction, entryPrice, targetPrice, stopLoss },
+        token_symbol: tokenSymbol,
+        payload: { text, direction, entryPrice, targetPrice, stopLoss, launchId: Number.isFinite(launchIdRaw) && launchIdRaw > 0 ? launchIdRaw : undefined },
         ts: Math.floor(Date.now() / 1000),
       });
-      sendJson(ctx.res, 201, { success: true, eventId, mode: this.appMode });
+      sendJson(ctx.res, 201, { success: true, eventId, tokenSymbol, mode: this.appMode });
     });
 
     // Server-Sent Events stream (realtime feed; polling fallback via sinceId)
