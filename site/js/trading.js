@@ -11,6 +11,17 @@
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
+import { DexFeed } from "./dexfeed.js";
+
+/** Canonical addresses for the handful of tokens that need no lookup. */
+const WELL_KNOWN_ADDR = {
+  solana: { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", SOL: "So11111111111111111111111111111111111111112" },
+  ethereum: { USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
+  base: { USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+  bsc: { USDC: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" },
+  polygon: { USDC: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c935" },
+  arbitrum: { USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" },
+};
 
 export const TradingEngine = {
   currentSymbol: "SOL",
@@ -42,6 +53,34 @@ export const TradingEngine = {
     this.initChart();
     this.refreshPrice().then(() => this.fetchPositions());
     this.updateTokenDisplay();
+    // ⏱ LIVE PnL: re-price open positions every 5s from real pair data
+    // (DexFeed by address, PriceFeed by ticker fallback). Client-side view
+    // only — realized PnL from the backend is never overwritten.
+    if (!this._pnlTimer) {
+      this._pnlTimer = setInterval(() => {
+        if (document.visibilityState === "visible" && this.positions.length) {
+          this.tickPositionPnl();
+        }
+      }, 5_000);
+    }
+  },
+
+  /** Re-price every open position from live market data and re-render. */
+  tickPositionPnl() {
+    let changed = false;
+    for (const p of this.positions) {
+      if (!p.entryPrice || p.entryPrice <= 0) continue;
+      const dexRow = p.tokenAddress ? DexFeed.get(p.tokenAddress) : null;
+      const px = dexRow?.priceUsd > 0 ? dexRow.priceUsd : PriceFeed.get(p.symbol)?.price ?? 0;
+      if (px > 0 && px !== p.currentPrice) {
+        p.currentPrice = px;
+        const mult = p.side === "LONG" ? 1 : -1;
+        p.pnlUsdc = (px - p.entryPrice) * (p.sizeUsdc / (p.entryPrice || 1)) * mult;
+        p.pnlPercent = mult * ((px - p.entryPrice) / p.entryPrice) * 100 * (p.leverage || 1);
+        changed = true;
+      }
+    }
+    if (changed) this.renderPositions();
   },
 
   setAsset(symbol, chain, price, opts = {}) {
@@ -126,15 +165,7 @@ export const TradingEngine = {
   resolveTokenAddress(symbol, chain) {
     const sym = String(symbol ?? "").toUpperCase();
     if (sym === "USDC") {
-      const wellKnown = {
-        solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        ethereum: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        bsc: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
-        polygon: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c935",
-        arbitrum: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-      };
-      return wellKnown[chain || "solana"];
+      return WELL_KNOWN_ADDR[chain || "solana"]?.USDC;
     }
     if (sym === "SOL" && (chain || "solana") === "solana") {
       return "So11111111111111111111111111111111111111112"; // wrapped SOL
@@ -500,7 +531,18 @@ export const TradingEngine = {
           pnlUsdc: p.realized_pnl_usdc != null ? Number(p.realized_pnl_usdc) / 1e6 : 0,
           pnlPercent: 0,
           leverage: 1,
+          tokenAddress: WELL_KNOWN_ADDR[p.chain]?.[TokenMeta.resolveSymbol(p.token, p.token_symbol)] ?? null,
         }));
+        // Resolve real addresses for the rest from the DexFeed pair cache.
+        DexFeed.ensureTokens(
+          this.positions.filter((p) => !p.tokenAddress).map((p) => ({ symbol: p.symbol, chain: p.chain })),
+        ).then(() => {
+          for (const p of this.positions) {
+            if (p.tokenAddress) continue;
+            const row = DexFeed.get(p.symbol);
+            if (row?.address) p.tokenAddress = row.address;
+          }
+        }).catch(() => {});
       } else {
         this.positions = [];
       }
@@ -534,6 +576,7 @@ export const TradingEngine = {
 
     container.innerHTML = this.positions.map((p) => {
       const isProfit = p.pnlUsdc >= 0;
+      const live = p.currentPrice > 0;
       return `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); font-size:12px">
           <div>
@@ -545,6 +588,7 @@ export const TradingEngine = {
             </div>
             <div style="color:var(--text-secondary); font-size:11px; margin-top:2px">
               Entry: $${p.entryPrice.toFixed(2)} · Size: $${p.sizeUsdc.toFixed(2)}
+              ${live ? ` · <span style="color:var(--text-tertiary)">Live: $${p.currentPrice < 0.01 ? p.currentPrice.toFixed(6) : p.currentPrice.toPrecision(4)}</span>` : ""}
             </div>
           </div>
 

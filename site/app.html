@@ -298,6 +298,14 @@
 
       <!-- Right Header Actions -->
       <div style="display:flex; align-items:center; gap:10px">
+        <!-- 🔎 Universal search: any ticker or on-chain address → terminal -->
+        <div style="position:relative" class="desktop-only">
+          <input id="universalSearchInput" type="text" placeholder="Buscar token o pegar dirección…" autocomplete="off"
+            oninput="window.App.universalSearch(this.value)" onfocus="window.App.universalSearch(this.value)" onblur="setTimeout(() => window.App.hideUniversalSearch(), 180)"
+            onkeydown="if(event.key==='Enter') window.App.universalSearchEnter()"
+            style="width:230px; padding:6px 10px; font-size:11.5px; border-radius:var(--radius-sm); border:1px solid var(--border-subtle); background:var(--bg-elevated); color:#fff; outline:none">
+          <div id="universalSearchResults" style="display:none; position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); box-shadow:0 12px 32px rgba(0,0,0,0.5); z-index:1000; max-height:340px; overflow-y:auto"></div>
+        </div>
         <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TradingEngine.currentChain = this.value;" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
           <option value="all">◎ Todas las cadenas</option>
           <option value="solana">Solana</option>
@@ -570,6 +578,17 @@
             <button class="btn btn-primary btn-lg" id="executeOrderBtn" onclick="window.TradingEngine.executeTrade()">
               BUY SOL
             </button>
+          </div>
+
+          <!-- 📊 Tesis del token — community theses for the selected asset -->
+          <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border-subtle)">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+              <div style="font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">📊 Tesis de la comunidad</div>
+              <button class="btn btn-secondary btn-sm" onclick="window.TradingEngine.openThesisComposer()" style="font-size:10px; padding:3px 8px">+ Publicar</button>
+            </div>
+            <div id="terminalThesisList" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto">
+              <div style="color:var(--text-tertiary); font-size:11px">Selecciona un token para ver sus tesis…</div>
+            </div>
           </div>
           </div><!-- /execution sidebar -->
         </div>
@@ -888,7 +907,9 @@
 
     function handleCreateThesis(e) {
       e.preventDefault();
-      const token = document.getElementById('thesisToken').value.trim().toUpperCase();
+      // RAW token ref — an on-chain address must never be truncated (it is the
+      // routing + thesis-matching key). Display truncation happens elsewhere.
+      const token = document.getElementById('thesisToken').value.trim();
       const direction = document.getElementById('thesisDirection').value;
       const entryPrice = document.getElementById('thesisEntry').value.trim();
       const targetPrice = document.getElementById('thesisTp').value.trim();
@@ -900,6 +921,7 @@
         token, direction, entryPrice, targetPrice, stopLoss, text,
         chain: prefill.chain,
         launchId: prefill.launchId,
+        tokenSymbol: prefill.symbol,
       });
       window.App.closeNewPostModal();
     }

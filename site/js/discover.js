@@ -13,7 +13,7 @@
 import { EliteScoreEngine } from "./intelligence.js";
 import { ApiClient } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed } from "./dexfeed.js";
+import { DexFeed, SecurityFeed } from "./dexfeed.js";
 
 /**
  * Shared real-price feed used by Discover, Feed and the Trading terminal.
@@ -283,6 +283,8 @@ export const DiscoverEngine = {
         const row = DexFeed.get(t.tokenAddress || t.symbol);
         if (!row) continue;
         t.dex = row;
+        // Capture the real pair address so the terminal can route swaps by it.
+        if (!t.tokenAddress && row.address) t.tokenAddress = row.address;
         if (row.mcap > 0) t.mcap = t.mcap > 0 ? Math.max(t.mcap, row.mcap) : row.mcap;
         if (row.vol24h > 0) t.vol24h = t.vol24h > 0 ? Math.max(t.vol24h, row.vol24h) : row.vol24h;
         if (row.liqUsd > 0) t.liquidity = row.liqUsd;
@@ -304,6 +306,17 @@ export const DiscoverEngine = {
           });
           t.eliteScore = s.score;
           t.eliteTier = s.tier;
+        }
+      }
+      // 🛡️ Security badges for every token with a known address.
+      const secRefs = this.tokens
+        .filter((t) => t.tokenAddress)
+        .map((t) => ({ address: t.tokenAddress, chain: t.chain }));
+      if (secRefs.length) {
+        const results = await SecurityFeed.fetchMany(secRefs).catch(() => ({}));
+        for (const t of this.tokens) {
+          const sec = results[String(t.tokenAddress ?? "").toLowerCase()];
+          if (sec) t.security = sec;
         }
       }
       // Holders where an on-chain provider exists (launchpad tokens only —
@@ -756,13 +769,17 @@ export const DiscoverEngine = {
       t.sector === "Launchpad"
         ? `<span class="brand-badge" style="font-size:9px; background:rgba(253,224,71,0.12); color:#fde047; border:1px solid rgba(253,224,71,0.25)">${t.launchStatus === "graduated" ? "🎓 GRADUATED" : "🚀 LAUNCH"}</span>`
         : "";
+    // 🛡️ Security badge (RugCheck/GoPlus) — hidden when unknown, never "safe".
+    const secBadge = t.security
+      ? `<span title="🛡️ ${String(t.security.title ?? t.security.label ?? "").replace(/[&<>"]'/g, "")}" style="font-size:8.5px; font-weight:800; letter-spacing:0.4px; color:${t.security.level === "good" ? "var(--delta-green)" : t.security.level === "warn" ? "#fde047" : "var(--delta-red)"}; border:1px solid currentColor; border-radius:4px; padding:0 4px; line-height:13px">🛡️ ${t.security.level === "good" ? "OK" : t.security.level === "warn" ? "MED" : "HIGH"}</span>`
+      : "";
     const scoreBadge =
       t.eliteScore !== null && t.eliteScore !== undefined
         ? `<div class="elite-badge ${t.eliteScore >= 88 ? 'high' : 'mid'}" title="Elite Score Algorítmico">⚡ ${t.eliteScore}/100</div>`
         : `<div class="elite-badge mid" title="Datos insuficientes para puntuar" style="opacity:0.55">⚡ —</div>`;
 
     return `
-      <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
+      <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price}, '${t.tokenAddress ?? ""}')" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
         <div style="display:flex; align-items:center; gap:14px">
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.DiscoverEngine.toggleWatchlist('${t.symbol}')" style="padding:4px; font-size:14px; color:${isSaved ? '#fde047' : 'var(--text-muted)'}" title="Guardar en Watchlist">
             ${isSaved ? '★' : '☆'}
@@ -775,6 +792,7 @@ export const DiscoverEngine = {
               <span style="font-weight:800; font-size:14px; color:#fff">${t.symbol}</span>
               <span class="brand-badge" style="font-size:9px">${t.chain.toUpperCase()}</span>
               ${launchBadge}
+              ${secBadge}
               ${t.sector ? `<span style="font-size:10px; color:var(--text-tertiary)">${t.sector}</span>` : ''}
               ${holders !== null ? `<span title="${t.holders ? "Holders on-chain" : "Compradores del launchpad"}" style="font-size:10px; color:var(--text-tertiary)">🐋 ${holders.toLocaleString("en-US")}</span>` : ""}
               ${this.renderSocialIcons(t)}

@@ -12,6 +12,7 @@ import { PortfolioEngine } from "./portfolio.js";
 import { TrenchesEngine } from "./trenches.js";
 import { RewardsEngine } from "./rewards.js";
 import { PremiumEngine } from "./premium.js";
+import { DexFeed } from "./dexfeed.js";
 import { MarketsEngine } from "./markets.js";
 import { TokenMeta } from "./tokens.js";
 
@@ -204,11 +205,87 @@ export const App = {
     }
   },
 
-  openTradeForToken(symbol, chain, price) {
-    TradingEngine.setAsset(symbol, chain, price);
+  openTradeForToken(symbol, chain, price, tokenAddress) {
+    TradingEngine.setAsset(symbol, chain, price, { tokenAddress: tokenAddress || undefined });
     this.switchView("trade");
     // Reflect the selection in the Trenches board when it loads.
     setTimeout(() => TrenchesEngine.init(), 80);
+  },
+
+  /* ── 🔎 Universal token search (header) ─────────────────────────────── */
+
+  /**
+   * Find ANY token by ticker or on-chain address and open it in the terminal.
+   * Ticker → PriceFeed (curated) + DexScreener search. Address → DexScreener
+   * pair lookup. Honest dropdown: no results → "no encontrado", never fake.
+   */
+  async universalSearch(q) {
+    const box = document.getElementById("universalSearchResults");
+    if (!box) return;
+    const query = String(q ?? "").trim();
+    if (query.length < 2) {
+      box.style.display = "none";
+      return;
+    }
+    this._usSeq = (this._usSeq ?? 0) + 1;
+    const seq = this._usSeq;
+    box.style.display = "block";
+    box.innerHTML = `<div style="padding:10px 12px; font-size:11px; color:var(--text-tertiary)">Buscando…</div>`;
+
+    const isAddress = /^(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(query);
+    const rows = [];
+    try {
+      if (isAddress) {
+        await DexFeed.ensureAddresses([{ address: query, chain: "solana" }]);
+        await DexFeed.ensureAddresses([{ address: query, chain: "bsc" }]).catch(() => {});
+        for (const chain of ["solana", "bsc"]) {
+          const r = DexFeed.get(query.toLowerCase());
+          if (r && r.chain === chain) { rows.push(r); break; }
+        }
+        if (!rows.length) {
+          const r = DexFeed.get(query.toLowerCase());
+          if (r) rows.push(r);
+        }
+      } else {
+        // Ticker: resolve via search endpoint per active chains.
+        await DexFeed.ensureTokens([{ symbol: query.toUpperCase(), chain: "solana" }]);
+        const r = DexFeed.get(query.toUpperCase());
+        if (r) rows.push(r);
+      }
+    } catch {}
+    if (seq !== this._usSeq) return; // stale response
+
+    if (!rows.length) {
+      box.innerHTML = `<div style="padding:12px; font-size:11.5px; color:var(--text-tertiary)">Sin resultados para "${query.replace(/[&<>"']/g, "")}" en Solana/BSC.</div>`;
+      return;
+    }
+    box.innerHTML = rows.slice(0, 6).map((r) => `
+      <div onclick="window.App.universalSearchGo('${String(r.symbol ?? "").replace(/[^a-zA-Z0-9]/g, "")}', '${String(r.chain ?? "solana")}', ${r.priceUsd ?? 0}, '${String(r.address ?? "").replace(/[^a-zA-Z0-9]/g, "")}'); window.App.hideUniversalSearch()"
+        style="display:flex; align-items:center; gap:10px; padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border-subtle)">
+        <strong style="font-size:12px; color:#fff; min-width:52px">${String(r.symbol ?? "").replace(/[&<>"']/g, "")}</strong>
+        <span style="font-size:10.5px; color:var(--text-tertiary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${String(r.name ?? "").replace(/[&<>"']/g, "")}</span>
+        <span style="font-size:10px; color:var(--text-tertiary)">${String(r.chain ?? "").toUpperCase()}</span>
+        <span style="font-size:11px; font-family:var(--font-mono); color:var(--text-secondary)">$${r.priceUsd > 0 ? (r.priceUsd < 0.01 ? r.priceUsd.toFixed(6) : r.priceUsd.toPrecision(4)) : "—"}</span>
+      </div>`
+    ).join("");
+  },
+
+  universalSearchEnter() {
+    const box = document.getElementById("universalSearchResults");
+    const first = box?.querySelector("[onclick]");
+    if (first) first.click();
+  },
+
+  hideUniversalSearch() {
+    const box = document.getElementById("universalSearchResults");
+    if (box) box.style.display = "none";
+  },
+
+  universalSearchGo(symbol, chain, price, address) {
+    this.openTradeForToken(symbol, chain, price, address);
+    this.hideUniversalSearch();
+    const input = document.getElementById("universalSearchInput");
+    if (input) input.value = "";
   },
 
   /** Kick off shared token metadata (launchpad names/logos) once at startup. */
