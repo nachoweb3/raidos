@@ -25,6 +25,9 @@ const CHAIN_ALIASES = {
   arc: [],
 };
 
+/** GoPlus chain ids for token-security lookups (EVM only). */
+const GOPUS_CHAIN_IDS = { ethereum: 1, bsc: 56, base: 8453, polygon: 137, arbitrum: 42161 };
+
 function normalizeSocials(info) {
   const out = {};
   try {
@@ -312,5 +315,121 @@ export const DexFeed = {
     const max = Math.max(1, ...entries.map((e) => e.heat));
     for (const e of entries) e.score = Math.round((e.heat / max) * 100);
     return entries.sort((a, b) => b.score - a.score);
+  },
+};
+
+/**
+ * 🛡️ SECURITY FEED — token risk checks from public, keyless providers.
+ *   • Solana → RugCheck.xyz API (rugged/low risk signals, mint authority,
+ *     liquidity locked, top-10 holder concentration).
+ *   • EVM (Ethereum/BSC/Base/Polygon/Arbitrum) → GoPlus token security API
+ *     (honeypot, buy/sell tax, owner/mint privileges, LP holders).
+ * Honest rules: unknown chain/address → null (renders as no badge, never as
+ * "safe"). Results cached in-memory for the session (30 min).
+ */
+export const SecurityFeed = {
+  cache: {},           // address(lower) → { level, label, title, detail } | null
+  ttlMs: 30 * 60 * 1000,
+  _inflight: new Map(),
+
+  get(address) {
+    if (!address) return null;
+    const hit = this.cache[String(address).toLowerCase()];
+    if (hit && Date.now() - hit._at < this.ttlMs) return hit.v;
+    return null;
+  },
+
+  /** Fetch security info for one address. Returns cached instantly when warm. */
+  async fetch(address, chain) {
+    const addr = String(address ?? "").trim();
+    if (!addr) return null;
+    const key = addr.toLowerCase();
+    const cached = this.cache[key];
+    if (cached && Date.now() - cached._at < this.ttlMs) return cached.v;
+    if (this._inflight.has(key)) return this._inflight.get(key);
+
+    const chainId = String(chain ?? "solana").toLowerCase();
+    const p = (chainId === "solana" ? this._rugcheck(addr) : this._goplus(addr, chainId))
+      .then((v) => { this.cache[key] = { v, _at: Date.now() }; return v; })
+      .catch(() => null)
+      .finally(() => this._inflight.delete(key));
+    this._inflight.set(key, p);
+    return p;
+  },
+
+  /** Batch: resolve many and return a map address → result. */
+  async fetchMany(refs) {
+    await Promise.allSettled((refs ?? []).map((r) => this.fetch(r.address, r.chain)));
+    const out = {};
+    for (const r of refs ?? []) {
+      const k = String(r.address ?? "").toLowerCase();
+      if (k) out[k] = this.cache[k]?.v ?? null;
+    }
+    return out;
+  },
+
+  /**
+   * RugCheck: /api/v2/tokens/{mint}/risk — score is 0..100+ (lower better);
+   * they also expose a discrete level. We normalize to good/warn/bad.
+   */
+  async _rugcheck(mint) {
+    const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${encodeURIComponent(mint)}/risk`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (!j || typeof j !== "object") return null;
+    const score = Number(j.score_normalised ?? j.score ?? 0);
+    const lvl = String(j.level ?? "").toLowerCase();
+    const level = lvl === "danger" || score >= 75 ? "bad"
+      : lvl === "warn" || score >= 35 ? "warn"
+      : "good";
+    const dangers = (j.risks ?? []).filter((r) => String(r.level ?? "").toLowerCase() === "danger").slice(0, 2).map((r) => r.name);
+    return {
+      level,
+      score,
+      provider: "rugcheck",
+      label: level === "good" ? "RISK LOW" : level === "warn" ? "RISK MED" : "RISK HIGH",
+      title: dangers.length ? dangers.join(" · ") : `RugCheck score ${score}`,
+      detail: (j.risks ?? []).length + " señales",
+    };
+  },
+
+  /** GoPlus: public token security endpoint, no key for low QPS. */
+  async _goplus(address, chain) {
+    const cid = GOPUS_CHAIN_IDS[chain];
+    if (!cid) return null;
+    const res = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${cid}?contract_addresses=${encodeURIComponent(address)}`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const d = j?.result?.[String(address).toLowerCase()];
+    if (!d) return null;
+    const honeypot = String(d.is_honeypot ?? "0") === "1";
+    const canMint = String(d.is_mintable ?? "0") === "1";
+    const ownerPriv = String(d.owner_address ?? "") !== "" && String(d.owner_address ?? "") !== "0x0000000000000000000000000000000000000000";
+    const buyTax = Number(d.buy_tax ?? 0) * 100;
+    const sellTax = Number(d.sell_tax ?? 0) * 100;
+    const level = honeypot || buyTax >= 20 || sellTax >= 20 ? "bad"
+      : canMint || buyTax >= 5 || sellTax >= 5 ? "warn"
+      : "good";
+    const flags = [
+      honeypot ? "HONEYPOT" : null,
+      canMint ? "MINTABLE" : null,
+      buyTax >= 5 ? `BUY ${buyTax.toFixed(0)}%` : null,
+      sellTax >= 5 ? `SELL ${sellTax.toFixed(0)}%` : null,
+      ownerPriv ? "OWNER PRIV" : null,
+    ].filter(Boolean);
+    return {
+      level,
+      score: honeypot ? 100 : Math.min(99, buyTax + sellTax + (canMint ? 25 : 0)),
+      provider: "goplus",
+      label: level === "good" ? "RISK LOW" : level === "warn" ? "RISK MED" : "RISK HIGH",
+      title: flags.length ? flags.join(" · ") : "GoPlus: sin señales",
+      detail: flags.length + " flags",
+    };
   },
 };

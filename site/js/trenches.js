@@ -18,7 +18,7 @@
 
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed } from "./dexfeed.js";
+import { DexFeed, SecurityFeed } from "./dexfeed.js";
 
 const COLUMNS = [
   { id: "new", title: "New Pairs", icon: "🔥", hint: "Mercado real — DexScreener" },
@@ -73,6 +73,46 @@ export const TrenchesEngine = {
     this.connectStream();
     // Market refresh every 2 minutes (boosts feed changes constantly).
     setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
+    // ⏱ LIVE TICKING: re-render deltas every 5s from cached pair data and
+    // re-pull pairs every 60s — rows breathe without hammering the API.
+    setInterval(() => {
+      if (document.visibilityState === "visible" && this.loadedOnce) {
+        this._tick();
+      }
+    }, 5_000);
+    setInterval(() => {
+      if (document.visibilityState === "visible") this.refreshPairs();
+    }, 60_000);
+  },
+
+  /**
+   * Lightweight tick: refresh only prices/changes from the DexFeed cache and
+   * patch the DOM in place (no full re-render → selection and scroll survive).
+   */
+  _tick() {
+    let changed = false;
+    for (const t of this.allTokens()) {
+      const row = t.tokenAddress ? DexFeed.get(t.tokenAddress) : DexFeed.get(t.symbol);
+      if (!row) continue;
+      if (row.priceUsd > 0 && row.priceUsd !== t.priceUsd) {
+        t.priceUsd = row.priceUsd;
+        changed = true;
+      }
+      if (t.dex && row._updatedAt !== t.dex._updatedAt) t.dex = row;
+      if (row.mcap > 0) t.mcapUsd = row.mcap;
+    }
+    if (changed) this.render();
+  },
+
+  /** Force-refresh DexScreener pair data for every address on the board. */
+  async refreshPairs() {
+    const refs = [
+      ...this.tokens.filter((t) => t.tokenAddress).map((t) => ({ address: t.tokenAddress, chain: t.chain })),
+      ...this.market.filter((t) => t.tokenAddress).map((t) => ({ address: t.tokenAddress, chain: t.chain })),
+    ];
+    if (!refs.length) return;
+    await DexFeed.ensureAddresses(refs, { force: true }).catch(() => {});
+    this._tick();
   },
 
   /**
@@ -87,8 +127,52 @@ export const TrenchesEngine = {
       if (seq !== this._seq && force) return;
       this.market = rows.map((r) => this.normalizeMarket(r));
       this._marketAt = Date.now();
-      if (this.loadedOnce) this.render();
+      if (this.loadedOnce) {
+        this.render();
+        this.loadSecurity();
+      }
     } catch {}
+  },
+
+  /** Apply freshly resolved pair rows onto launch tokens and re-render. */
+  _applyDexRows(list) {
+    for (const t of list) {
+      if (!t.tokenAddress) continue;
+      const row = DexFeed.get(t.tokenAddress);
+      if (!row) continue;
+      t.dex = row;
+      if (row.priceUsd > 0) t.priceUsd = row.priceUsd;
+      if (row.mcap > 0) t.mcapUsd = row.mcap;
+      if (row.socials) t.socials = { ...t.socials, ...row.socials };
+      if (row.logo) t.imageUrl = t.imageUrl || row.logo;
+    }
+    this.render();
+  },
+
+  /** 🛡️ Security checks (RugCheck/GoPlus) for every known address. */
+  async loadSecurity() {
+    const seen = new Map();
+    for (const t of this.allTokens()) {
+      if (!t.tokenAddress || seen.has(t.tokenAddress)) continue;
+      seen.set(t.tokenAddress, { address: t.tokenAddress, chain: t.chain });
+    }
+    if (!seen.size) return;
+    const results = await SecurityFeed.fetchMany([...seen.values()]).catch(() => ({}));
+    let any = false;
+    for (const t of this.allTokens()) {
+      const sec = results[String(t.tokenAddress ?? "").toLowerCase()];
+      if (sec && sec !== t.security) { t.security = sec; any = true; }
+    }
+    if (any) this.render();
+  },
+
+  /** Badge html for a token's security verdict (empty when unknown). */
+  securityBadge(t) {
+    const s = t.security;
+    if (!s) return "";
+    const color = s.level === "good" ? "var(--delta-green)" : s.level === "warn" ? "#fde047" : "var(--delta-red)";
+    const title = esc(s.title ?? s.label ?? "");
+    return `<span title="🛡️ ${title}" style="font-size:8.5px; font-weight:800; letter-spacing:0.4px; color:${color}; border:1px solid ${color}; border-radius:4px; padding:0 4px; line-height:13px; opacity:0.9">🛡️ ${s.level === "good" ? "OK" : s.level === "warn" ? "MED" : "HIGH"}</span>`;
   },
 
   normalizeMarket(r) {
@@ -130,16 +214,8 @@ export const TrenchesEngine = {
       DexFeed.ensureAddresses(
         this.tokens.filter((t) => t.tokenAddress).map((t) => ({ address: t.tokenAddress, chain: t.chain })),
       ).then(() => {
-        for (const t of this.tokens) {
-          const row = DexFeed.get(t.tokenAddress);
-          if (!row) continue;
-          t.dex = row;
-          if (row.priceUsd > 0) t.priceUsd = row.priceUsd;
-          if (row.mcap > 0) t.mcapUsd = row.mcap;
-          if (row.socials) t.socials = { ...t.socials, ...row.socials };
-          if (row.logo) t.imageUrl = t.imageUrl || row.logo;
-        }
-        this.render();
+        this._applyDexRows(this.tokens);
+        this.loadSecurity();
       }).catch(() => {});
     } catch (err) {
       if (seq === this._seq) this.renderError(String(err?.message || err));
@@ -380,6 +456,7 @@ export const TrenchesEngine = {
         <div style="flex:1; min-width:0">
           <div style="display:flex; align-items:center; gap:6px; min-width:0">
             <strong style="font-size:12px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(t.symbol)}</strong>
+            ${this.securityBadge(t)}
             <span style="font-size:10px; color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(String(t.name).slice(0, 18))}</span>
             ${socialIcons}
           </div>

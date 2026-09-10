@@ -159,6 +159,10 @@ export const TradingEngine = {
       alert("No se pudo resolver la dirección on-chain de " + t.symbol + " — usa el terminal.");
       return null;
     }
+    // Real signature required: ask for the wallet password every time —
+    // never cache it client-side.
+    const password = prompt(`Wallet password para firmar la compra de ${t.symbol} (0.1 USDC):`);
+    if (!password) return null;
     try {
       const exec = await ApiClient.executeTrade({
         fromChain: t.chain || "solana",
@@ -167,7 +171,7 @@ export const TradingEngine = {
         buyToken: addr,
         amount: "100000", // 0.1 USDC in micro-units
         type: "swap",
-      }, "demo_pass");
+      }, password);
       alert(`⚡ Comprado ${t.symbol} por 0.1 USDC (tx: ${String(exec?.result?.txHash ?? exec?.txHash ?? "ok").slice(0, 12)}…)`);
       this.fetchPositions();
       return exec;
@@ -403,7 +407,11 @@ export const TradingEngine = {
       return;
     }
 
-    const password = prompt("Wallet password (to decrypt your custodial key for signing):") || "demo_pass";
+    const password = prompt("Wallet password (to decrypt your custodial key for signing):", "");
+    if (!password) {
+      alert("Se necesita la contraseña de la wallet para firmar.");
+      return;
+    }
 
     const btn = document.getElementById("executeOrderBtn");
     const originalText = btn.textContent;
