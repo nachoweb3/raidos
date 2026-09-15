@@ -97,7 +97,7 @@ async function scanSolana(address: string): Promise<Omit<WalletBalance, "chain" 
     nativeAmount: lamports / 1e9,
     usdcAmount,
     // Non-USDC tokens only — USDC is reported in its dedicated field.
-    tokens: tokens.filter((t) => !t.isUsdc).slice(0, 50),
+    tokens: tokens.filter((t) => !t.isUsdc),
   };
 }
 

@@ -233,6 +233,72 @@ export class TradingEngine {
     };
   }
 
+  /**
+   * Build an unsigned transaction for a connected browser wallet. This method
+   * never accepts or derives a private key; signing remains the wallet's job.
+   */
+  async prepareSelfCustodyTransaction(params: TradeParams, walletAddress: string): Promise<{
+    quote: TradeQuote;
+    unsignedTransaction: {
+      kind: "solana" | "evm";
+      serialized?: string;
+      to?: string;
+      data?: string;
+      value?: string;
+      gas?: string;
+      gasPrice?: string;
+      chainId: number;
+    };
+  }> {
+    const quote = await this.getQuote({ ...params, taker: walletAddress });
+    if (params.fromChain === "solana") {
+      const config = getChain(params.fromChain);
+      if (!config || !quote.raw) throw new Error("quote is missing a Solana transaction payload");
+      const response = await fetch(`${config.dexApiUrl}/swap`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(process.env.JUPITER_API_KEY ? { "x-api-key": process.env.JUPITER_API_KEY } : {}),
+        },
+        body: JSON.stringify({
+          quoteResponse: quote.raw,
+          userPublicKey: walletAddress,
+          wrapAndUnwrapSol: true,
+        }),
+      });
+      if (!response.ok) throw new Error(`swap transaction preparation failed: ${response.status}`);
+      const body = await response.json() as { swapTransaction?: string };
+      if (!body.swapTransaction) throw new Error("provider returned no Solana transaction");
+      return {
+        quote,
+        unsignedTransaction: {
+          kind: "solana",
+          serialized: body.swapTransaction,
+          chainId: 0,
+        },
+      };
+    }
+
+    const raw = quote.raw as { transaction?: { to?: string; data?: string; value?: string; gas?: string; gasPrice?: string } } | undefined;
+    const transaction = raw?.transaction;
+    const config = getChain(params.fromChain);
+    if (!config || !transaction?.to || !transaction.data) {
+      throw new Error("quote is missing an EVM transaction payload");
+    }
+    return {
+      quote,
+      unsignedTransaction: {
+        kind: "evm",
+        to: transaction.to,
+        data: transaction.data,
+        value: transaction.value ?? "0",
+        gas: transaction.gas,
+        gasPrice: transaction.gasPrice,
+        chainId: config.chainId,
+      },
+    };
+  }
+
   /** Li.Fi bridge quote for cross-chain */
   private async getBridgeQuote(params: TradeParams, from: ChainConfig, to: ChainConfig, fee: string): Promise<TradeQuote> {
     const res = await fetch("https://api.li.fi/v2/quote", {

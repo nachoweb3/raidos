@@ -3,19 +3,9 @@
  * Handles authentication, API keys, wallet cryptographic signatures, and live/mock execution.
  */
 
-// API base: defaults to the hosted RaidOS API so statically-hosted copies of
-// this site (e.g. GitHub Pages) still reach the backend. Override per visitor
-// with ?api=https://your-api-host — it persists in localStorage. Clear the
-// override with ?api= (empty) to fall back to same-origin when the API server
-// itself serves this site.
-export const API_BASE = (() => {
-  const q = new URLSearchParams(location.search).get("api");
-  if (q !== null) {
-    if (q) localStorage.setItem("raidos_api_base", q.replace(/\/+$/, ""));
-    else localStorage.removeItem("raidos_api_base");
-  }
-  return (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
-})();
+// Credentials only go to the deployed API or the same-origin local development server.
+export const API_BASE = ["localhost", "127.0.0.1"].includes(location.hostname)
+  ? location.origin : "https://raidos-api.fly.dev";
 
 export const ApiClient = {
   getApiKey() {
@@ -133,9 +123,27 @@ export const ApiClient = {
     });
   },
 
+  async prepareSelfCustodyTrade(params, walletAddress) {
+    const idempotencyKey = `prepare_${crypto.randomUUID()}`;
+    return this.request("/api/trades/prepare", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ ...params, walletAddress }),
+    });
+  },
+
+  async submitSelfCustodyTrade(sessionId, txHash) {
+    return this.request("/api/trades/submit", {
+      method: "POST",
+      body: JSON.stringify({ sessionId, txHash }),
+    });
+  },
+
   async executeTrade(params, password) {
+    const idempotencyKey = `trade_${crypto.randomUUID()}`;
     return this.request("/api/trades/execute", {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ ...params, password }),
     });
   },
@@ -150,6 +158,10 @@ export const ApiClient = {
 
   async getPnl() {
     return this.request("/api/trades/pnl");
+  },
+
+  async getPendingTrades() {
+    return this.request("/api/trades/pending");
   },
 
   async getFeed(sinceId, limit = 30, chain) {

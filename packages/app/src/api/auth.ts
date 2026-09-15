@@ -111,7 +111,7 @@ export class AuthService {
  * Entries expire after CHALLENGE_TTL_MS and are single-use.
  */
 export class ChallengeStore {
-  private nonces = new Map<string, { exp: number }>();
+  private nonces = new Map<string, { exp: number; message: string; chain: "solana" | "evm" }>();
 
   constructor(private ttlMs = 5 * 60 * 1000) {}
 
@@ -119,22 +119,24 @@ export class ChallengeStore {
   issue(chain: "solana" | "evm", domain = "raidos"): { nonce: string; message: string } {
     const nonce = randomBytes(16).toString("hex");
     const exp = Date.now() + this.ttlMs;
-    this.nonces.set(nonce, { exp });
+    for (const [key, entry] of this.nonces) if (entry.exp < Date.now()) this.nonces.delete(key);
+    if (this.nonces.size >= 10000) throw new AuthError("too many pending challenges", 429);
     const message = [
       `${domain} wants you to sign in with your ${chain === "solana" ? "Solana" : "EVM"} wallet`,
       "This signature proves you own this wallet. It will never cost gas.",
       `Nonce: ${nonce}`,
       `Issued: ${new Date().toISOString()}`,
     ].join("\n");
+    this.nonces.set(nonce, { exp, message, chain });
     return { nonce, message };
   }
 
   /** Consume a nonce. Returns true exactly once, within TTL. */
-  consume(nonce: string): boolean {
+  consume(nonce: string, message: string, chain: "solana" | "evm"): boolean {
     const entry = this.nonces.get(nonce);
     if (!entry) return false;
     this.nonces.delete(nonce);
-    return Date.now() <= entry.exp;
+    return Date.now() <= entry.exp && message === entry.message && chain === entry.chain;
   }
 }
 

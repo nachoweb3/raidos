@@ -15,6 +15,7 @@ primary_region = 'iad'
 [env]
   APP_MODE = 'live'
   DB_PATH = '/data/raidos.db'
+  ALLOWED_ORIGINS = 'https://inusaur.online,https://www.inusaur.online'
 
 [[mounts]]
   source = 'raidos_data'

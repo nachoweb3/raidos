@@ -649,7 +649,7 @@
 
     <div style="display:flex; align-items:center; gap:12px">
       <button class="btn btn-ghost btn-sm" onclick="openInviteModal()">¿Tienes código? →</button>
-      <button class="btn btn-primary btn-sm" onclick="focusWaitlist()">Early Access</button>
+      <a class="btn btn-primary btn-sm" href="app.html">Abrir mercado</a>
     </div>
   </header>
 
@@ -683,9 +683,7 @@
         <span><strong id="waitlistCount">—</strong> traders en la lista de espera · Batch 01 abriendo plazas</span>
       </div>
 
-      <div class="invite-link" onclick="openInviteModal()">
-        ¿Ya dispones de un código de invitación o wallet autorizada? Acceder a la Beta Privada →
-      </div>
+      <a class="invite-link" href="app.html">Explorar tokens, pools y gráficos reales →</a>
     </div>
 
     <!-- ── INTERACTIVE PRODUCT MOCKUP ── -->
@@ -958,16 +956,8 @@
   </div>
 
   <script>
-    // API base — mirror js/api.js: hosted API by default (static hosting can't
-    // proxy /api/*), ?api=https://host overrides & persists, ?api= clears.
-    const API_BASE = (() => {
-      const q = new URLSearchParams(location.search).get("api");
-      if (q !== null) {
-        if (q) localStorage.setItem("raidos_api_base", q.replace(/\/+$/, ""));
-        else localStorage.removeItem("raidos_api_base");
-      }
-      return (localStorage.getItem("raidos_api_base") || "https://raidos-api.fly.dev").replace(/\/+$/, "");
-    })();
+    const API_BASE = ["localhost", "127.0.0.1"].includes(location.hostname)
+      ? location.origin : "https://raidos-api.fly.dev";
 
     // Fetch live waitlist count on load — the real number, no inflated base
     async function loadWaitlistCount() {

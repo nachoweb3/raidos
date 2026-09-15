@@ -56,7 +56,7 @@ export const FeedEngine = {
 
   init(containerElement) {
     this.container = containerElement;
-    this.renderLoading();
+    if (this.container) this.container.textContent = "Cargando publicaciones...";
     this.fetchLiveFeed();
     this.setupSseStream();
   },
@@ -125,10 +125,10 @@ export const FeedEngine = {
       const usdc = Number(p.usdc ?? 0) / 1e6;
       return {
         id: "live_" + e.id,
-        author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: true },
+        author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: false },
         type: "swap",
         token: e.token_symbol || undefined,
-        content: `${side} on-chain de $${esc(e.token_symbol || "TOKEN")} en ${esc(e.chain)} por ${usdc.toLocaleString("en-US", { style: "currency", currency: "USD" })} en USDC. Verificado en bloque.`,
+        content: `${side} registrada de $${esc(e.token_symbol || "TOKEN")} en ${esc(e.chain)} por ${usdc.toLocaleString("en-US", { style: "currency", currency: "USD" })} en USDC.`,
         likes: 0,
         reposts: 0,
         timestamp: e.ts * 1000,
@@ -141,7 +141,7 @@ export const FeedEngine = {
       const up = pnl >= 0;
       return {
         id: "live_" + e.id,
-        author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: true },
+        author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: false },
         type: "position_closed",
         token: e.token_symbol || undefined,
         content: `Posición cerrada en $${esc(e.token_symbol || "TOKEN")} (${esc(e.chain)}): ${up ? "ganancia" : "pérdida"} de ${Math.abs(pnl).toLocaleString("en-US", { style: "currency", currency: "USD" })}.`,

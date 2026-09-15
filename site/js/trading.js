@@ -1,17 +1,11 @@
-/**
- * 📊 TRADING TERMINAL ENGINE — Execution & Precision Charting (real data layer)
- * Fully integrated with the TRENCHES backend (/api/trades/quote, /api/trades/execute, /api/positions).
- * Supports Spot Swap, Long/Short, Market/Limit, Leverage, TP/SL, and canvas Share Cards.
- *
- * Price comes from CoinGecko (via PriceFeed). Candles are built by walking the
- * real 24h price backwards with a seeded random walk — they are indicative,
- * not exchange OHLC data. No demo positions: positions come from the API only.
- */
+/** Market terminal: real provider OHLC, settled backend positions, explicit execution capability. */
 
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed } from "./dexfeed.js";
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 /** Canonical addresses for the handful of tokens that need no lookup. */
 const WELL_KNOWN_ADDR = {
@@ -19,7 +13,7 @@ const WELL_KNOWN_ADDR = {
   ethereum: { USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
   base: { USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
   bsc: { USDC: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" },
-  polygon: { USDC: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c935" },
+  polygon: { USDC: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" },
   arbitrum: { USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" },
 };
 
@@ -43,15 +37,21 @@ export const TradingEngine = {
 
   /** Best current real price for the active symbol from PriceFeed. */
   async refreshPrice() {
-    const row = PriceFeed.get(this.currentSymbol);
-    this.currentPrice = row.price > 0 ? row.price : this.currentPrice;
-    this.currentDelta24h = row.delta24h;
+    const row = this.currentTokenAddress ? DexFeed.get(this.currentTokenAddress, this.currentChain) : null;
+    const reference = this.currentTokenAddress ? null : PriceFeed.get(this.currentSymbol);
+    this.currentPrice = row?.priceUsd ?? reference?.price ?? 0;
+    this.currentDelta24h = row?.change24h ?? reference?.delta24h ?? null;
     this.updateTokenDisplay();
   },
 
   init() {
     this.initChart();
-    this.refreshPrice().then(() => this.fetchPositions());
+    this.refreshPrice().then(async () => {
+      if (ApiClient.isAuthenticated()) {
+        await this.fetchPendingTrades();
+        await this.fetchPositions();
+      }
+    });
     this.updateTokenDisplay();
     // ⏱ LIVE PnL: re-price open positions every 5s from real pair data
     // (DexFeed by address, PriceFeed by ticker fallback). Client-side view
@@ -65,34 +65,18 @@ export const TradingEngine = {
     }
   },
 
-  /** Re-price every open position from live market data and re-render. */
-  tickPositionPnl() {
-    let changed = false;
-    for (const p of this.positions) {
-      if (!p.entryPrice || p.entryPrice <= 0) continue;
-      const dexRow = p.tokenAddress ? DexFeed.get(p.tokenAddress) : null;
-      const px = dexRow?.priceUsd > 0 ? dexRow.priceUsd : PriceFeed.get(p.symbol)?.price ?? 0;
-      if (px > 0 && px !== p.currentPrice) {
-        p.currentPrice = px;
-        const mult = p.side === "LONG" ? 1 : -1;
-        p.pnlUsdc = (px - p.entryPrice) * (p.sizeUsdc / (p.entryPrice || 1)) * mult;
-        p.pnlPercent = mult * ((px - p.entryPrice) / p.entryPrice) * 100 * (p.leverage || 1);
-        changed = true;
-      }
-    }
-    if (changed) this.renderPositions();
-  },
+  /** Settled PnL remains the backend value; unverified mark-to-market is not calculated here. */
+  tickPositionPnl() { this.renderPositions(); },
 
   setAsset(symbol, chain, price, opts = {}) {
     this.currentSymbol = String(symbol ?? "").toUpperCase();
     this.currentChain = chain || "solana";
     this.currentTokenAddress = opts.tokenAddress || null;
-    // Prefer a real price from PriceFeed; ignore 0/null placeholders passed
-    // from rows without live data.
-    const row = PriceFeed.get(this.currentSymbol);
+    const dex = this.currentTokenAddress ? DexFeed.get(this.currentTokenAddress, this.currentChain) : null;
+    const reference = this.currentTokenAddress ? null : PriceFeed.get(this.currentSymbol);
     const passed = Number(price);
-    this.currentPrice = passed > 0 ? passed : row.price;
-    this.currentDelta24h = row.delta24h;
+    this.currentPrice = passed > 0 ? passed : dex?.priceUsd ?? reference?.price ?? 0;
+    this.currentDelta24h = dex?.change24h ?? reference?.delta24h ?? null;
     this.updateTokenDisplay();
     this.generateCandleData();
     this.loadTheses();
@@ -110,7 +94,7 @@ export const TradingEngine = {
       const events = (data?.events ?? []).filter((e) => e.type === "post" || e.type === "thesis");
       if (!events.length) {
         el.innerHTML = `<div style="color:var(--text-tertiary); font-size:11px; line-height:1.5">
-          Sin tesis todavía para <strong>${this.currentSymbol}</strong>. Sé el primero:
+          Sin tesis todavía para <strong>${esc(this.currentSymbol)}</strong>. Sé el primero:
           <a href="#" onclick="window.TradingEngine.openThesisComposer(); return false" style="color:var(--accent)">publica la tuya</a>.
         </div>`;
         return;
@@ -180,6 +164,36 @@ export const TradingEngine = {
    * ⚡ One-click market buy from Trenches: 0.1 USDC → token, routed by real
    * address through the normal execution path. Returns the exec result.
    */
+  async submitSelfCustodyTrade(tradeParams, walletAddress) {
+    const capabilities = await ApiClient.request("/api/chains");
+    const chain = capabilities.chains?.find((row) => row.id === tradeParams.fromChain);
+    if (capabilities.mode !== "live" || !chain?.liveExecution || chain.status !== "LIVE") {
+      throw new Error("Trading no disponible en esta red: UNAVAILABLE");
+    }
+    const prepared = await ApiClient.prepareSelfCustodyTrade(tradeParams, walletAddress);
+    const tx = prepared.unsignedTransaction;
+    if (tx.kind === "solana") {
+      if (!window.solana?.signAndSendTransaction) throw new Error("Phantom no disponible para firmar esta operación");
+      const { VersionedTransaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
+      const raw = Uint8Array.from(atob(tx.serialized), (char) => char.charCodeAt(0));
+      const unsigned = VersionedTransaction.deserialize(raw);
+      const signed = await window.solana.signAndSendTransaction(unsigned);
+      return ApiClient.submitSelfCustodyTrade(prepared.sessionId, signed.signature);
+    }
+    if (!window.ethereum) throw new Error("MetaMask no disponible para firmar esta operación");
+    const chainId = await window.ethereum.request({ method: "eth_chainId" });
+    const expected = `0x${Number(tx.chainId).toString(16)}`;
+    if (String(chainId).toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(`Cambia MetaMask a la red correcta (chainId ${tx.chainId})`);
+    }
+    const from = walletAddress;
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from, to: tx.to, data: tx.data, value: `0x${BigInt(tx.value || "0").toString(16)}`, ...(tx.gas ? { gas: `0x${BigInt(tx.gas).toString(16)}` } : {}) }],
+    });
+    return ApiClient.submitSelfCustodyTrade(prepared.sessionId, txHash);
+  },
+
   async quickMarketBuy(t) {
     this.setAsset(t.symbol, t.chain, t.priceUsd, { tokenAddress: t.tokenAddress });
     this.orderSide = "BUY";
@@ -190,19 +204,19 @@ export const TradingEngine = {
       alert("No se pudo resolver la dirección on-chain de " + t.symbol + " — usa el terminal.");
       return null;
     }
-    // Real signature required: ask for the wallet password every time —
-    // never cache it client-side.
-    const password = prompt(`Wallet password para firmar la compra de ${t.symbol} (0.1 USDC):`);
-    if (!password) return null;
     try {
-      const exec = await ApiClient.executeTrade({
+      const walletAddress = t.chain === "solana"
+        ? window.solana?.publicKey?.toString()
+        : (await window.ethereum?.request({ method: "eth_accounts" }))?.[0];
+      if (!walletAddress) throw new Error("Conecta tu wallet antes de operar");
+      const exec = await this.submitSelfCustodyTrade({
         fromChain: t.chain || "solana",
         toChain: t.chain || "solana",
         sellToken: "USDC",
         buyToken: addr,
         amount: "100000", // 0.1 USDC in micro-units
         type: "swap",
-      }, password);
+      }, walletAddress);
       alert(`⚡ Comprado ${t.symbol} por 0.1 USDC (tx: ${String(exec?.result?.txHash ?? exec?.txHash ?? "ok").slice(0, 12)}…)`);
       this.fetchPositions();
       return exec;
@@ -223,6 +237,8 @@ export const TradingEngine = {
 
     if (symEl) symEl.textContent = `${this.currentSymbol} / USDC`;
     if (chainEl) chainEl.textContent = this.currentChain.toUpperCase();
+    const contractEl = document.getElementById("terminalContract");
+    if (contractEl) contractEl.textContent = this.currentTokenAddress || "Activo de referencia";
     if (priceEl) {
       priceEl.textContent =
         this.currentPrice > 0 && this.currentPrice < 0.01
@@ -233,11 +249,12 @@ export const TradingEngine = {
     }
     if (deltaEl) {
       const isUp = this.currentDelta24h >= 0;
-      deltaEl.textContent = `${isUp ? "+" : ""}${this.currentDelta24h.toFixed(2)}% 24h`;
+      deltaEl.textContent = this.currentDelta24h == null ? "—" : `${isUp ? "+" : ""}${this.currentDelta24h.toFixed(2)}% 24h`;
       deltaEl.style.color = isUp ? "var(--delta-green)" : "var(--delta-red)";
     }
     if (orderBtn) {
-      orderBtn.textContent = `${this.orderSide} ${this.currentSymbol}`;
+      orderBtn.disabled = true;
+      orderBtn.textContent = "Ejecución no disponible";
       orderBtn.className = `btn btn-lg ${this.orderSide === "BUY" ? "btn-primary" : "btn-secondary"}`;
       if (this.orderSide === "SELL") {
         orderBtn.style.background = "var(--delta-red)";
@@ -299,82 +316,50 @@ export const TradingEngine = {
     });
   },
 
-  /** Real candle fetch from CoinGecko (7-day, 5m granularity for SOL/ETH/BTC;
-   *  fallback to deterministic synthetic candles if the real fetch fails). */
+  /** Real pool OHLCV for any resolved token; reference OHLC only for known assets. */
   async fetchRealCandles() {
-    const id = CoinGeckoIdForSymbol(this.currentSymbol);
-    if (!id) {
-      this.generateCandleData();
-      return;
-    }
-
+    if (!this.candleSeries) return [];
+    const request = this._candleRequest = (this._candleRequest || 0) + 1;
+    this.candleSeries.setData([]);
+    const label = document.getElementById("chartDataStatus");
+    if (label) label.textContent = "Cargando historial real...";
     try {
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=7&interval=5m`,
-        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) }
-      );
-      if (!res.ok) throw new Error(`CoinGecko candles HTTP ${res.status}`);
-      const json = await res.json();
-      const prices = json.prices || [];
-      if (!prices.length) throw new Error("empty candle payload");
-
-      this.lastCandleFetch = Date.now();
-      const data = prices.map((pt) => {
-        const ts = pt[0];
-        const px = pt[1];
-        const time = Math.floor(ts / 1000);
-        // Coarse approximation: use the same price for O/H/L where we don't have
-        // the real OHLC breakdown. Good enough for a trading terminal preview.
-        return { time, open: px, high: px, low: px, close: px };
-      });
-
-      if (this.candleSeries) this.candleSeries.setData(data);
+      let result;
+      const token = this.currentTokenAddress || WELL_KNOWN_ADDR[this.currentChain]?.[this.currentSymbol];
+      let pair = token ? DexFeed.get(token, this.currentChain) : null;
+      if (token && !pair && DexFeed.ensureAddresses) {
+        await DexFeed.ensureAddresses([{ address: token, chain: this.currentChain }]);
+        pair = DexFeed.get(token, this.currentChain);
+      }
+      if (pair?.pairAddress && token) {
+        result = await ApiClient.request("/api/market/candles?chain=" + encodeURIComponent(this.currentChain) +
+          "&pool=" + encodeURIComponent(pair.pairAddress) + "&token=" + encodeURIComponent(token) + "&aggregate=5");
+      } else {
+        const coin = CoinGeckoIdForSymbol(this.currentSymbol);
+        // A random contract with a familiar symbol is not the reference asset.
+        if (!coin || this.currentTokenAddress) throw new Error("No indexed pool history");
+        result = await ApiClient.request("/api/market/reference-candles?coin=" + encodeURIComponent(coin));
+      }
+      if (request !== this._candleRequest) return [];
+      const data = result.candles ?? [];
+      if (!data.length) throw new Error("No real candles");
+      this.candleSeries.setData(data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      this.lastCandleFetch = result.asOf;
+      if (label) label.textContent = result.status === "DEGRADED"
+        ? "Historial en caché · " + new Date(result.asOf).toLocaleTimeString()
+        : "OHLC · " + result.source + " · " + new Date(result.asOf).toLocaleTimeString();
       return data;
-    } catch (err) {
-      console.warn("[TradingEngine] real candles failed, using synthetic:", err);
-      this.generateCandleData();
+    } catch {
+      if (request === this._candleRequest) {
+        this.candleSeries.setData([]);
+        if (label) label.textContent = "Historial no disponible para este token";
+      }
+      return [];
     }
   },
 
   generateCandleData() {
-    if (!this.candleSeries) return;
-
-    // Seeded random walk (mulberry32) backwards from the real current price.
-    // Same seed + symbol → same candles for the session; labelled as
-    // indicative, not exchange OHLC.
-    let seed = 0;
-    for (const c of this.currentSymbol) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
-    seed = (seed + Math.floor(Date.now() / (30 * 60 * 1000))) >>> 0; // rotates every 30min
-    const rand = () => {
-      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-
-    if (this.currentPrice <= 0) {
-      this.candleSeries.setData([]);
-      return;
-    }
-
-    const data = [];
-    let basePrice = this.currentPrice;
-    const now = Math.floor(Date.now() / 1000);
-    const interval = this.chartInterval; // 5m
-
-    for (let i = 100; i >= 0; i--) {
-      const time = now - i * interval;
-      const variation = (rand() - 0.5) * 0.02 * basePrice;
-      const open = basePrice;
-      const close = basePrice + variation;
-      const high = Math.max(open, close) + rand() * 0.01 * basePrice;
-      const low = Math.min(open, close) - rand() * 0.01 * basePrice;
-      basePrice = close;
-
-      data.push({ time, open, high, low, close });
-    }
-
-    this.candleSeries.setData(data);
+    return this.fetchRealCandles();
   },
 
   setSide(side) {
@@ -399,6 +384,10 @@ export const TradingEngine = {
   setAmountPercent(percent) {
     const input = document.getElementById("orderAmountInput");
     const balance = this.availableBalance();
+    if (balance === null) {
+      alert("Saldo no disponible. Introduce el importe manualmente.");
+      return;
+    }
     if (input) {
       input.value = Math.round((balance * percent) / 100);
       this.calculateEstOutput();
@@ -406,41 +395,23 @@ export const TradingEngine = {
   },
 
   availableBalance() {
-    // In a real app this would come from /api/wallets + balance lookups.
-    // For now use the frontend default demo balance in USDC.
-    return 2500;
+    // Connected-wallet balances are not yet verified for this order form.
+    return null;
   },
 
   calculateEstOutput() {
-    const input = document.getElementById("orderAmountInput");
     const outputEl = document.getElementById("estReceiveAmount");
     const feeEl = document.getElementById("estFeeAmount");
-    const val = Number(input?.value || 0);
-
-    if (val > 0 && outputEl) {
-      const fee = val * 0.003; // 0.3%
-      const effective = val - fee;
-      const tokens = effective / this.currentPrice;
-      outputEl.textContent =
-        tokens < 0.001
-          ? tokens.toFixed(6) + " " + this.currentSymbol
-          : tokens.toFixed(4) + " " + this.currentSymbol;
-      if (feeEl) feeEl.textContent = "$" + fee.toFixed(2) + " USDC";
-    }
+    if (outputEl) outputEl.textContent = "Requiere cotización";
+    if (feeEl) feeEl.textContent = "—";
   },
 
-  /** Real execution path: try the backend, honor live vs mock, surface mode. */
+  /** Execute through the API; failed requests never create local positions. */
   async executeTrade() {
     const amountInput = document.getElementById("orderAmountInput");
     const amount = Number(amountInput?.value || 0);
     if (amount <= 0) {
       alert("Por favor introduce una cantidad en USDC.");
-      return;
-    }
-
-    const password = prompt("Wallet password (to decrypt your custodial key for signing):", "");
-    if (!password) {
-      alert("Se necesita la contraseña de la wallet para firmar.");
       return;
     }
 
@@ -477,42 +448,36 @@ export const TradingEngine = {
         type: "swap",
       };
 
-      let lastMode = "unknown";
-      try {
-        const exec = await ApiClient.executeTrade(tradeParams, password);
-        lastMode = exec.mode || "unknown";
-      } catch (err) {
-        // Backend may be offline or in mock mode — keep optimistic local state.
-        console.warn("[TradingEngine] executeTrade backend error, keeping local state:", err);
-      }
-
-      // Record position optimistically (or from backend if returned).
-      const newPos = {
-        id: "pos_" + Date.now(),
-        symbol: this.currentSymbol,
-        chain: this.currentChain,
-        side: this.orderSide === "BUY" ? "LONG" : "SHORT",
-        sizeUsdc: amount * this.leverage,
-        entryPrice: this.currentPrice,
-        currentPrice: this.currentPrice,
-        pnlUsdc: 0.0,
-        pnlPercent: 0.0,
-        leverage: this.leverage,
-        tp: document.getElementById("tpInput")?.value || null,
-        sl: document.getElementById("slInput")?.value || null,
-        timestamp: Date.now(),
-      };
-
-      this.positions.unshift(newPos);
-      this.renderPositions();
-
+      const walletAddress = this.currentChain === "solana"
+        ? window.solana?.publicKey?.toString()
+        : (await window.ethereum?.request({ method: "eth_accounts" }))?.[0];
+      if (!walletAddress) throw new Error("Conecta Phantom o MetaMask antes de operar");
+      const exec = await this.submitSelfCustodyTrade(tradeParams, walletAddress);
+      const status = exec?.status || "pending";
+      const mode = exec?.mode || "live";
+      await this.fetchPositions();
       if (amountInput) amountInput.value = "";
       alert(
-        `¡Orden ${this.orderSide} de $${amount} ${this.currentSymbol} ejecutada con éxito! (mode: ${lastMode})`
+        status === "settled"
+          ? `Orden ${this.orderSide} de $${amount} ${this.currentSymbol} liquidada (mode: ${mode}).`
+          : `Orden ${this.orderSide} pendiente (status: ${status}, mode: ${mode}).`
       );
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
+    }
+  },
+
+  async fetchPendingTrades() {
+    try {
+      const data = await ApiClient.getPendingTrades();
+      const count = Array.isArray(data?.transactions) ? data.transactions.length : 0;
+      if (count > 0) {
+        const el = document.getElementById("terminalStatus");
+        if (el) el.textContent = `${count} operación${count === 1 ? "" : "es"} pendiente${count === 1 ? "" : "s"}`;
+      }
+    } catch {
+      // Pending status is advisory; positions remain API-backed only.
     }
   },
 
@@ -524,25 +489,15 @@ export const TradingEngine = {
           id: "api_pos_" + p.id,
           symbol: TokenMeta.resolveSymbol(p.token, p.token_symbol),
           chain: p.chain,
-          side: p.side === "buy" ? "LONG" : "SHORT",
+          side: "SPOT",
           sizeUsdc: Number(p.net_invested_usdc || 0) / 1e6,
-          entryPrice: Number(p.avg_entry_usdc || 0) / 1e6,
-          currentPrice: Number(p.avg_entry_usdc || 0) > 0 ? Number(p.avg_entry_usdc) / 1e6 : 0,
+          entryPrice: null,
+          currentPrice: null,
           pnlUsdc: p.realized_pnl_usdc != null ? Number(p.realized_pnl_usdc) / 1e6 : 0,
-          pnlPercent: 0,
+          pnlPercent: null,
           leverage: 1,
-          tokenAddress: WELL_KNOWN_ADDR[p.chain]?.[TokenMeta.resolveSymbol(p.token, p.token_symbol)] ?? null,
+          tokenAddress: p.token,
         }));
-        // Resolve real addresses for the rest from the DexFeed pair cache.
-        DexFeed.ensureTokens(
-          this.positions.filter((p) => !p.tokenAddress).map((p) => ({ symbol: p.symbol, chain: p.chain })),
-        ).then(() => {
-          for (const p of this.positions) {
-            if (p.tokenAddress) continue;
-            const row = DexFeed.get(p.symbol);
-            if (row?.address) p.tokenAddress = row.address;
-          }
-        }).catch(() => {});
       } else {
         this.positions = [];
       }
@@ -553,12 +508,8 @@ export const TradingEngine = {
   },
 
   closePosition(id) {
-    const pos = this.positions.find((p) => p.id === id);
-    if (pos) {
-      this.openShareCard(pos);
-      this.positions = this.positions.filter((p) => p.id !== id);
-      this.renderPositions();
-    }
+    if (!this.positions.some((position) => position.id === id)) return;
+    alert("El cierre requiere una venta confirmada. La ejecución está pendiente de verificación; tu posición sigue abierta.");
   },
 
   renderPositions() {
@@ -582,22 +533,22 @@ export const TradingEngine = {
           <div>
             <div style="display:flex; align-items:center; gap:8px">
               ${TokenMeta.logoHtml(p.symbol, { size: 22 })}
-              <strong style="color:#fff">${p.symbol}</strong>
-              <span class="elite-badge" style="font-size:9px; color:${p.side === "LONG" ? "var(--delta-green)" : "var(--delta-red)"}">${p.side} ${p.leverage}x</span>
-              <span style="font-size:10px; color:var(--text-tertiary)">${p.chain}</span>
+              <strong style="color:#fff">${esc(p.symbol)}</strong>
+              <span class="elite-badge" style="font-size:9px; color:${p.side === "LONG" ? "var(--delta-green)" : "var(--delta-red)"}">${p.side}</span>
+              <span style="font-size:10px; color:var(--text-tertiary)">${esc(p.chain)}</span>
             </div>
             <div style="color:var(--text-secondary); font-size:11px; margin-top:2px">
-              Entry: $${p.entryPrice.toFixed(2)} · Size: $${p.sizeUsdc.toFixed(2)}
+              Coste restante: $${p.sizeUsdc.toFixed(2)} · Entrada unitaria: pendiente
               ${live ? ` · <span style="color:var(--text-tertiary)">Live: $${p.currentPrice < 0.01 ? p.currentPrice.toFixed(6) : p.currentPrice.toPrecision(4)}</span>` : ""}
             </div>
           </div>
 
           <div style="text-align:right">
             <div style="font-weight:700; color:${isProfit ? "var(--delta-green)" : "var(--delta-red)"}">
-              ${isProfit ? "+" : ""}$${p.pnlUsdc.toFixed(2)} (${isProfit ? "+" : ""}${p.pnlPercent.toFixed(2)}%)
+              Realizado: ${isProfit ? "+" : ""}$${p.pnlUsdc.toFixed(2)}
             </div>
             <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:4px">
-              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.openShareCard(${JSON.stringify(p).replace(/"/g, '&quot;')})">Share Card</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.openShareCard(${esc(JSON.stringify(p))})">Share Card</button>
               <button class="btn btn-secondary btn-sm" onclick="window.TradingEngine.closePosition('${p.id}')">Cerrar</button>
             </div>
           </div>
@@ -647,17 +598,17 @@ export const TradingEngine = {
     const isWin = position.pnlUsdc >= 0;
     ctx.fillStyle = isWin ? "#22c55e" : "#ef4444";
     ctx.font = "900 48px monospace";
-    ctx.fillText(`${isWin ? "+" : ""}${position.pnlPercent.toFixed(2)}%`, 36, 175);
+    ctx.fillText(`${isWin ? "+" : ""}$${position.pnlUsdc.toFixed(2)}`, 36, 175);
 
     ctx.fillStyle = "#a1a1aa";
     ctx.font = "15px monospace";
     ctx.fillText(`PnL: ${isWin ? "+" : ""}$${position.pnlUsdc.toFixed(2)} USDC`, 36, 215);
-    ctx.fillText(`Entry: $${position.entryPrice.toFixed(2)}  →  Exit: $${position.currentPrice.toFixed(2)}`, 36, 245);
+    ctx.fillText("PnL realizado registrado por el servidor", 36, 245);
 
     // Footer
     ctx.fillStyle = "#52525b";
     ctx.font = "11px monospace";
-    ctx.fillText(`VERIFIED ON-CHAIN · ${new Date().toLocaleDateString()}`, 36, 305);
+    ctx.fillText(`REGISTRO DE TRENCHES · ${new Date().toLocaleDateString()}`, 36, 305);
 
     const modal = document.getElementById("shareCardModal");
     if (modal) modal.classList.add("active");

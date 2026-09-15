@@ -36,7 +36,7 @@ async function api(method: string, path: string, body?: unknown, key?: string, h
 async function swap(key: string, amountMicro: string) {
   return api("POST", "/api/trades/execute", {
     fromChain: "solana", toChain: "solana", sellToken: USDC, buyToken: "WIF", amount: amountMicro, password: "pw123456",
-  }, key);
+  }, key, { "Idempotency-Key": `rewards-${amountMicro}-${Date.now()}-${Math.random()}` });
 }
 
 beforeAll(async () => {

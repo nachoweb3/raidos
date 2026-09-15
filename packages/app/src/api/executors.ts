@@ -17,7 +17,8 @@ export interface ExecutionContext {
 export interface ExecutionOutput {
   txHash: string;
   buyAmount: string;
-  status: "confirmed" | "failed";
+  /** Broadcast status only; confirmation is owned by the reconciler. */
+  status: "submitted" | "pending" | "failed";
   error?: string;
 }
 
@@ -40,7 +41,7 @@ export async function executeSolanaSwap(params: {
   buyAmount: string;
 }): Promise<ExecutionOutput> {
   if (params.ctx.mode === "mock") {
-    return { txHash: mockTxHash("mocksol"), buyAmount: params.buyAmount, status: "confirmed" };
+    return { txHash: mockTxHash("mocksol"), buyAmount: params.buyAmount, status: "submitted" };
   }
 
   const { Connection, Keypair, VersionedTransaction } = await import("@solana/web3.js");
@@ -71,7 +72,7 @@ export async function executeSolanaSwap(params: {
   txn.sign([keypair]);
 
   const signature = await connection.sendTransaction(txn, { maxRetries: 3 });
-  return { txHash: signature, buyAmount: params.buyAmount, status: "confirmed" };
+  return { txHash: signature, buyAmount: params.buyAmount, status: "submitted" };
 }
 
 // ── EVM (0x) ─────────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ export async function executeEvmSwap(params: {
   slippageBps?: number;
 }): Promise<ExecutionOutput> {
   if (params.ctx.mode === "mock") {
-    return { txHash: mockTxHash("mockevm"), buyAmount: params.buyAmount, status: "confirmed" };
+    return { txHash: mockTxHash("mockevm"), buyAmount: params.buyAmount, status: "submitted" };
   }
 
   const { ethers } = await import("ethers");
@@ -171,5 +172,5 @@ export async function executeEvmSwap(params: {
     ...(txRequest.gasPrice ? { gasPrice: txRequest.gasPrice } : {}),
   });
 
-  return { txHash: tx.hash, buyAmount: params.buyAmount, status: "confirmed" };
+  return { txHash: tx.hash, buyAmount: params.buyAmount, status: "submitted" };
 }

@@ -1,31 +1,25 @@
 /**
- * 📊 POSITIONS ENGINE — group swaps into positions (fomo-style)
- * A position is the full build-up of buys/sells on one token by one user:
- * buys average in, sells reduce the size, and the position closes when the
- * remaining amount reaches zero — at which point realized PnL is finalized.
- * This is the foundation for the social feed, profiles and share cards.
+ * 📊 POSITIONS ENGINE — settled-fill position accounting.
+ *
+ * Financial quantities cross this module as integer base-unit strings. The
+ * position keeps a remaining USDC cost basis; realized PnL is calculated from
+ * that basis, not from a floating-point price.
  */
 
 export interface PositionRow {
   id: number;
   user_id: number;
   chain: string;
-  /** Token contract/mint address */
   token: string;
   token_symbol: string;
-  /** open | closed */
   status: "open" | "closed";
-  /** Remaining token amount (smallest units) */
   amount_remaining: string;
-  /** Total tokens bought over the position's life */
   total_bought: string;
-  /** Total tokens sold over the position's life */
   total_sold: string;
-  /** Volume-weighted average entry price in USDC (1e6 units per whole token) */
   avg_entry_usdc: string;
-  /** Net USDC invested (buys − sells proceeds), 1e6 units */
+  /** Remaining cost basis, net of buy fees. */
   net_invested_usdc: string;
-  /** Realized PnL in USDC (1e6 units) — set when closed */
+  /** Cumulative realized PnL across partial and full closes. */
   realized_pnl_usdc: string | null;
   opened_at: number;
   closed_at: number | null;
@@ -37,23 +31,28 @@ export interface PositionUpdateResult {
   realizedPnlUsdc: string | null;
 }
 
-/**
- * Apply one swap to a user's position on a token, creating/averaging/closing.
- * swap = { side, tokenAmount, usdcAmount, feeUsdc } (amounts in smallest units).
- * Fees count against PnL: they increase cost basis on buys and reduce proceeds
- * on sells — realized PnL is always net of fees (honest accounting).
- */
+function integer(value: string, field: string): bigint {
+  if (!/^-?\d+$/.test(value)) throw new Error(`${field} must be an integer`);
+  return BigInt(value);
+}
+
+function nonNegative(value: string, field: string): bigint {
+  const parsed = integer(value, field);
+  if (parsed < 0n) throw new Error(`${field} must be non-negative`);
+  return parsed;
+}
+
+/** Apply one settled buy or sell fill to a position using average cost. */
 export function applySwapToPosition(
   position: PositionRow | undefined,
   swap: { side: "buy" | "sell"; tokenAmount: string; usdcAmount: string; feeUsdc?: string; ts: number },
 ): Omit<PositionRow, "id" | "user_id" | "chain" | "token" | "token_symbol"> & {
   user_id: number; chain: string; token: string; token_symbol: string;
 } {
-  const side = swap.side;
-  const tokens = BigInt(swap.tokenAmount);
-  const fee = BigInt(swap.feeUsdc ?? "0");
-  // gross usdc leg + fee netting: buys cost usdc+fee, sells yield usdc−fee
-  const usdc = BigInt(swap.usdcAmount) + (side === "buy" ? fee : -fee);
+  const tokens = nonNegative(swap.tokenAmount, "tokenAmount");
+  const grossUsdc = nonNegative(swap.usdcAmount, "usdcAmount");
+  const fee = nonNegative(swap.feeUsdc ?? "0", "feeUsdc");
+  if (tokens <= 0n) throw new Error("tokenAmount must be greater than zero");
 
   const base = {
     user_id: position?.user_id ?? 0,
@@ -71,40 +70,47 @@ export function applySwapToPosition(
     closed_at: position?.closed_at ?? null,
   };
 
-  if (side === "buy") {
-    const remaining = BigInt(base.amount_remaining) + tokens;
-    const totalBought = BigInt(base.total_bought) + tokens;
-    // new avg entry = (old avg × old amount + usdc) / new amount
-    const oldAmount = BigInt(base.amount_remaining);
-    const oldAvg = BigInt(base.avg_entry_usdc || "0");
-    const newAvg = remaining > 0n ? (oldAvg * oldAmount + usdc) / remaining : 0n;
-    const netInvested = BigInt(base.net_invested_usdc) + usdc;
+  if (swap.side === "buy") {
+    const oldAmount = nonNegative(base.amount_remaining, "amount_remaining");
+    const oldCost = nonNegative(base.net_invested_usdc, "net_invested_usdc");
+    const buyCost = grossUsdc + fee;
+    const remaining = oldAmount + tokens;
+    const totalBought = nonNegative(base.total_bought, "total_bought") + tokens;
+    const costBasis = oldCost + buyCost;
     return {
       ...base,
       status: "open",
       amount_remaining: remaining.toString(),
       total_bought: totalBought.toString(),
-      avg_entry_usdc: newAvg.toString(),
-      net_invested_usdc: netInvested.toString(),
-      opened_at: base.opened_at || swap.ts,
+      avg_entry_usdc: (costBasis / remaining).toString(),
+      net_invested_usdc: costBasis.toString(),
+      opened_at: position?.opened_at ?? swap.ts,
       closed_at: null,
     };
   }
 
-  // sell: reduce amount, take proceeds out of net invested; close at zero
-  const remaining = BigInt(base.amount_remaining) - tokens;
-  const totalSold = BigInt(base.total_sold) + tokens;
-  const netInvested = BigInt(base.net_invested_usdc) - usdc;
+  if (!position || position.status !== "open") throw new Error("cannot sell without an open position");
+  const oldAmount = nonNegative(base.amount_remaining, "amount_remaining");
+  if (tokens > oldAmount) throw new Error("sell amount exceeds open position");
 
-  if (remaining <= 0n) {
-    // closing: realized PnL = total USDC received from sells − total USDC spent on buys
-    const realized = BigInt(base.net_invested_usdc) * -1n + usdc;
+  const oldCost = nonNegative(base.net_invested_usdc, "net_invested_usdc");
+  const proceeds = grossUsdc > fee ? grossUsdc - fee : 0n;
+  // Pro-rata allocation preserves the full cost basis through partial closes.
+  const allocatedCost = oldAmount === 0n ? 0n : (oldCost * tokens) / oldAmount;
+  const remaining = oldAmount - tokens;
+  const remainingCost = oldCost - allocatedCost;
+  const totalSold = nonNegative(base.total_sold, "total_sold") + tokens;
+  const previousRealized = base.realized_pnl_usdc === null ? 0n : integer(base.realized_pnl_usdc, "realized_pnl_usdc");
+  const realized = previousRealized + proceeds - allocatedCost;
+
+  if (remaining === 0n) {
     return {
       ...base,
       status: "closed",
       amount_remaining: "0",
       total_sold: totalSold.toString(),
-      net_invested_usdc: netInvested.toString(),
+      net_invested_usdc: "0",
+      avg_entry_usdc: "0",
       realized_pnl_usdc: realized.toString(),
       closed_at: swap.ts,
     };
@@ -112,8 +118,11 @@ export function applySwapToPosition(
 
   return {
     ...base,
+    status: "open",
     amount_remaining: remaining.toString(),
     total_sold: totalSold.toString(),
-    net_invested_usdc: netInvested.toString(),
+    avg_entry_usdc: (remainingCost / remaining).toString(),
+    net_invested_usdc: remainingCost.toString(),
+    realized_pnl_usdc: realized.toString(),
   };
 }

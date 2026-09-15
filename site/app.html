@@ -274,6 +274,39 @@
       50% { opacity: 0.55; transform: scale(0.94); }
     }
     .loading-pulse { animation: softPulse 1.2s ease-in-out infinite; }
+
+    /* Keep nested grids within the viewport and expose contract search on mobile. */
+    .app-body, .feed-grid > *, .trenches-layout > *, .trenches-grid > * { min-width: 0; }
+    .trenches-grid { grid-template-columns: minmax(0, 1fr); }
+    #universalSearchResults button { flex-wrap: wrap; overflow-wrap: anywhere; }
+    #trenchesColumns > div:last-child { flex-wrap: wrap; }
+    @media (min-width: 900px) {
+      .trenches-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (min-width: 769px) and (max-width: 1370px) {
+      .app-header { flex-wrap: wrap; height: auto; min-height: 88px; gap: 6px; padding-block: 8px; }
+      .app-header .brand-badge { display: none; }
+      .nav-tab-btn { padding: 6px 8px; }
+    }
+    @media (max-width: 1099px) {
+      .trenches-layout { grid-template-columns: minmax(0, 1fr) !important; }
+    }
+    @media (max-width: 768px) {
+      .app-header { height: 100px; padding: 8px 12px 48px; gap: 8px; }
+      .app-header-actions { gap: 6px !important; }
+      #globalChainSelect { max-width: 130px; }
+      .universal-search { display: block !important; position: absolute !important; left: 12px; right: 12px; bottom: 8px; }
+      #universalSearchInput { width: 100% !important; font-size: 16px !important; }
+      .feed-grid { grid-template-columns: minmax(0, 1fr) !important; }
+      .app-body { padding: 12px 12px 76px; }
+      .pill-tabs-bar { max-width: 100%; }
+      .token-row { gap: 10px; flex-wrap: wrap; padding: 12px !important; }
+      .token-row > div { gap: 10px !important; min-width: 0; }
+      .token-row > div:last-child { width: 100%; justify-content: flex-end; }
+      .token-row > div:first-child { max-width: 100%; overflow-wrap: anywhere; }
+      .trenches-col { min-height: 300px; max-height: 480px; }
+      #trenchesColumns > div:last-child { overflow-wrap: anywhere; }
+    }
   </style>
 </head>
 <body>
@@ -297,16 +330,16 @@
       </nav>
 
       <!-- Right Header Actions -->
-      <div style="display:flex; align-items:center; gap:10px">
+      <div class="app-header-actions" style="display:flex; align-items:center; gap:10px">
         <!-- 🔎 Universal search: any ticker or on-chain address → terminal -->
-        <div style="position:relative" class="desktop-only">
+        <div style="position:relative" class="universal-search">
           <input id="universalSearchInput" type="text" placeholder="Buscar token o pegar dirección…" autocomplete="off"
             oninput="window.App.universalSearch(this.value)" onfocus="window.App.universalSearch(this.value)" onblur="setTimeout(() => window.App.hideUniversalSearch(), 180)"
             onkeydown="if(event.key==='Enter') window.App.universalSearchEnter()"
             style="width:230px; padding:6px 10px; font-size:11.5px; border-radius:var(--radius-sm); border:1px solid var(--border-subtle); background:var(--bg-elevated); color:#fff; outline:none">
           <div id="universalSearchResults" style="display:none; position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); box-shadow:0 12px 32px rgba(0,0,0,0.5); z-index:1000; max-height:340px; overflow-y:auto"></div>
         </div>
-        <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TradingEngine.currentChain = this.value;" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
+        <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TrenchesEngine.setChain(this.value);" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
           <option value="all">◎ Todas las cadenas</option>
           <option value="solana">Solana</option>
           <option value="base">Base</option>
@@ -477,6 +510,9 @@
           <span id="trenchesCount" style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)"></span>
         </div>
 
+        <!-- 🏆 Top traders strip (real PnL ranking) -->
+        <div id="trenchesTradersStrip" style="display:flex; align-items:center; gap:8px; overflow-x:auto; padding:0 2px 10px; scrollbar-width:none"></div>
+
         <!-- TRENCHES Grid: scan columns + execution sidebar -->
         <div style="display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:14px; align-items:start" class="trenches-layout">
           <!-- Scan Columns (New / Soon / Migrated) -->
@@ -492,7 +528,8 @@
                 <h2 id="terminalSymbol" style="font-size:17px; font-weight:800; letter-spacing:-0.02em; margin:0">SOL / USDC</h2>
                 <div style="display:flex; align-items:center; gap:8px; margin-top:2px">
                   <span class="brand-badge" id="terminalChain">SOLANA</span>
-                  <span style="font-size:10px; color:var(--text-tertiary)">Jupiter routing</span>
+                  <span id="terminalContract" style="font:10px var(--font-mono);overflow-wrap:anywhere;max-width:250px"></span>
+                  <span style="font-size:10px; color:var(--text-tertiary)">Datos de mercado</span>
                 </div>
               </div>
             </div>
@@ -505,14 +542,8 @@
           <!-- Chart Column -->
           <div class="glass-panel" style="padding:16px; display:flex; flex-direction:column">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px; color:var(--text-tertiary); font-family:var(--font-mono)">
-              <div style="display:flex; gap:6px">
-                <button class="btn btn-ghost btn-sm active" style="padding:3px 8px">5m</button>
-                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">15m</button>
-                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">1h</button>
-                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">4h</button>
-                <button class="btn btn-ghost btn-sm" style="padding:3px 8px">1d</button>
-              </div>
-              <div style="color:var(--delta-green)">● FEED EN VIVO</div>
+              <span>OHLC · Pools 5 min / referencia 30 min</span>
+              <span id="chartDataStatus">Historial pendiente</span>
             </div>
 
             <!-- Lightweight Chart Mount -->
@@ -523,24 +554,18 @@
           <div class="glass-panel" style="padding:20px; display:flex; flex-direction:column; gap:16px">
             <!-- Buy / Sell toggle -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; background:rgba(255,255,255,0.04); padding:4px; border-radius:var(--radius-md)">
-              <button class="btn btn-sm active" id="btnSideBuy" onclick="setTradeSide('BUY')" style="background:#fff; color:#000">BUY / LONG</button>
-              <button class="btn btn-ghost btn-sm" id="btnSideSell" onclick="setTradeSide('SELL')">SELL / SHORT</button>
+              <button class="btn btn-sm active" id="btnSideBuy" onclick="setTradeSide('BUY')" style="background:#fff; color:#000">BUY</button>
+              <button class="btn btn-ghost btn-sm" id="btnSideSell" onclick="setTradeSide('SELL')">SELL</button>
             </div>
 
             <!-- Publish thesis for the active token -->
             <button class="btn btn-ghost btn-sm" id="postThesisBtn" onclick="postThesisFromTerminal()" style="width:100%; font-size:11px" title="Publica tu análisis de este token en el feed">📊 Publicar tesis de este token</button>
 
-            <!-- Market / Limit toggle -->
-            <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-secondary)">
-              <span style="cursor:pointer; font-weight:700; color:#fff" onclick="window.TradingEngine.setOrderType('MARKET')">● MARKET</span>
-              <span style="cursor:pointer" onclick="window.TradingEngine.setOrderType('LIMIT')">○ LIMIT</span>
-            </div>
-
             <!-- Amount Input -->
             <div>
               <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-tertiary); margin-bottom:6px">
                 <span>Pagar en USDC</span>
-                <span>Saldo: $2,500.00</span>
+                <span>Saldo no disponible</span>
               </div>
               <input type="number" id="orderAmountInput" placeholder="0.00 USDC" oninput="window.TradingEngine.calculateEstOutput()" style="width:100%; font-size:16px; font-family:var(--font-mono)">
             </div>
@@ -553,15 +578,6 @@
               <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(100)">MAX</button>
             </div>
 
-            <!-- Leverage Slider -->
-            <div style="border-top:1px solid var(--border-subtle); padding-top:12px">
-              <div style="display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:6px">
-                <span style="color:var(--text-tertiary)">Apalancamiento</span>
-                <strong id="leverageVal" class="mono" style="color:#fff">1x</strong>
-              </div>
-              <input type="range" min="1" max="20" value="1" oninput="window.TradingEngine.setLeverage(this.value)" style="width:100%">
-            </div>
-
             <!-- Summary -->
             <div style="font-size:11.5px; color:var(--text-tertiary); font-family:var(--font-mono); display:flex; flex-direction:column; gap:4px">
               <div style="display:flex; justify-content:space-between">
@@ -569,14 +585,15 @@
                 <strong style="color:#fff" id="estReceiveAmount">—</strong>
               </div>
               <div style="display:flex; justify-content:space-between">
-                <span>Comisión USDC (0.3%):</span>
+                <span>Comisión cotizada:</span>
                 <span id="estFeeAmount">$0.00</span>
               </div>
             </div>
 
+            <p id="terminalStatus" style="font-size:12px;color:var(--text-tertiary)">Mercado disponible. La ejecución requiere verificación de firma y liquidación on-chain.</p>
             <!-- Execute Button -->
-            <button class="btn btn-primary btn-lg" id="executeOrderBtn" onclick="window.TradingEngine.executeTrade()">
-              BUY SOL
+            <button class="btn btn-primary btn-lg" id="executeOrderBtn" disabled onclick="window.TradingEngine.executeTrade()">
+              Ejecución no disponible
             </button>
           </div>
 
@@ -596,7 +613,7 @@
         <!-- Active Positions Section -->
         <div class="glass-panel" style="margin-top:18px; padding:0; overflow:hidden">
           <div style="padding:14px 18px; border-bottom:1px solid var(--border-subtle); font-size:12px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">
-            Posiciones Abiertas & PnL en Tiempo Real
+            Posiciones abiertas · PnL realizado
           </div>
           <div id="activePositionsTable"></div>
         </div>
@@ -783,7 +800,7 @@
   <div class="modal-backdrop" id="shareCardModal">
     <div class="modal-window" style="padding:24px; max-width:640px; text-align:center">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
-        <h3 style="font-size:16px; font-weight:800">Resultado Verificado On-Chain</h3>
+        <h3 style="font-size:16px; font-weight:800">PnL realizado en Trenches</h3>
         <button class="btn btn-ghost btn-sm" onclick="window.App.closeShareModal()">✕</button>
       </div>
       <canvas id="shareCardCanvas" style="width:100%; border-radius:var(--radius-lg); border:1px solid var(--border-subtle); margin-bottom:16px"></canvas>
@@ -835,7 +852,7 @@
             <div style="display:flex; align-items:center; gap:8px">
               <h3 style="font-size:18px; font-weight:800" id="previewTitle">$SOL</h3>
               <span class="brand-badge" id="previewChain">SOLANA</span>
-              <span class="elite-badge high" id="previewScore">⚡ 94/100</span>
+              <span class="elite-badge high" id="previewScore">Sin evaluación</span>
             </div>
             <div style="font-size:12px; color:var(--text-secondary)" id="previewSubtitle">Ecosistema Principal</div>
           </div>

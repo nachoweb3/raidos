@@ -19,12 +19,14 @@ async function api(
   path: string,
   body?: unknown,
   key?: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; json: any }> {
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
       ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      ...extraHeaders,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -162,6 +164,7 @@ describe("trades (mock execution)", () => {
         password: "pw123456",
       },
       firstUserKey,
+      { "Idempotency-Key": "test-trade-0001" },
     );
     expect(r.status).toBe(200);
     expect(r.json.success).toBe(true);
@@ -182,6 +185,7 @@ describe("trades (mock execution)", () => {
       "/api/trades/execute",
       { fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", password: "WRONG" },
       firstUserKey,
+      { "Idempotency-Key": "test-trade-0002" },
     );
     expect(r.status).toBe(401);
     expect(r.json.error).toMatch(/password/i);
@@ -193,10 +197,47 @@ describe("trades (mock execution)", () => {
       "/api/trades/execute",
       { fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", password: "x" },
       secondUserKey === "" ? (await api("POST", "/api/auth/register", {})).json.apiKey : secondUserKey,
+      { "Idempotency-Key": "test-trade-0003" },
     );
     // secondUserKey belongs to a different server/db in this test file → 401 there.
     // Register a fresh user on THIS server instead:
     expect([401, 404]).toContain(r.status);
+  });
+
+  it("blocks custodial execution and wallet creation in live mode", async () => {
+    const liveDir = mkdtempSync(join(tmpdir(), "raidos-live-test-"));
+    const liveServer = new ApiServer({ dbPath: join(liveDir, "live.db"), port: 0, siteDir: null, appMode: "live" });
+    const livePort = await liveServer.start();
+    const liveBase = `http://127.0.0.1:${livePort}`;
+    const post = (path: string, body: unknown, key: string) => fetch(`${liveBase}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "Idempotency-Key": "live-test-0001" },
+      body: JSON.stringify(body),
+    });
+    const register = await fetch(`${liveBase}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const registered = await register.json();
+    const wallet = await post("/api/wallets", { chain: "solana", password: "pw123456" }, registered.apiKey);
+    expect(wallet.status).toBe(403);
+    const execute = await post("/api/trades/execute", { fromChain: "solana", toChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", type: "swap" }, registered.apiKey);
+    expect(execute.status).toBe(403);
+    await liveServer.stop();
+    rmSync(liveDir, { recursive: true, force: true });
+  });
+
+  it("requires an idempotency key and rejects key reuse with a different request", async () => {
+    const missing = await api("POST", "/api/trades/execute", {
+      fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", password: "pw123456",
+    }, firstUserKey);
+    expect(missing.status).toBe(400);
+
+    const first = await api("POST", "/api/trades/execute", {
+      fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", password: "pw123456",
+    }, firstUserKey, { "Idempotency-Key": "reuse-test-0001" });
+    expect(first.status).toBe(200);
+    const changed = await api("POST", "/api/trades/execute", {
+      fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "2000000", password: "pw123456",
+    }, firstUserKey, { "Idempotency-Key": "reuse-test-0001" });
+    expect(changed.status).toBe(409);
   });
 
   it("rejects invalid amounts", async () => {
@@ -205,6 +246,7 @@ describe("trades (mock execution)", () => {
       "/api/trades/execute",
       { fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "-5", password: "pw123456" },
       firstUserKey,
+      { "Idempotency-Key": "test-trade-0004" },
     );
     expect(r.status).toBe(400);
   });
@@ -254,7 +296,7 @@ describe("leaderboard & portfolio", () => {
     expect(r.status).toBe(200);
     expect(r.json.pnl.totalTrades).toBeGreaterThanOrEqual(1);
     // MOON was bought in the swap test → present in pnlByToken
-    expect(r.json.pnl.pnlByToken[MOON]).toBeTruthy();
+    expect(r.json.pnl.pnlByToken["solana:" + MOON]).toBeTruthy();
     expect(Array.isArray(r.json.holdings)).toBe(true);
   });
 
@@ -265,6 +307,7 @@ describe("leaderboard & portfolio", () => {
       "/api/trades/execute",
       { fromChain: "solana", sellToken: USDC, buyToken: "SOL", amount: "5000000", password: "pw123456" },
       firstUserKey,
+      { "Idempotency-Key": "portfolio-sol-0001" },
     );
     expect(swap.status).toBe(200);
 
@@ -358,7 +401,7 @@ describe("positions, feed & leaderboard periods (fomo-style)", () => {
     // buy 10 USDC of MOON (mock 1:1 → 10_000_000 smallest units)
     const buy = await api("POST", "/api/trades/execute", {
       fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "10000000", password: "pw123456",
-    }, key());
+    }, key(), { "Idempotency-Key": "position-buy-0001" });
     expect(buy.status).toBe(200);
 
     const open = await api("GET", "/api/positions?status=open", undefined, key());
@@ -370,15 +413,16 @@ describe("positions, feed & leaderboard periods (fomo-style)", () => {
     // sell everything back to USDC (side=swap token→USDC)
     const sell = await api("POST", "/api/trades/execute", {
       fromChain: "solana", sellToken: MOON, buyToken: USDC, amount: moonPos.amount_remaining, password: "pw123456",
-    }, key());
+    }, key(), { "Idempotency-Key": "position-sell-0001" });
     expect(sell.status).toBe(200);
 
     const after = await api("GET", "/api/positions", undefined, key());
     const closed = after.json.positions.find((p: any) => p.token === MOON && p.status === "closed");
     expect(closed).toBeTruthy();
-    // Mock 1:1 with net-of-fee accounting. Two buys of 10 USDC (fee 0.03 each)
-    // + one sell of 20 USDC (fee 0.06) = 4×0.03 = 0.12 USDC total cost → PnL −0.12
-    expect(closed.realized_pnl_usdc).toBe("-120000");
+    // Mock 1:1 with net-of-fee accounting. Earlier idempotency coverage
+    // leaves one additional 1 USDC MOON buy, so this closes 21 USDC total:
+    // costs = 21.063, proceeds = 20.937 → realized PnL = −0.126 USDC.
+    expect(closed.realized_pnl_usdc).toBe("-126000");
   });
 
   it("feed lists swap + position_closed events and supports sinceId polling", async () => {
@@ -555,6 +599,20 @@ describe("wallet login (Phantom / MetaMask)", () => {
       message: ch.json.message, signature: "00", nonce: ch.json.nonce,
     });
     expect(replay.status).toBe(400); // nonce already consumed
+  });
+
+  it("rejects a valid signature from another challenge with a fresh nonce", async () => {
+    const { ethers } = await import("ethers");
+    const signer = ethers.Wallet.createRandom();
+    const original = await api("POST", "/api/auth/challenge", { chain: "evm" });
+    const fresh = await api("POST", "/api/auth/challenge", { chain: "evm" });
+    const signature = await signer.signMessage(original.json.message);
+    const replay = await api("POST", "/api/auth/wallet", {
+      chain: "evm", address: signer.address, message: original.json.message,
+      signature, nonce: fresh.json.nonce,
+    });
+    expect(replay.status).toBe(400);
+    expect(replay.json.apiKey).toBeUndefined();
   });
 
   it("logs in a real EVM wallet (MetaMask personal_sign)", async () => {
@@ -738,6 +796,11 @@ describe("advanced user profile", () => {
     );
     expect(post.status).toBe(201);
     expect(post.json.tokenSymbol).toBe("USDC");
+  });
+
+  it("rejects unauthenticated feed mutations", async () => {
+    const r = await api("POST", "/api/feed/post", { text: "unauthorized" });
+    expect(r.status).toBe(401);
   });
 
   it("rejects oversized feed texts", async () => {

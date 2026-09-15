@@ -234,8 +234,17 @@ export const ALL_CHAIN_IDS = CHAIN_IDS.map((k) => CHAINS[k]!.chainId);
 
 /** Get chain config by chain ID number or string id */
 export function getChain(chainIdOrName: string | number): ChainConfig | undefined {
-  if (typeof chainIdOrName === "number") {
-    return Object.values(CHAINS).find((c) => c.chainId === chainIdOrName) as ChainConfig | undefined;
+  const config = typeof chainIdOrName === "number"
+    ? Object.values(CHAINS).find((c) => c.chainId === chainIdOrName)
+    : CHAINS[chainIdOrName.toLowerCase()];
+  if (!config) return undefined;
+  const name = config.id.toUpperCase() + "_RPC_URL";
+  const configured = process.env[name] || (config.id === "solana" ? process.env.HELIUS_RPC_URL : process.env["ALCHEMY_" + name]);
+  if (!configured) return config;
+  let url: URL;
+  try { url = new URL(configured); } catch { throw new Error("Invalid configured RPC endpoint for " + config.id); }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) {
+    throw new Error("Configured RPC endpoint requires HTTPS for " + config.id);
   }
-  return CHAINS[chainIdOrName.toLowerCase()] as ChainConfig | undefined;
+  return { ...config, rpcUrl: url.toString() };
 }

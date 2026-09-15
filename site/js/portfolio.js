@@ -298,7 +298,7 @@ export const PortfolioEngine = {
     if (!el) return;
     const pnl = this.pnl || {};
 
-    const winRate = pnl.totalTrades > 0 ? (pnl.winningTrades / pnl.totalTrades) * 100 : 0;
+    const winRate = Number(pnl.winRate ?? 0);
     const open = this.openPositions();
     const pnlColor = Number(pnl.totalPnlUsdc || 0) >= 0 ? "var(--delta-green)" : "var(--delta-red)";
     const openVal = this.totalOpenValue();
@@ -394,10 +394,8 @@ export const PortfolioEngine = {
       rows,
       (h) => {
         const sym = this.symbolFor(h);
-        const units = Number(h.balance || 0) / 1e6;
-        const row = PriceFeed.get(sym);
-        const live = row?.price > 0;
-        const value = live ? units * row.price : null;
+        const units = String(h.balance ?? "0");
+        const value = null; // Token decimals and valuation must be verified by the backend.
         const pnlNum = Number(h.realizedPnlUsdc || 0);
         const pnlColor = pnlNum > 0 ? "var(--delta-green)" : pnlNum < 0 ? "var(--delta-red)" : "var(--text-tertiary)";
         const tokenName = TokenMeta.nameForToken(h.token, sym);
@@ -417,7 +415,7 @@ export const PortfolioEngine = {
         <div style="text-align:right">
           <div class="mono" style="font-weight:800; font-size:13.5px; color:#fff">${value !== null ? fmtUsd(value) : "—"}</div>
           <div style="font-size:10.5px; color:var(--text-tertiary)">
-            ${units.toLocaleString("en-US", { maximumFractionDigits: 4 })} unidades
+            ${escHtml(units)} unidades base
             ${pnlNum !== 0 ? ` · <span style="color:${pnlColor}">PnL ${signedUsdMicro(h.realizedPnlUsdc)}</span>` : ""}
           </div>
         </div>`;

@@ -5,7 +5,7 @@
 
 import { ApiClient } from "./api.js";
 import { FeedEngine } from "./feed.js";
-import { DiscoverEngine } from "./discover.js";
+import { DiscoverEngine, PriceFeed } from "./discover.js";
 import { TradingEngine } from "./trading.js";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
@@ -26,11 +26,7 @@ export const App = {
     const refParam = new URLSearchParams(location.search).get("ref");
     if (refParam) sessionStorage.setItem("trenches_ref", refParam.trim().slice(0, 40));
 
-    // 1. Closed Beta Access Gate Check
-    if (!ApiClient.isBetaUnlocked()) {
-      // If user came without unlocking, prompt access code modal
-      this.openAccessCodeModal();
-    }
+    // Public market browsing; account actions continue to require authentication.
 
     // 2. Navigation FIRST — the UI must respond even if a subsystem fails
     this.setupNavigation();
@@ -43,7 +39,8 @@ export const App = {
         console.warn(`[App] ${name} init failed (app continues):`, e);
       }
     };
-    await safeInit("Discover", () => DiscoverEngine.init(document.getElementById("discoverTokensList")));
+    safeInit("Reference prices", () => PriceFeed.ensureCache());
+    safeInit("Discover", () => DiscoverEngine.init(document.getElementById("discoverTokensList")));
     safeInit("Feed", () => FeedEngine.init(document.getElementById("feedPostsList")));
     safeInit("Trading", () => TradingEngine.init());
     safeInit("Social", () => SocialEngine.init(document.getElementById("leaderboardList")));
@@ -65,6 +62,7 @@ export const App = {
 
     // 6. Setup Viewport Mobile Fixes
     this.setupMobileViewport();
+    this.switchView("trade");
   },
 
   /** Populate feed sidebars: real top movers (CoinGecko) + real top traders (API). */
@@ -209,7 +207,10 @@ export const App = {
     TradingEngine.setAsset(symbol, chain, price, { tokenAddress: tokenAddress || undefined });
     this.switchView("trade");
     // Reflect the selection in the Trenches board when it loads.
-    setTimeout(() => TrenchesEngine.init(), 80);
+    setTimeout(() => {
+      TrenchesEngine.init();
+      document.getElementById("terminalSymbol")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
   },
 
   /* ── 🔎 Universal token search (header) ─────────────────────────────── */
@@ -223,56 +224,35 @@ export const App = {
     const box = document.getElementById("universalSearchResults");
     if (!box) return;
     const query = String(q ?? "").trim();
-    if (query.length < 2) {
-      box.style.display = "none";
-      return;
-    }
-    this._usSeq = (this._usSeq ?? 0) + 1;
-    const seq = this._usSeq;
+    const sequence = this._usSeq = (this._usSeq || 0) + 1;
+    if (query.length < 2) { box.style.display = "none"; return; }
     box.style.display = "block";
-    box.innerHTML = `<div style="padding:10px 12px; font-size:11px; color:var(--text-tertiary)">Buscando…</div>`;
-
-    const isAddress = /^(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(query);
-    const rows = [];
+    box.innerHTML = '<div style="padding:12px">Buscando contratos y pares...</div>';
+    const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     try {
-      if (isAddress) {
-        await DexFeed.ensureAddresses([{ address: query, chain: "solana" }]);
-        await DexFeed.ensureAddresses([{ address: query, chain: "bsc" }]).catch(() => {});
-        for (const chain of ["solana", "bsc"]) {
-          const r = DexFeed.get(query.toLowerCase());
-          if (r && r.chain === chain) { rows.push(r); break; }
-        }
-        if (!rows.length) {
-          const r = DexFeed.get(query.toLowerCase());
-          if (r) rows.push(r);
-        }
-      } else {
-        // Ticker: resolve via search endpoint per active chains.
-        await DexFeed.ensureTokens([{ symbol: query.toUpperCase(), chain: "solana" }]);
-        const r = DexFeed.get(query.toUpperCase());
-        if (r) rows.push(r);
+      const rows = await DexFeed.search(query);
+      if (sequence !== this._usSeq) return;
+      if (!rows.length) {
+        box.innerHTML = '<div style="padding:12px">Sin pares indexados para esta búsqueda.</div>';
+        return;
       }
-    } catch {}
-    if (seq !== this._usSeq) return; // stale response
-
-    if (!rows.length) {
-      box.innerHTML = `<div style="padding:12px; font-size:11.5px; color:var(--text-tertiary)">Sin resultados para "${query.replace(/[&<>"']/g, "")}" en Solana/BSC.</div>`;
-      return;
+      box.innerHTML = rows.slice(0, 30).map((row, index) =>
+        '<button data-market-result="' + index + '" style="display:flex;gap:10px;width:100%;padding:10px;background:transparent;border:0;border-bottom:1px solid var(--border-subtle);color:var(--text-primary);text-align:left;cursor:pointer">' +
+        '<strong>' + escape(row.symbol) + '</strong><span>' + escape(row.name) + '</span><small>' + escape(row.chain) +
+        ' · ' + escape(row.address) + '</small></button>').join("");
+      box.querySelectorAll("[data-market-result]").forEach((button) => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.marketResult)];
+        this.universalSearchGo(row.symbol, row.chain, row.priceUsd, row.address);
+      }));
+    } catch {
+      if (sequence === this._usSeq) box.innerHTML = '<div style="padding:12px">Proveedor temporalmente no disponible. Vuelve a intentarlo.</div>';
     }
-    box.innerHTML = rows.slice(0, 6).map((r) => `
-      <div onclick="window.App.universalSearchGo('${String(r.symbol ?? "").replace(/[^a-zA-Z0-9]/g, "")}', '${String(r.chain ?? "solana")}', ${r.priceUsd ?? 0}, '${String(r.address ?? "").replace(/[^a-zA-Z0-9]/g, "")}'); window.App.hideUniversalSearch()"
-        style="display:flex; align-items:center; gap:10px; padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border-subtle)">
-        <strong style="font-size:12px; color:#fff; min-width:52px">${String(r.symbol ?? "").replace(/[&<>"']/g, "")}</strong>
-        <span style="font-size:10.5px; color:var(--text-tertiary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${String(r.name ?? "").replace(/[&<>"']/g, "")}</span>
-        <span style="font-size:10px; color:var(--text-tertiary)">${String(r.chain ?? "").toUpperCase()}</span>
-        <span style="font-size:11px; font-family:var(--font-mono); color:var(--text-secondary)">$${r.priceUsd > 0 ? (r.priceUsd < 0.01 ? r.priceUsd.toFixed(6) : r.priceUsd.toPrecision(4)) : "—"}</span>
-      </div>`
-    ).join("");
   },
 
   universalSearchEnter() {
     const box = document.getElementById("universalSearchResults");
-    const first = box?.querySelector("[onclick]");
+    const first = box?.querySelector("[data-market-result]");
     if (first) first.click();
   },
 
@@ -440,6 +420,7 @@ export const App = {
       try {
         const resp = await window.solana.connect();
         const address = resp.publicKey.toString();
+        sessionStorage.setItem("trenches_wallet_address_solana", address);
         const ch = await ApiClient.getChallenge("solana");
         const encoded = new TextEncoder().encode(ch.message);
         const signed = await window.solana.signMessage(encoded, "utf8");
@@ -460,6 +441,7 @@ export const App = {
       try {
         const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
         const address = accounts[0];
+        sessionStorage.setItem("trenches_wallet_address_evm", address);
         const ch = await ApiClient.getChallenge("evm");
         const sig = await window.ethereum.request({
           method: "personal_sign",

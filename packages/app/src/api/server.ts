@@ -9,6 +9,7 @@
  */
 
 import http from "node:http";
+import { MarketDataService } from "../market/data.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,9 @@ import { BalanceScanner } from "../wallets/balances.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
 import { placeClobOrder } from "../market/clob.js";
+import { hashExecutionRequest } from "../trading/lifecycle.js";
+import { isUsdc as isChainUsdc, toMicroUsdc } from "../trading/pnl.js";
+import { ExecutionReconciler, RpcReceiptProvider, type ReceiptFill } from "../trading/reconciler.js";
 
 export interface ServerOptions {
   /** Path to the SQLite database file. */
@@ -101,15 +105,16 @@ export class ApiServer {
   private readonly rewards: RewardsEngine;
   private readonly history: TradeHistory;
   private readonly router = new Router();
+  private readonly marketData = new MarketDataService();
   private readonly siteDir: string | null;
   private readonly bootstrapSecret?: string;
   private readonly holdersProviders: HoldersProvider[];
   private server: http.Server | null = null;
   private readonly port: number;
-
   constructor(options: ServerOptions) {
-    this.db = new AppDb(options.dbPath);
     this.appMode = options.appMode ?? ((process.env.APP_MODE as "live" | "mock") ?? "mock");
+    if (this.appMode !== "live" && this.appMode !== "mock") throw new Error("APP_MODE must be live or mock");
+    this.db = new AppDb(options.dbPath, this.appMode);
     this.port = options.port ?? Number(process.env.PORT ?? 8787);
     this.bootstrapSecret = options.bootstrapSecret ?? process.env.BOOTSTRAP_SECRET;
 
@@ -168,11 +173,8 @@ export class ApiServer {
     const url = new URL(req.url ?? "/", `http://localhost`);
 
     if (req.method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-      });
+      this.writeCorsHeaders(req, res);
+      res.writeHead(204);
       res.end();
       return;
     }
@@ -193,6 +195,7 @@ export class ApiServer {
       return;
     }
 
+    this.writeCorsHeaders(req, res);
     const userId = this.auth.authenticate(req.headers.authorization);
     if (match.route.requiresAuth && userId === null) {
       sendJson(res, 401, { error: "missing or invalid API key" });
@@ -212,6 +215,19 @@ export class ApiServer {
         sendJson(res, 500, { error: "internal server error" });
       }
     }
+  }
+
+  private writeCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const requestOrigin = req.headers.origin;
+    const configured = (process.env.ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean);
+    const allowed = requestOrigin && (configured.length === 0 ? requestOrigin === `http://${req.headers.host}` : configured.includes(requestOrigin));
+    if (allowed) res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
   }
 
   // ── Static dashboard ──────────────────────────────────────────────────
@@ -258,6 +274,34 @@ export class ApiServer {
   }
 
   private registerRoutes(): void {
+    // Shared public market data; these endpoints never authorize trades.
+    const marketReply = async (ctx: RequestContext, field: string, operation: () => Promise<import("../market/data.js").MarketSnapshot<any[]>>) => {
+      try {
+        const result = await operation();
+        const { data, ...meta } = result;
+        sendJson(ctx.res, 200, { ...meta, [field]: field === "pairs"
+          ? data.map((pair) => ({ ...pair, marketStatus: meta.status, marketAsOf: meta.asOf, source: meta.source }))
+          : data });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "market data unavailable";
+        const invalid = /^(invalid|token batch)/i.test(message);
+        sendJson(ctx.res, invalid ? 400 : 503, { status: "UNAVAILABLE", error: invalid ? message : "Market data temporarily unavailable" });
+      }
+    };
+    this.router.publicRoute("GET", "/api/market/reference", (ctx) =>
+      marketReply(ctx, "markets", () => this.marketData.referenceMarkets(ctx.query.get("ids") ?? "")));
+    this.router.publicRoute("GET", "/api/market/search", (ctx) =>
+      marketReply(ctx, "pairs", () => this.marketData.search(ctx.query.get("q") ?? "", ctx.query.get("chain") ?? undefined)));
+    this.router.publicRoute("GET", "/api/market/tokens/:chain/:addresses", (ctx) =>
+      marketReply(ctx, "pairs", () => this.marketData.tokens(ctx.params.chain!, (ctx.params.addresses ?? "").split(","))));
+    this.router.publicRoute("GET", "/api/market/pools", (ctx) =>
+      marketReply(ctx, "pairs", () => this.marketData.pools(ctx.query.get("chain") ?? "all", ctx.query.get("kind") ?? "trending", Number(ctx.query.get("page") ?? 1))));
+    this.router.publicRoute("GET", "/api/market/candles", (ctx) =>
+      marketReply(ctx, "candles", () => this.marketData.candles(ctx.query.get("chain") ?? "", ctx.query.get("pool") ?? "", ctx.query.get("token") ?? "", Number(ctx.query.get("aggregate") ?? 5))));
+    this.router.publicRoute("GET", "/api/market/reference-candles", (ctx) =>
+      marketReply(ctx, "candles", () => this.marketData.referenceCandles(ctx.query.get("coin") ?? "")));
+
+
     // ── Auth ──
     this.router.publicRoute("POST", "/api/auth/register", (ctx) => {
       const secret = typeof ctx.body.bootstrapSecret === "string" ? ctx.body.bootstrapSecret : undefined;
@@ -281,7 +325,7 @@ export class ApiServer {
       const message = this.str(ctx, "message");
       const signature = this.str(ctx, "signature");
       const nonce = this.str(ctx, "nonce");
-      if (!this.challenges.consume(nonce)) throw new HttpError(400, "expired or invalid challenge — request a new one");
+      if (!this.challenges.consume(nonce, message, chain)) throw new HttpError(400, "expired or invalid challenge — request a new one");
 
       let externalId: string;
       let displayName = "";
@@ -475,7 +519,12 @@ export class ApiServer {
         id: c.id, name: c.name, chainId: c.chainId, evm: c.evm,
         nativeCurrency: c.nativeCurrency, usdcAddress: c.usdcAddress,
         usdcDecimals: c.usdcDecimals, dexAggregator: c.dexAggregator,
-        supportsLaunches: c.supportsLaunches,
+        supportsLaunches: false,
+        quotes: Boolean(c.dexApiUrl),
+        liveExecution: false,
+        selfCustody: false,
+        status: "UNAVAILABLE",
+        reason: "Wallet signing and receipt settlement have not been verified end to end",
       }));
       sendJson(ctx.res, 200, { chains, mode: this.appMode });
     });
@@ -535,6 +584,7 @@ export class ApiServer {
     });
 
     this.router.route("POST", "/api/wallets", (ctx) => {
+      if (this.appMode === "live") throw new HttpError(403, "custodial wallets are disabled in live mode; connect a wallet");
       const userId = this.requireUserId(ctx);
       const chain = this.str(ctx, "chain");
       const password = this.str(ctx, "password");
@@ -548,6 +598,7 @@ export class ApiServer {
     });
 
     this.router.route("POST", "/api/wallets/import", (ctx) => {
+      if (this.appMode === "live") throw new HttpError(403, "custodial wallet import is disabled in live mode; connect a wallet");
       const userId = this.requireUserId(ctx);
       const chain = this.str(ctx, "chain");
       const privateKey = this.str(ctx, "privateKey");
@@ -563,6 +614,7 @@ export class ApiServer {
     });
 
     this.router.route("DELETE", "/api/wallets/:id", (ctx) => {
+      if (this.appMode === "live") throw new HttpError(403, "custodial wallets are disabled in live mode; connect a wallet");
       const userId = this.requireUserId(ctx);
       const walletId = Number(ctx.params.id);
       if (!Number.isFinite(walletId)) throw new HttpError(400, "invalid wallet id");
@@ -617,6 +669,38 @@ export class ApiServer {
       sendJson(ctx.res, 200, { ok: true, result, mode: this.appMode });
     });
 
+    // ── Receipt reconciliation ──
+    this.router.route("POST", "/api/admin/reconcile", async (ctx) => {
+      const provided = ctx.req.headers["x-admin-secret"];
+      if (!process.env.ADMIN_SECRET || provided !== process.env.ADMIN_SECRET) throw new HttpError(403, "admin secret required");
+      const rpcUrls = Object.fromEntries(Object.values(CHAINS).map((chain) => [chain.id, chain.rpcUrl]));
+      const result = await new ExecutionReconciler(
+        this.db,
+        new RpcReceiptProvider(rpcUrls),
+        async (tx, _receipt, fill) => {
+          // A receipt is not enough for accounting. The chain adapter must
+          // provide exact, receipt-derived amounts before this transaction can
+          // become a settled fill.
+          if (!fill) return;
+          this.settleReceiptBackedTransaction(tx, fill);
+        },
+      ).reconcilePending();
+      sendJson(ctx.res, 200, { ...result, mode: this.appMode });
+    });
+
+    // No chain has a certified wallet-signing/settlement adapter yet.
+    // Fail before preparing a transaction or accepting an unverified hash.
+    for (const path of ["/api/trades/prepare", "/api/trades/submit"]) {
+      this.router.route("POST", path, (ctx) => {
+        this.requireUserId(ctx);
+        sendJson(ctx.res, 503, {
+          error: "Live execution is unavailable until wallet signing and receipt settlement are verified",
+          status: "UNAVAILABLE",
+          mode: this.appMode,
+        });
+      });
+    }
+
     // ── Trades (quote) ──
     // Real quotes are the default when the server is live. Mock mode remains
     // explicitly labelled so the UI never presents a simulated fill as real.
@@ -629,14 +713,17 @@ export class ApiServer {
         const takerWallet = this.db.getWallet(ctx.userId ?? 0, params.fromChain);
         if (takerWallet?.address) params.taker = takerWallet.address;
       }
-      const quote = this.appMode === "mock"
-        ? buildMockQuote(params)
-        : await this.trading.getQuote(params).catch((err) => {
-            // Real quote provider failed (network/RPC/aggregator) → fall back to
-            // an honest mock quote rather than a 502, but label it clearly.
-            console.warn("[api] real quote failed, using labeled mock:", err);
-            return buildMockQuote(params);
-          });
+      let quote;
+      if (this.appMode === "mock") {
+        quote = buildMockQuote(params);
+      } else {
+        try {
+          quote = await this.trading.getQuote(params);
+        } catch (err) {
+          console.warn("[api] live quote provider failed:", err instanceof Error ? err.message : "unknown error");
+          throw new HttpError(503, "live quote temporarily unavailable; retry shortly");
+        }
+      }
       sendJson(ctx.res, 200, { quote, mode: this.appMode });
     });
 
@@ -649,13 +736,55 @@ export class ApiServer {
 
     this.router.route("GET", "/api/trades/pnl", (ctx) => {
       const userId = this.requireUserId(ctx);
-      sendJson(ctx.res, 200, { pnl: this.db.getUserPnl(userId) });
+      sendJson(ctx.res, 200, { pnl: this.db.getUserPnl(userId), mode: this.appMode, source: "settled_fills" });
+    });
+
+    this.router.route("GET", "/api/trades/pending", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const transactions = this.db.getPendingExecutionTransactions(userId, true).map((tx: any) => ({
+        intentId: tx.intent_id,
+        transactionId: tx.id,
+        chain: tx.chain,
+        txHash: tx.tx_hash,
+        status: tx.status,
+        submittedAt: tx.submitted_at,
+        updatedAt: tx.updated_at,
+        error: tx.error_message ?? null,
+      }));
+      sendJson(ctx.res, 200, { transactions, mode: this.appMode });
     });
 
     this.router.route("POST", "/api/trades/execute", async (ctx) => {
       const userId = this.requireUserId(ctx);
+      const idempotencyKey = this.idempotencyKey(ctx);
       const params = this.parseTradeParams(ctx);
+      if (this.appMode === "live") {
+        throw new HttpError(403, "live custodial execution is disabled; connect and sign with your wallet");
+      }
       const password = this.str(ctx, "password");
+      const requestForHash = { ...params, password: undefined };
+      const requestHash = hashExecutionRequest(requestForHash);
+      let intentId: number;
+      try {
+        intentId = this.db.createExecutionIntent({
+          userId,
+          endpoint: "POST /api/trades/execute",
+          idempotencyKey,
+          requestHash,
+          requestJson: JSON.stringify(requestForHash),
+          mode: this.appMode,
+        });
+      } catch {
+        const existing = this.db.getExecutionIntent(userId, "POST /api/trades/execute", idempotencyKey);
+        if (!existing) throw new HttpError(409, "could not claim execution request");
+        if (existing.request_hash !== requestHash) throw new HttpError(409, "Idempotency-Key was already used with a different request");
+        if (existing.result_json) {
+          sendJson(ctx.res, 200, JSON.parse(existing.result_json));
+        } else {
+          sendJson(ctx.res, 202, { success: false, pending: true, intentId: existing.id, status: existing.status, mode: existing.mode });
+        }
+        return;
+      }
 
       if (params.fromChain !== params.toChain) {
         throw new HttpError(501, "cross-chain bridge execution is not implemented yet (quotes only)");
@@ -664,19 +793,32 @@ export class ApiServer {
       if (!config) throw new HttpError(400, `unknown chain: ${params.fromChain}`);
 
       const wallet = this.db.getWallet(userId, params.fromChain);
-      if (!wallet) throw new HttpError(404, `no ${params.fromChain} wallet — create one first`);
+      if (!wallet) {
+        this.db.updateExecutionIntent(intentId, { status: "failed", errorMessage: "wallet not found" });
+        throw new HttpError(404, `no ${params.fromChain} wallet — create one first`);
+      }
 
       // encrypted_key is stored as a JSON string in SQLite — normalize before crypto
       const encrypted: EncryptedPayload = typeof wallet.encrypted_key === "string"
         ? JSON.parse(wallet.encrypted_key)
         : wallet.encrypted_key;
-      if (!verifyPassword(encrypted, password)) throw new HttpError(401, "wrong wallet password");
+      if (!verifyPassword(encrypted, password)) {
+        this.db.updateExecutionIntent(intentId, { status: "failed", errorMessage: "wrong wallet password" });
+        throw new HttpError(401, "wrong wallet password");
+      }
       const privateKey = decrypt(encrypted, password);
 
       const quote = this.appMode === "mock" ? buildMockQuote(params) : await this.trading.getQuote(params);
+      const chainUsdc = config.usdcAddress;
+      const isUsdc = (token: string) => token === chainUsdc || token.toUpperCase() === "USDC";
+      if (!isUsdc(params.sellToken) && !isUsdc(params.buyToken)) {
+        this.db.updateExecutionIntent(intentId, { status: "failed", errorMessage: "swap must contain one USDC leg" });
+        throw new HttpError(400, "one side of the swap must be USDC (USDC-native routing)");
+      }
 
-      // Fee first (revenue event), then execute, then record the trade.
-      const fee = this.revenue.recordTradingFee(userId, params.amount, false, "swap", 0);
+      // Calculate now; record revenue only inside the atomic settlement.
+      const quotedUsdc = isUsdc(params.sellToken) ? params.amount : quote.buyAmount;
+      const fee = this.trading.calculateFee(toMicroUsdc(quotedUsdc, params.fromChain).toString(), false);
       const execCtx: ExecutionContext = { mode: this.appMode, privateKey };
 
       let out;
@@ -694,6 +836,10 @@ export class ApiServer {
               walletAddress: wallet.address, buyAmount: quote.buyAmount,
             });
       } catch (err) {
+        this.db.updateExecutionIntent(intentId, {
+          status: "failed",
+          errorMessage: "swap execution failed",
+        });
         this.db.addTrade({
           user_id: userId, type: "swap", from_chain: params.fromChain, to_chain: params.toChain,
           sell_token: params.sellToken, buy_token: params.buyToken, sell_amount: params.amount,
@@ -704,39 +850,33 @@ export class ApiServer {
         throw new HttpError(502, `swap execution failed: ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      this.db.updateExecutionIntent(intentId, { status: "submitted" });
+      const transactionId = this.db.createExecutionTransaction({
+        intentId,
+        tradeId: null,
+        userId,
+        chain: params.fromChain,
+        txHash: out.txHash,
+        status: this.appMode === "mock" ? "pending" : "submitted",
+      });
+      this.db.updateExecutionTransaction(transactionId, { status: "pending" });
+      this.db.updateExecutionIntent(intentId, { status: "pending" });
+
       const tradeId = this.db.addTrade({
         user_id: userId, type: "swap", from_chain: params.fromChain, to_chain: params.toChain,
         sell_token: params.sellToken, buy_token: params.buyToken, sell_amount: params.amount,
         buy_amount: out.buyAmount, sell_price_usdc: "0", buy_price_usdc: "0", fee_usdc: fee,
         tx_hash: out.txHash, launch_id: null, copied_user_id: null, realized_pnl_usdc: null,
-        status: "confirmed", ts: Math.floor(Date.now() / 1000),
+        status: "pending", ts: Math.floor(Date.now() / 1000),
       });
-
-      // Rewards: carved out of the REAL fee, only after the trade confirmed.
-      // Idempotent per tradeId — retries can never double-pay.
-      let rewardsInfo: { accrued: boolean; amountUsdc?: string; referralAccrued?: boolean } | null = null;
-      try {
-        rewardsInfo = this.rewards.accrueTradingReward({
-          userId,
-          tradeId,
-          feeUsdc: fee,
-          volumeUsdc: params.amount,
-        });
-      } catch (err) {
-        console.warn("[rewards] accrual failed (trade unaffected):", err);
-      }
+      this.db.updateExecutionTransaction(transactionId, { tradeId });
 
       // Position aggregation + feed event. USDC appears on exactly one side of
       // every swap (USDC-native routing). Identify it via the chain config's
       // usdcAddress (e.g. EPjFW... on Solana), falling back to a literal "USDC".
-      const chainUsdc = config.usdcAddress;
-      const isUsdc = (t: string) => t === chainUsdc || t.toUpperCase() === "USDC";
       const sellTokenIsUsdc = isUsdc(params.sellToken);
       const buyTokenIsUsdc = isUsdc(params.buyToken);
       const isBuy = sellTokenIsUsdc; // buying the token = paying USDC
-      if (!sellTokenIsUsdc && !buyTokenIsUsdc) {
-        throw new HttpError(400, "one side of the swap must be USDC (USDC-native routing)");
-      }
       const token = isBuy ? params.buyToken : params.sellToken;
       const tokenAmount = isBuy ? out.buyAmount : params.amount;
       const usdcLeg = isBuy ? params.amount : out.buyAmount;
@@ -747,20 +887,60 @@ export class ApiServer {
       const looksLikeTicker = /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(token) && !/^0x/i.test(token);
       const wellKnownHit = WELL_KNOWN_TOKENS[token] ?? WELL_KNOWN_TOKENS[token.toLowerCase()];
       const symbolHint = looksLikeTicker ? token.toUpperCase() : (wellKnownHit?.symbol ?? "");
-      this.applyToPosition(userId, params.fromChain, token, usdcSide === "sell" ? "buy" : "sell", tokenAmount, usdcLeg, fee, symbolHint);
-      this.db.addFeedEvent({
-        type: "swap", actor_id: userId, chain: params.fromChain, token,
-        token_symbol: symbolHint || token.slice(0, 6),
-        payload: { side: usdcSide === "sell" ? "buy" : "sell", usdc: usdcLeg, tokens: tokenAmount, txHash: out.txHash },
-        ts: Math.floor(Date.now() / 1000),
-      });
+      let realizedPnl: string | null = null;
+      let rewardsInfo: { accrued: boolean; amountUsdc?: string; referralAccrued?: boolean } | null = null;
 
-      sendJson(ctx.res, 200, {
-        success: true, mode: this.appMode, tradeId, txHash: out.txHash,
+      // A mock broadcast is immediately eligible for deterministic settlement,
+      // but it still follows the same confirmed → settled atomic projection as
+      // a receipt-backed live transaction.
+      this.db.updateExecutionTransaction(transactionId, { status: "confirmed" });
+      this.db.updateExecutionIntent(intentId, { status: "confirmed" });
+      try {
+        this.db.settleExecutionTransaction({
+          transactionId,
+          intentId,
+          userId,
+          chain: params.fromChain,
+          sellToken: params.sellToken,
+          buyToken: params.buyToken,
+          sellAmount: params.amount,
+          buyAmount: out.buyAmount,
+          feeUsdc: fee,
+          settlementSource: "mock",
+          apply: () => {
+            realizedPnl = this.applyToPosition(userId, params.fromChain, token, usdcSide === "sell" ? "buy" : "sell", tokenAmount, usdcLeg, fee, symbolHint);
+            this.db.updateTradeStatus(tradeId, "confirmed", realizedPnl);
+            this.revenue.recordTradingFee(userId, toMicroUsdc(usdcLeg, params.fromChain).toString(), false, "swap", tradeId);
+            rewardsInfo = this.rewards.accrueTradingReward({
+              userId,
+              tradeId,
+              feeUsdc: fee,
+              volumeUsdc: toMicroUsdc(usdcLeg, params.fromChain).toString(),
+            });
+            this.db.addFeedEvent({
+              type: "swap", actor_id: userId, chain: params.fromChain, token,
+              token_symbol: symbolHint || token.slice(0, 6),
+              payload: { side: usdcSide === "sell" ? "buy" : "sell", usdc: usdcLeg, tokens: tokenAmount, txHash: out.txHash },
+              ts: Math.floor(Date.now() / 1000),
+            });
+          },
+        });
+      } catch (err) {
+        this.db.updateExecutionTransaction(transactionId, { status: "failed", errorMessage: "position settlement failed" });
+        this.db.updateExecutionIntent(intentId, { status: "failed", errorMessage: "position settlement failed" });
+        this.db.updateTradeStatus(tradeId, "failed");
+        throw new HttpError(409, err instanceof Error ? err.message : "position settlement failed");
+      }
+
+      const response = {
+        success: true, mode: this.appMode, tradeId, intentId, txHash: out.txHash,
+        status: "settled" as const,
         sellAmount: params.amount, buyAmount: out.buyAmount, feeUsdc: fee,
         aggregator: quote.aggregator, route: quote.route,
         rewards: rewardsInfo,
-      });
+      };
+      this.db.updateExecutionIntent(intentId, { resultJson: JSON.stringify(response) });
+      sendJson(ctx.res, 200, response);
     });
 
     // ── Launchpad ──
@@ -777,6 +957,7 @@ export class ApiServer {
 
     this.router.route("POST", "/api/launches", async (ctx) => {
       const userId = this.requireUserId(ctx);
+      if (this.appMode === "live") throw new HttpError(503, "This operation has no verified on-chain execution yet");
       const sanitizeUrl = (v: unknown): string => {
         const s = typeof v === "string" ? v.trim() : "";
         if (!s) return "";
@@ -800,6 +981,7 @@ export class ApiServer {
 
     this.router.route("POST", "/api/launches/:id/buy", async (ctx) => {
       const userId = this.requireUserId(ctx);
+      if (this.appMode === "live") throw new HttpError(503, "This operation has no verified on-chain execution yet");
       const id = Number(ctx.params.id);
       if (!Number.isFinite(id)) throw new HttpError(400, "invalid launch id");
       const usdcAmount = this.str(ctx, "usdcAmount");
@@ -810,6 +992,7 @@ export class ApiServer {
 
     this.router.route("POST", "/api/launches/:id/sell", async (ctx) => {
       const userId = this.requireUserId(ctx);
+      if (this.appMode === "live") throw new HttpError(503, "This operation has no verified on-chain execution yet");
       const id = Number(ctx.params.id);
       if (!Number.isFinite(id)) throw new HttpError(400, "invalid launch id");
       const tokenAmount = this.str(ctx, "tokenAmount");
@@ -821,15 +1004,15 @@ export class ApiServer {
     // ── Social / leaderboard ──
     this.router.publicRoute("GET", "/api/leaderboard", (ctx) => {
       const period = ctx.query.get("period") ?? "all";
-      const limit = Math.min(Number(ctx.query.get("limit") ?? 20), 100);
-      if (period !== "all") {
-        // period snapshots (24h/7d/30d) refreshed lazily on read
-        this.refreshLeaderboardPeriod(period);
-        const rows = this.db.getLeaderboardByPeriod(period, limit);
-        return sendJson(ctx.res, 200, { period, leaders: rows });
-      }
+      const durations: Record<string, number> = { "1h": 3600, "24h": 86400, "7d": 604800, "30d": 2592000, all: 0 };
+      if (!(period in durations)) throw new HttpError(400, "invalid leaderboard period");
+      const limit = Number(ctx.query.get("limit") ?? 20);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, "invalid leaderboard limit");
       const chain = ctx.query.get("chain") ?? "all";
-      sendJson(ctx.res, 200, { period: "all", leaders: this.social.getLeaderboard(chain, limit) });
+      if (chain !== "all" && !getChain(chain)) throw new HttpError(400, "unknown chain");
+      const since = durations[period] ? Math.floor(Date.now() / 1000) - durations[period]! : 0;
+      sendJson(ctx.res, 200, { period, chain, mode: this.appMode, source: "settled_fills",
+        leaders: this.db.getTopTraders(chain, limit, since) });
     });
 
     // ── Positions ──
@@ -850,15 +1033,18 @@ export class ApiServer {
       const limit = Math.min(Number(ctx.query.get("limit") ?? 20), 50);
 
       // Order matters: first supported provider wins. Blockscout before mock.
-      const providers = this.holdersProviders;
+      const providers = this.appMode === "live"
+        ? this.holdersProviders.filter((provider) => provider.id !== "mock")
+        : this.holdersProviders;
       const provider = pickHoldersProvider(chain, providers);
-      if (!provider) throw new HttpError(404, `no holders provider for chain "${chain}"`);
+      if (!provider) throw new HttpError(503, "Live holders data is unavailable for this chain");
 
       try {
         const result = await provider.getHolders(chain, address, limit);
         sendJson(ctx.res, 200, { ...result, labeled: provider.id === "mock" ? "SIMULATED" : "on-chain" });
       } catch (err) {
-        // Live provider failed → fall back to mock, but label it honestly.
+        if (this.appMode === "live") throw new HttpError(503, "Live holders data is temporarily unavailable");
+        // Only sandbox responses may contain simulated holders.
         const mock = new MockHoldersProvider();
         const result = await mock.getHolders(chain, address, limit);
         sendJson(ctx.res, 200, {
@@ -882,8 +1068,8 @@ export class ApiServer {
       sendJson(ctx.res, 200, { events, maxId: this.db.getFeedMaxId(), mode: this.appMode });
     });
 
-    this.router.publicRoute("POST", "/api/feed/post", (ctx) => {
-      const actorId = ctx.userId ?? 1;
+    this.router.route("POST", "/api/feed/post", (ctx) => {
+      const actorId = this.requireUserId(ctx);
       const text = this.str(ctx, "text");
       if (text.length > 2000) throw new HttpError(400, "text too long (max 2000 chars)");
       const rawToken = this.str(ctx, "token", false) || "SOL";
@@ -966,21 +1152,24 @@ export class ApiServer {
       const positions = this.db.getUserPositions(userId, null, 200);
       const metaByToken = new Map();
       for (const p of positions) {
-        if (p.token && p.token_symbol) metaByToken.set(p.token, p);
+        if (p.token) metaByToken.set(p.chain + ":" + (getChain(p.chain)?.evm ? p.token.toLowerCase() : p.token), p);
       }
       const wellKnownSymbol = (raw: string): string => {
         const hit = WELL_KNOWN_TOKENS[raw] ?? WELL_KNOWN_TOKENS[raw.toLowerCase()];
         return hit?.symbol ?? "";
       };
-      const holdings = Object.entries(pnl.pnlByToken).map(([token, v]) => {
-        const pos = metaByToken.get(token);
+      const holdings = Object.entries(pnl.pnlByToken).map(([assetKey, v]) => {
+        const separator = assetKey.indexOf(":");
+        const chain = assetKey.slice(0, separator);
+        const token = assetKey.slice(separator + 1);
+        const pos = metaByToken.get(assetKey);
         const posSymbol = pos?.token_symbol || "";
         // A backend symbol that is just the address prefix is not a symbol.
         const meaningful = posSymbol && posSymbol.toUpperCase() !== token.slice(0, posSymbol.length).toUpperCase();
         return {
           token,
           symbol: meaningful ? posSymbol.toUpperCase() : wellKnownSymbol(token) || token.slice(0, 6),
-          chain: pos?.chain || "",
+          chain,
           balance: v.balance,
           realizedPnlUsdc: v.realizedPnlUsdc,
         };
@@ -1026,6 +1215,7 @@ export class ApiServer {
 
     this.router.route("POST", "/api/rewards/claim", (ctx) => {
       const userId = this.requireUserId(ctx);
+      if (this.appMode === "live") throw new HttpError(503, "This operation has no verified on-chain execution yet");
       try {
         const result = this.rewards.claim(userId);
         sendJson(ctx.res, 200, { ...result, status: "CLAIMED", mode: this.appMode });
@@ -1184,10 +1374,82 @@ export class ApiServer {
     });
   }
 
+  /** Apply exact receipt-derived amounts to accounting exactly once. */
+  private settleReceiptBackedTransaction(tx: any, fill: ReceiptFill): void {
+    const request = JSON.parse(tx.request_json) as {
+      params: TradeParams;
+      quote?: { aggregator?: string; route?: string };
+    };
+    const params = request.params;
+    const config = getChain(tx.chain);
+    if (!config || params.fromChain !== tx.chain || params.toChain !== tx.chain) {
+      throw new Error("receipt fill chain does not match execution intent");
+    }
+    const isUsdc = (token: string) => isChainUsdc(token, tx.chain);
+    if (isUsdc(fill.sellToken) === isUsdc(fill.buyToken)) {
+      throw new Error("receipt fill must contain one USDC leg");
+    }
+    if (fill.sellToken !== params.sellToken || fill.buyToken !== params.buyToken) {
+      throw new Error("receipt fill tokens do not match execution intent");
+    }
+    if (fill.sellAmount !== params.amount) {
+      throw new Error("receipt fill sell amount does not match execution intent");
+    }
+    if (!/^\d+$/.test(fill.buyAmount) || BigInt(fill.buyAmount) <= 0n || !/^\d+$/.test(fill.feeUsdc)) {
+      throw new Error("receipt fill amounts must be non-negative integers");
+    }
+
+    const sellTokenIsUsdc = isUsdc(fill.sellToken);
+    const token = sellTokenIsUsdc ? fill.buyToken : fill.sellToken;
+    const tokenAmount = sellTokenIsUsdc ? fill.buyAmount : fill.sellAmount;
+    const usdcLeg = sellTokenIsUsdc ? fill.sellAmount : fill.buyAmount;
+    const side = sellTokenIsUsdc ? "buy" : "sell";
+    const symbolHit = WELL_KNOWN_TOKENS[token] ?? WELL_KNOWN_TOKENS[token.toLowerCase()];
+    const symbol = /^[A-Za-z][A-Za-z0-9]{1,11}$/.test(token) && !/^0x/i.test(token)
+      ? token.toUpperCase() : (symbolHit?.symbol ?? "");
+    const tradeId = tx.trade_id ?? this.db.addTrade({
+      user_id: tx.user_id, type: "swap", from_chain: tx.chain, to_chain: tx.chain,
+      sell_token: fill.sellToken, buy_token: fill.buyToken, sell_amount: fill.sellAmount,
+      buy_amount: fill.buyAmount, sell_price_usdc: "0", buy_price_usdc: "0", fee_usdc: fill.feeUsdc,
+      tx_hash: tx.tx_hash, launch_id: null, copied_user_id: null, realized_pnl_usdc: null,
+      status: "pending", ts: Math.floor(Date.now() / 1000),
+    });
+
+    let realizedPnl: string | null = null;
+    this.db.settleExecutionTransaction({
+      transactionId: tx.id,
+      intentId: tx.intent_id,
+      userId: tx.user_id,
+      chain: tx.chain,
+      sellToken: fill.sellToken,
+      buyToken: fill.buyToken,
+      sellAmount: fill.sellAmount,
+      buyAmount: fill.buyAmount,
+      feeUsdc: fill.feeUsdc,
+      settlementSource: "receipt",
+      apply: () => {
+        realizedPnl = this.applyToPosition(tx.user_id, tx.chain, token, side, tokenAmount, usdcLeg, fill.feeUsdc, symbol);
+        this.db.updateTradeSettlement(tradeId, fill.buyAmount, fill.feeUsdc);
+        this.db.updateTradeStatus(tradeId, "confirmed", realizedPnl);
+        try {
+          this.rewards.accrueTradingReward({ userId: tx.user_id, tradeId, feeUsdc: fill.feeUsdc, volumeUsdc: toMicroUsdc(usdcLeg, tx.chain).toString() });
+        } catch (err) {
+          console.warn("[rewards] receipt settlement accrual failed:", err instanceof Error ? err.message : "unknown error");
+        }
+        this.db.addFeedEvent({
+          type: "swap", actor_id: tx.user_id, chain: tx.chain, token,
+          token_symbol: symbol || token.slice(0, 6),
+          payload: { side, usdc: usdcLeg, tokens: tokenAmount, txHash: tx.tx_hash, settlementSource: "receipt" },
+          ts: Math.floor(Date.now() / 1000),
+        });
+      },
+    });
+  }
+
   /** Aggregate a buy/sell leg into the user's open position and emit close events. */
-  private applyToPosition(userId: number, chain: string, token: string, side: "buy" | "sell", tokenAmount: string, usdcAmount: string, feeUsdc = "0", symbol = ""): void {
+  private applyToPosition(userId: number, chain: string, token: string, side: "buy" | "sell", tokenAmount: string, usdcAmount: string, feeUsdc = "0", symbol = ""): string | null {
     const existing = this.db.getOpenPosition(userId, chain, token);
-    const merged = applySwapToPosition(existing, { side, tokenAmount, usdcAmount, feeUsdc, ts: Math.floor(Date.now() / 1000) });
+    const merged = applySwapToPosition(existing, { side, tokenAmount, usdcAmount: toMicroUsdc(usdcAmount, chain).toString(), feeUsdc, ts: Math.floor(Date.now() / 1000) });
     // identity fields must win over merged's placeholders (merged re-derives them);
     // symbol fills empty metadata (new positions) and backfills legacy empty rows.
     const row = {
@@ -1206,6 +1468,7 @@ export class ApiServer {
         ts: Math.floor(Date.now() / 1000),
       });
     }
+    return side === "buy" ? null : (BigInt(merged.realized_pnl_usdc ?? "0") - BigInt(existing?.realized_pnl_usdc ?? "0")).toString();
   }
 
   /** Refresh a period snapshot lazily (24h/7d/30d) — cheap for small DBs. */
@@ -1216,16 +1479,33 @@ export class ApiServer {
     this.db.saveLeaderboardSnapshot(period, rows);
   }
 
+  private idempotencyKey(ctx: RequestContext): string {
+    const value = ctx.req.headers["idempotency-key"];
+    if (typeof value !== "string" || !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) {
+      throw new HttpError(400, "Idempotency-Key header is required (8-128 safe characters)");
+    }
+    return value;
+  }
+
   private parseTradeParams(ctx: RequestContext): TradeParams {
     const fromChain = this.str(ctx, "fromChain");
     const toChain = this.str(ctx, "toChain", false) || fromChain;
     const sellToken = this.str(ctx, "sellToken");
     const buyToken = this.str(ctx, "buyToken");
     const amount = this.str(ctx, "amount");
-    if (!/^\d+$/.test(amount)) throw new HttpError(400, "amount must be an integer in smallest units");
-    const type = (this.str(ctx, "type", false) || "swap") as TradeParams["type"];
-    const slippageBps = typeof ctx.body.slippageBps === "number" ? ctx.body.slippageBps : undefined;
-    return { userId: ctx.userId ?? 0, fromChain, toChain, sellToken, buyToken, amount, slippageBps, type };
+    if (!/^\d{1,78}$/.test(amount) || BigInt(amount) <= 0n) throw new HttpError(400, "amount must be a positive integer in smallest units");
+    const typeRaw = this.str(ctx, "type", false) || "swap";
+    if (typeRaw !== "swap") throw new HttpError(400, "only spot swaps are supported");
+    if (ctx.body.slippageBps !== undefined && typeof ctx.body.slippageBps !== "number") throw new HttpError(400, "slippageBps must be a number");
+    const slippageBps = ctx.body.slippageBps === undefined ? 50 : ctx.body.slippageBps as number;
+    if (!Number.isInteger(slippageBps) || slippageBps < 1 || slippageBps > 5_000) {
+      throw new HttpError(400, "slippageBps must be an integer between 1 and 5000");
+    }
+    const config = getChain(fromChain);
+    if (!config) throw new HttpError(400, `unknown chain: ${fromChain}`);
+    if (fromChain !== toChain) throw new HttpError(501, "cross-chain execution is not implemented");
+    if (isChainUsdc(sellToken, fromChain) === isChainUsdc(buyToken, fromChain)) throw new HttpError(400, "swap must contain exactly one USDC leg");
+    return { userId: ctx.userId ?? 0, fromChain, toChain, sellToken, buyToken, amount: BigInt(amount).toString(), slippageBps, type: "swap" };
   }
 }
 

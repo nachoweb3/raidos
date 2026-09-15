@@ -8,11 +8,12 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateApiKey } from "../api/auth.js";
+import { summarizeSettledTrades } from "../trading/pnl.js";
 
 export class AppDb {
   private db: Database.Database;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, private readonly accountingMode?: "live" | "mock") {
     // better-sqlite3 creates the file but not its parent dir — ensure it exists
     // (matters for volume mounts like /data/raidos.db and local ./data/… paths)
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -256,6 +257,59 @@ export class AppDb {
       CREATE INDEX IF NOT EXISTS idx_feed_actor ON feed_events(actor_id, ts DESC);
       CREATE INDEX IF NOT EXISTS idx_feed_token ON feed_events(chain, token, ts DESC);
 
+      -- Durable execution intents/transactions/fills. These records separate a
+      -- user's request from a submitted transaction and a settled accounting
+      -- fill. The idempotency key prevents retry-induced duplicate execution.
+      CREATE TABLE IF NOT EXISTS execution_intents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        endpoint TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'created',
+        result_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(user_id, endpoint, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_execution_intents_status ON execution_intents(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_execution_intents_user ON execution_intents(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS execution_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        intent_id INTEGER NOT NULL UNIQUE,
+        trade_id INTEGER,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        tx_hash TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'submitted',
+        receipt_json TEXT,
+        error_message TEXT,
+        submitted_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_execution_transactions_status ON execution_transactions(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_execution_transactions_hash ON execution_transactions(tx_hash);
+
+      CREATE TABLE IF NOT EXISTS execution_fills (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id INTEGER NOT NULL UNIQUE,
+        intent_id INTEGER NOT NULL UNIQUE,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        sell_token TEXT NOT NULL,
+        buy_token TEXT NOT NULL,
+        sell_amount TEXT NOT NULL,
+        buy_amount TEXT NOT NULL,
+        fee_usdc TEXT NOT NULL DEFAULT '0',
+        settlement_source TEXT NOT NULL,
+        settled_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_execution_fills_user ON execution_fills(user_id, settled_at DESC);
+
       -- Leaderboard snapshots per period
       CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
         period TEXT NOT NULL,
@@ -269,6 +323,10 @@ export class AppDb {
     `);
 
     // ── Incremental migrations (idempotent, for existing databases) ──
+    const hasExecutionTrade = this.db.prepare("SELECT 1 FROM pragma_table_info('execution_transactions') WHERE name = 'trade_id'").get();
+    if (!hasExecutionTrade) this.db.exec("ALTER TABLE execution_transactions ADD COLUMN trade_id INTEGER");
+    const hasPositionMode = this.db.prepare("SELECT 1 FROM pragma_table_info('positions') WHERE name = 'accounting_mode'").get();
+    if (!hasPositionMode) this.db.exec("ALTER TABLE positions ADD COLUMN accounting_mode TEXT NOT NULL DEFAULT 'legacy'");
     // Launchpad social links (Discover advanced filters + market cards).
     for (const col of ["twitter_url", "telegram_url", "website_url"]) {
       const has = this.db.prepare("SELECT 1 FROM pragma_table_info('launches') WHERE name = ?").get(col);
@@ -352,17 +410,10 @@ export class AppDb {
 
   /** Referred users joined with their confirmed trade volume (for rewards dashboards). */
   referralVolumes(referrerId: number, limit = 200) {
-    return this.db
-      .prepare(
-        `SELECT u.user_id AS user_id, u.ref_code AS ref_code, u.created_at AS created_at,
-                COALESCE(SUM(CAST(t.sell_amount AS INTEGER)), 0) AS volume_usdc,
-                COUNT(t.id) AS trades
-         FROM users u
-         LEFT JOIN trades t ON t.user_id = u.user_id AND t.status = 'confirmed'
-         WHERE u.referred_by = ?
-         GROUP BY u.user_id ORDER BY u.created_at DESC LIMIT ?`
-      )
-      .all(referrerId, limit) as any[];
+    return this.getReferrals(referrerId, limit).map((user) => {
+      const pnl = this.getUserPnl(user.user_id);
+      return { ...user, volume_usdc: pnl.volumeUsdc, trades: pnl.totalTrades };
+    });
   }
 
   countReferrals(userId: number): number {
@@ -582,14 +633,16 @@ export class AppDb {
     return info.changes > 0;
   }
 
-  getTopTraders(chain: string, limit = 20) {
-    return this.db.prepare(
-      `SELECT p.user_id, p.x_handle, p.display_name, p.avatar_url, p.total_pnl_usdc, p.win_rate, p.total_trades, p.followers_count
-       FROM profiles p
-       WHERE p.total_trades > 0
-       ORDER BY CAST(p.total_pnl_usdc AS INTEGER) DESC
-       LIMIT ?`
-    ).all(limit) as any[];
+  getTopTraders(chain: string, limit = 20, since = 0) {
+    return this.getPnlSince(since, limit, chain).map((row) => {
+      const profile = this.getProfile(row.user_id) as any;
+      return {
+        user_id: row.user_id, x_handle: profile?.x_handle ?? null,
+        display_name: profile?.display_name ?? "Trader", avatar_url: profile?.avatar_url ?? null,
+        total_pnl_usdc: row.pnl_usdc, win_rate: row.win_rate * 100,
+        total_trades: row.trades, followers_count: profile?.followers_count ?? 0,
+      };
+    });
   }
 
   // ── Search (fuzzy tokens + users, fomo-style) ──────────────────────
@@ -666,6 +719,194 @@ export class AppDb {
 
   // ── Trade methods ─────────────────────────────────────────────────────
 
+  // ── Execution lifecycle methods ───────────────────────────────────────
+
+  getExecutionIntent(userId: number, endpoint: string, idempotencyKey: string) {
+    return this.db.prepare(
+      "SELECT * FROM execution_intents WHERE user_id = ? AND endpoint = ? AND idempotency_key = ?"
+    ).get(userId, endpoint, idempotencyKey) as any;
+  }
+
+  createExecutionIntent(input: {
+    userId: number;
+    endpoint: string;
+    idempotencyKey: string;
+    requestHash: string;
+    requestJson: string;
+    mode: string;
+  }): number {
+    const now = Math.floor(Date.now() / 1000);
+    const info = this.db.prepare(
+      `INSERT INTO execution_intents
+       (user_id, endpoint, idempotency_key, request_hash, request_json, mode, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?)`
+    ).run(input.userId, input.endpoint, input.idempotencyKey, input.requestHash, input.requestJson, input.mode, now, now);
+    return Number(info.lastInsertRowid);
+  }
+
+  updateExecutionIntent(id: number, updates: {
+    status?: string;
+    resultJson?: string | null;
+    errorMessage?: string | null;
+  }): void {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (updates.status !== undefined) { sets.push("status = ?"); values.push(updates.status); }
+    if (updates.resultJson !== undefined) { sets.push("result_json = ?"); values.push(updates.resultJson); }
+    if (updates.errorMessage !== undefined) { sets.push("error_message = ?"); values.push(updates.errorMessage); }
+    sets.push("updated_at = ?");
+    values.push(Math.floor(Date.now() / 1000), id);
+    this.db.prepare(`UPDATE execution_intents SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  }
+
+  updateTradeSettlement(tradeId: number, buyAmount: string, feeUsdc: string): void {
+    this.db.prepare("UPDATE trades SET buy_amount = ?, fee_usdc = ? WHERE id = ?").run(buyAmount, feeUsdc, tradeId);
+  }
+
+  getExecutionTransaction(intentId: number) {
+    return this.db.prepare("SELECT * FROM execution_transactions WHERE intent_id = ?").get(intentId) as any;
+  }
+
+  updateTradeStatus(tradeId: number, status: "pending" | "confirmed" | "failed", realizedPnlUsdc?: string | null): void {
+    if (realizedPnlUsdc === undefined) {
+      this.db.prepare("UPDATE trades SET status = ? WHERE id = ?").run(status, tradeId);
+    } else {
+      this.db.prepare("UPDATE trades SET status = ?, realized_pnl_usdc = ? WHERE id = ?").run(status, realizedPnlUsdc, tradeId);
+    }
+  }
+
+  createExecutionTransaction(input: { intentId: number; tradeId?: number | null; userId: number; chain: string; txHash: string; status: string }): number {
+    const now = Math.floor(Date.now() / 1000);
+    const info = this.db.prepare(
+      `INSERT INTO execution_transactions
+       (intent_id, trade_id, user_id, chain, tx_hash, status, submitted_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(input.intentId, input.tradeId ?? null, input.userId, input.chain, input.txHash, input.status, now, now);
+    return Number(info.lastInsertRowid);
+  }
+
+  updateExecutionTransaction(id: number, updates: {
+    status?: string;
+    tradeId?: number | null;
+    receiptJson?: string | null;
+    errorMessage?: string | null;
+  }): void {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (updates.status !== undefined) { sets.push("status = ?"); values.push(updates.status); }
+    if (updates.tradeId !== undefined) { sets.push("trade_id = ?"); values.push(updates.tradeId); }
+    if (updates.receiptJson !== undefined) { sets.push("receipt_json = ?"); values.push(updates.receiptJson); }
+    if (updates.errorMessage !== undefined) { sets.push("error_message = ?"); values.push(updates.errorMessage); }
+    sets.push("updated_at = ?");
+    values.push(Math.floor(Date.now() / 1000), id);
+    this.db.prepare(`UPDATE execution_transactions SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  }
+
+  createExecutionFill(input: {
+    transactionId: number;
+    intentId: number;
+    userId: number;
+    chain: string;
+    sellToken: string;
+    buyToken: string;
+    sellAmount: string;
+    buyAmount: string;
+    feeUsdc: string;
+    settlementSource: string;
+  }): number {
+    const info = this.db.prepare(
+      `INSERT OR IGNORE INTO execution_fills
+       (transaction_id, intent_id, user_id, chain, sell_token, buy_token, sell_amount, buy_amount, fee_usdc, settlement_source, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      input.transactionId, input.intentId, input.userId, input.chain, input.sellToken,
+      input.buyToken, input.sellAmount, input.buyAmount, input.feeUsdc,
+      input.settlementSource, Math.floor(Date.now() / 1000),
+    );
+    return Number(info.lastInsertRowid);
+  }
+
+  /**
+   * Atomically insert a receipt-backed fill and run its accounting projection.
+   * The callback is part of the same SQLite transaction, so a failed position,
+   * feed, or rewards projection rolls back the fill and lifecycle settlement.
+   */
+  settleExecutionTransaction(input: {
+    transactionId: number;
+    intentId: number;
+    userId: number;
+    chain: string;
+    sellToken: string;
+    buyToken: string;
+    sellAmount: string;
+    buyAmount: string;
+    feeUsdc: string;
+    settlementSource: string;
+    apply: () => void;
+  }): number {
+    const settle = this.db.transaction((): number => {
+      const transaction = this.db.prepare("SELECT * FROM execution_transactions WHERE id = ?").get(input.transactionId) as any;
+      if (!transaction || transaction.intent_id !== input.intentId || transaction.user_id !== input.userId) {
+        throw new Error("execution transaction not found");
+      }
+
+      const existing = this.db.prepare("SELECT id FROM execution_fills WHERE transaction_id = ?").get(input.transactionId) as { id: number } | undefined;
+      if (existing) return existing.id;
+      if (transaction.status !== "confirmed") {
+        throw new Error(`cannot settle execution transaction in status ${transaction.status}`);
+      }
+
+      const info = this.db.prepare(
+        `INSERT INTO execution_fills
+         (transaction_id, intent_id, user_id, chain, sell_token, buy_token, sell_amount, buy_amount, fee_usdc, settlement_source, settled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        input.transactionId, input.intentId, input.userId, input.chain, input.sellToken,
+        input.buyToken, input.sellAmount, input.buyAmount, input.feeUsdc,
+        input.settlementSource, Math.floor(Date.now() / 1000),
+      );
+
+      // The projection is deliberately inside this transaction. If it throws,
+      // SQLite rolls back the fill and leaves the transaction retryable.
+      input.apply();
+      this.updateExecutionTransaction(input.transactionId, { status: "settled" });
+      this.updateExecutionIntent(input.intentId, { status: "settled" });
+      return Number(info.lastInsertRowid);
+    });
+    return settle();
+  }
+
+  getExecutionFillByIntent(intentId: number) {
+    return this.db.prepare("SELECT * FROM execution_fills WHERE intent_id = ?").get(intentId) as any;
+  }
+
+  getExecutionTransactionContext(transactionId: number) {
+    const transaction = this.db.prepare("SELECT * FROM execution_transactions WHERE id = ?").get(transactionId) as any;
+    if (!transaction) return undefined;
+    const intent = this.db.prepare("SELECT * FROM execution_intents WHERE id = ?").get(transaction.intent_id) as any;
+    const trade = transaction.trade_id ? this.getTrade(transaction.trade_id) : undefined;
+    return { transaction, intent, trade };
+  }
+
+  getExecutionTransactionContexts() {
+    return this.getPendingExecutionTransactions().map((tx: any) => this.getExecutionTransactionContext(tx.id)).filter(Boolean) as Array<{ transaction: any; intent: any; trade: any }>;
+  }
+
+  getPendingExecutionTransactions(userId?: number, includeConfirmed = false) {
+    const ownership = userId === undefined ? "" : " AND t.user_id = ?";
+    const args = userId === undefined ? [] : [userId];
+    const statuses = includeConfirmed ? "('submitted', 'pending', 'confirmed')" : "('submitted', 'pending')";
+    return this.db.prepare(
+      `SELECT t.*, i.status AS intent_status, i.result_json, i.error_message,
+              i.request_json, i.endpoint, i.mode
+       FROM execution_transactions t
+       JOIN execution_intents i ON i.id = t.intent_id
+       WHERE t.status IN ${statuses}
+         AND NOT EXISTS (SELECT 1 FROM execution_fills f WHERE f.transaction_id = t.id)${ownership}
+       ORDER BY t.submitted_at ASC`
+    ).all(...args) as any[];
+  }
+
   addTrade(trade: any) {
     const cols = Object.keys(trade);
     const placeholders = cols.map(() => "?").join(", ");
@@ -682,95 +923,33 @@ export class AppDb {
     return this.db.prepare("SELECT * FROM trades WHERE user_id = ? ORDER BY ts DESC LIMIT ? OFFSET ?").all(userId, limit, offset) as any[];
   }
 
-  getUserPnl(userId: number) {
-    const trades = this.db.prepare("SELECT * FROM trades WHERE user_id = ? AND status = 'confirmed'").all(userId) as any[];
-    let totalPnl = 0n;
-    let wins = 0;
-    let losses = 0;
-    let totalVolume = 0n;
-    let totalFees = 0n;
-    let bestTrade = 0n;
-    let worstTrade = 0n;
-
-    for (const t of trades) {
-      const pnlRaw = t.realized_pnl_usdc;
-      const pnl = BigInt(pnlRaw != null && pnlRaw !== "null" ? pnlRaw : "0");
-      totalPnl += pnl;
-      if (pnl > 0n) wins++;
-      if (pnl < 0n) losses++;
-      totalVolume += BigInt(t.sell_amount);
-      totalFees += BigInt(t.fee_usdc);
-      if (pnl > bestTrade) bestTrade = pnl;
-      if (pnl < worstTrade) worstTrade = pnl;
+  /** Only settled fills in the active mode may enter accounting reports. */
+  private getSettledTrades(userId?: number, chain?: string, since = 0): any[] {
+    const clauses = ["x.status = 'settled'", "f.settled_at >= ?"];
+    const values: unknown[] = [since];
+    if (userId !== undefined) { clauses.push("t.user_id = ?"); values.push(userId); }
+    if (chain && chain !== "all") { clauses.push("t.from_chain = ?"); values.push(chain); }
+    if (this.accountingMode) {
+      clauses.push("i.mode = ?", "f.settlement_source = ?");
+      values.push(this.accountingMode, this.accountingMode === "mock" ? "mock" : "receipt");
     }
-
-    return {
-      userId,
-      totalPnlUsdc: totalPnl.toString(),
-      pnlByChain: {},
-      winRate: trades.length > 0 ? (wins / trades.length) * 100 : 0,
-      totalTrades: trades.length,
-      winningTrades: wins,
-      losingTrades: losses,
-      bestTradePnlUsdc: bestTrade.toString(),
-      worstTradePnlUsdc: worstTrade.toString(),
-      totalFeesUsdc: totalFees.toString(),
-      volumeUsdc: totalVolume.toString(),
-      avgTradeSizeUsdc: trades.length > 0 ? (totalVolume / BigInt(trades.length)).toString() : "0",
-      pnlByToken: this.computePnlByToken(trades),
-    };
+    return this.db.prepare(`
+      SELECT t.*, f.sell_amount, f.buy_amount, f.fee_usdc, f.settled_at
+      FROM execution_fills f
+      JOIN execution_transactions x ON x.id = f.transaction_id
+      JOIN execution_intents i ON i.id = x.intent_id
+      JOIN trades t ON t.id = x.trade_id
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY f.settled_at, f.id
+    `).all(...values) as any[];
   }
 
-  /** Per-token realized PnL + holdings derived from confirmed trades.
-   *  Convention: buy amounts are in buyToken units, sell amounts in sellToken units;
-   *  USDC legs are excluded (they are the quote asset, not a holding). */
-  private computePnlByToken(trades: any[]): Record<string, { balance: string; realizedPnlUsdc: string }> {
-    const byToken: Record<string, { bal: bigint; pnl: bigint }> = {};
-    for (const t of trades) {
-      const sell = t.sell_token;
-      const buy = t.buy_token;
-      if (sell && sell.toUpperCase() !== "USDC") {
-        const entry = (byToken[sell] ??= { bal: 0n, pnl: 0n });
-        entry.bal -= BigInt(t.sell_amount);
-        entry.pnl += BigInt(t.realized_pnl_usdc ?? "0");
-      }
-      if (buy && buy.toUpperCase() !== "USDC") {
-        const entry = (byToken[buy] ??= { bal: 0n, pnl: 0n });
-        entry.bal += BigInt(t.buy_amount);
-        entry.pnl += BigInt(t.realized_pnl_usdc ?? "0");
-      }
-    }
-    const out: Record<string, { balance: string; realizedPnlUsdc: string }> = {};
-    for (const [token, v] of Object.entries(byToken)) {
-      out[token] = { balance: v.bal.toString(), realizedPnlUsdc: v.pnl.toString() };
-    }
-    return out;
+  getUserPnl(userId: number) {
+    return summarizeSettledTrades(userId, this.getSettledTrades(userId));
   }
 
   getChainPnl(userId: number, chain: string) {
-    const trades = this.db.prepare("SELECT * FROM trades WHERE user_id = ? AND from_chain = ? AND status = 'confirmed'").all(userId, chain) as any[];
-    let totalPnl = 0n;
-    let wins = 0;
-    for (const t of trades) {
-      const pnlRaw = t.realized_pnl_usdc;
-      const pnl = BigInt(pnlRaw != null && pnlRaw !== "null" ? pnlRaw : "0");
-      totalPnl += pnl;
-      if (pnl > 0n) wins++;
-    }
-    return {
-      userId,
-      totalPnlUsdc: totalPnl.toString(),
-      pnlByChain: { [chain]: totalPnl.toString() },
-      winRate: trades.length > 0 ? (wins / trades.length) * 100 : 0,
-      totalTrades: trades.length,
-      winningTrades: wins,
-      losingTrades: trades.length - wins,
-      bestTradePnlUsdc: "0",
-      worstTradePnlUsdc: "0",
-      totalFeesUsdc: "0",
-      volumeUsdc: "0",
-      avgTradeSizeUsdc: "0",
-    };
+    return summarizeSettledTrades(userId, this.getSettledTrades(userId, chain));
   }
 
   getRecentActivity(userId: number, limit = 20) {
@@ -785,19 +964,15 @@ export class AppDb {
   }
 
   getTopPerformers(chain: string, since: number, limit = 10) {
-    return this.db.prepare(
-      `SELECT user_id, SUM(CAST(realized_pnl_usdc AS INTEGER)) AS pnl_usdc, COUNT(*) AS trades
-       FROM trades WHERE from_chain = ? AND ts >= ? AND status = 'confirmed'
-       GROUP BY user_id ORDER BY pnl_usdc DESC LIMIT ?`
-    ).all(chain, since, limit) as any[];
+    return this.getPnlSince(since, limit, chain).map((r) => ({ userId: r.user_id, pnlUsdc: r.pnl_usdc, winRate: r.win_rate * 100, trades: r.trades }));
   }
 
   // ── Positions ─────────────────────────────────────────────────────────
 
   getOpenPosition(userId: number, chain: string, token: string) {
     return this.db.prepare(
-      "SELECT * FROM positions WHERE user_id = ? AND chain = ? AND token = ? AND status = 'open'"
-    ).get(userId, chain, token) as any;
+      "SELECT * FROM positions WHERE user_id = ? AND chain = ? AND token = ? AND status = 'open' AND accounting_mode = ?"
+    ).get(userId, chain, token, this.accountingMode ?? "legacy") as any;
   }
 
   upsertPosition(p: any) {
@@ -812,23 +987,23 @@ export class AppDb {
     }
     const info = this.db.prepare(
       `INSERT INTO positions (user_id, chain, token, token_symbol, status, amount_remaining,
-        total_bought, total_sold, avg_entry_usdc, net_invested_usdc, realized_pnl_usdc, opened_at, closed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        total_bought, total_sold, avg_entry_usdc, net_invested_usdc, realized_pnl_usdc, opened_at, closed_at, accounting_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(p.user_id, p.chain, p.token, p.token_symbol, p.status, p.amount_remaining,
       p.total_bought, p.total_sold, p.avg_entry_usdc, p.net_invested_usdc,
-      p.realized_pnl_usdc, p.opened_at, p.closed_at);
+      p.realized_pnl_usdc, p.opened_at, p.closed_at, this.accountingMode ?? "legacy");
     return Number(info.lastInsertRowid);
   }
 
   getUserPositions(userId: number, status: string | null, limit = 50) {
     if (status) {
       return this.db.prepare(
-        "SELECT * FROM positions WHERE user_id = ? AND status = ? ORDER BY opened_at DESC LIMIT ?"
-      ).all(userId, status, limit) as any[];
+        "SELECT * FROM positions WHERE user_id = ? AND status = ? AND accounting_mode = ? ORDER BY opened_at DESC LIMIT ?"
+      ).all(userId, status, this.accountingMode ?? "legacy", limit) as any[];
     }
     return this.db.prepare(
-      "SELECT * FROM positions WHERE user_id = ? ORDER BY opened_at DESC LIMIT ?"
-    ).all(userId, limit) as any[];
+      "SELECT * FROM positions WHERE user_id = ? AND accounting_mode = ? ORDER BY opened_at DESC LIMIT ?"
+    ).all(userId, this.accountingMode ?? "legacy", limit) as any[];
   }
 
   // ── Feed ─────────────────────────────────────────────────────────────
@@ -868,6 +1043,7 @@ export class AppDb {
       "INSERT OR REPLACE INTO leaderboard_snapshots (period, user_id, pnl_usdc, trades, win_rate, ts) VALUES (?, ?, ?, ?, ?, ?)"
     );
     const tx = this.db.transaction((rows2: any[]) => {
+      this.db.prepare("DELETE FROM leaderboard_snapshots WHERE period = ?").run(period);
       for (const r of rows2) stmt.run(period, r.user_id, r.pnl_usdc, r.trades, r.win_rate, now);
     });
     tx(rows);
@@ -881,16 +1057,21 @@ export class AppDb {
     ).all(period, limit) as any[];
   }
 
-  /** Recompute per-period PnL from confirmed trades (used to refresh snapshots). */
-  getPnlSince(since: number, limit = 25) {
-    return this.db.prepare(
-      `SELECT user_id,
-              SUM(CAST(COALESCE(NULLIF(realized_pnl_usdc,'null'), '0') AS INTEGER)) AS pnl_usdc,
-              COUNT(*) AS trades,
-              AVG(CASE WHEN CAST(COALESCE(NULLIF(realized_pnl_usdc,'null'),'0') AS INTEGER) > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
-       FROM trades WHERE status = 'confirmed' AND ts >= ?
-       GROUP BY user_id ORDER BY pnl_usdc DESC LIMIT ?`
-    ).all(since, limit) as any[];
+  /** Recompute rankings from settled fills with exact integer PnL. */
+  getPnlSince(since: number, limit = 25, chain?: string) {
+    const users = new Map<number, any[]>();
+    for (const trade of this.getSettledTrades(undefined, chain, since)) {
+      const rows = users.get(trade.user_id) ?? [];
+      rows.push(trade);
+      users.set(trade.user_id, rows);
+    }
+    return [...users].map(([userId, trades]) => {
+      const pnl = summarizeSettledTrades(userId, trades);
+      return { user_id: userId, pnl_usdc: pnl.totalPnlUsdc, trades: pnl.totalTrades, win_rate: pnl.winRate / 100 };
+    }).sort((a, b) => {
+      const diff = BigInt(b.pnl_usdc) - BigInt(a.pnl_usdc);
+      return diff > 0n ? 1 : diff < 0n ? -1 : a.user_id - b.user_id;
+    }).slice(0, limit);
   }
 
   // ── Copy settings ─────────────────────────────────────────────────────

@@ -21,14 +21,14 @@ import { TokenMeta } from "./tokens.js";
 import { DexFeed, SecurityFeed } from "./dexfeed.js";
 
 const COLUMNS = [
-  { id: "new", title: "New Pairs", icon: "🔥", hint: "Mercado real — DexScreener" },
-  { id: "soon", title: "Soon", icon: "🚀", hint: "Curva de graduación" },
-  { id: "migrated", title: "Trending", icon: "📈", hint: "Top volumen 24h" },
+  { id: "new", title: "New Pools", icon: "+", hint: "Pools de menos de 48 h" },
+  { id: "soon", title: "Liquidity", icon: "~", hint: "Mayor liquidez indexada" },
+  { id: "migrated", title: "Trending", icon: "/", hint: "Volumen de 24 h" },
 ];
 
 /** Chain aliases for the market columns (DexScreener chainIds). */
-const MARKET_CHAINS = ["solana", "bsc"];
-const MARKET_LIMIT = 24;
+const MARKET_CHAINS = [];
+const MARKET_LIMIT = 60;
 
 /** Micro-USDC → display string, honest "—" for zero/invalid. */
 const fmtMicro = (raw, digits = 2) => {
@@ -59,6 +59,7 @@ export const TrenchesEngine = {
   market: [],            // real market tokens (DexScreener trending)
   selected: null,        // currently selected token ref
   search: "",
+  activeChain: "all",
   loading: false,
   loadedOnce: false,
   _es: null,             // EventSource
@@ -93,7 +94,7 @@ export const TrenchesEngine = {
   _tick() {
     let changed = false;
     for (const t of this.allTokens()) {
-      const row = t.tokenAddress ? DexFeed.get(t.tokenAddress) : DexFeed.get(t.symbol);
+      const row = t.tokenAddress ? DexFeed.get(t.tokenAddress, t.chain) : DexFeed.get(t.symbol);
       if (!row) continue;
       if (row.priceUsd > 0 && row.priceUsd !== t.priceUsd) {
         t.priceUsd = row.priceUsd;
@@ -151,25 +152,41 @@ export const TrenchesEngine = {
    * regardless of our launchpad. This is what makes the board feel alive on
    * a fresh install: Solana + BSC pairs with real price, mcap, volume, liq.
    */
-  async loadMarket(force = false) {
-    const seq = this._seq;
-    try {
-      const rows = await DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT });
-      if (seq !== this._seq && force) return;
-      this.market = rows.map((r) => this.normalizeMarket(r));
-      this._marketAt = Date.now();
-      if (this.loadedOnce) {
-        this.render();
-        this.loadSecurity();
-      }
-    } catch {}
+  async loadMarket(force = false, page = 1) {
+    const result = await Promise.allSettled([
+      DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT, page, kind: "new" }),
+      DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT, page, kind: "trending" }),
+    ]);
+    const rows = result.flatMap((entry) => entry.status === "fulfilled" ? entry.value : []);
+    if (!rows.length && result.every((entry) => entry.status === "rejected")) {
+      this.marketError = "Proveedores de mercado no disponibles. Reintenta en un minuto.";
+      if (this.loadedOnce) this.render();
+      return;
+    }
+    this.marketError = "";
+    const merged = new Map((page > 1 ? this.market : []).map((row) => [row.id, row]));
+    for (const row of rows) {
+      const token = this.normalizeMarket(row);
+      merged.set(token.id, token);
+    }
+    this.market = [...merged.values()];
+    this._marketPage = page;
+    this._marketAt = Date.now();
+    if (this.loadedOnce) { this.render(); this.loadSecurity(); }
+  },
+
+  async loadMoreMarket() {
+    const page = (this._marketPage || 1) + 1;
+    if (page > 10 || this._loadingMore) return;
+    this._loadingMore = true;
+    try { await this.loadMarket(false, page); } finally { this._loadingMore = false; }
   },
 
   /** Apply freshly resolved pair rows onto launch tokens and re-render. */
   _applyDexRows(list) {
     for (const t of list) {
       if (!t.tokenAddress) continue;
-      const row = DexFeed.get(t.tokenAddress);
+      const row = DexFeed.get(t.tokenAddress, t.chain);
       if (!row) continue;
       t.dex = row;
       if (row.priceUsd > 0) t.priceUsd = row.priceUsd;
@@ -184,14 +201,14 @@ export const TrenchesEngine = {
   async loadSecurity() {
     const seen = new Map();
     for (const t of this.allTokens()) {
-      if (!t.tokenAddress || seen.has(t.tokenAddress)) continue;
-      seen.set(t.tokenAddress, { address: t.tokenAddress, chain: t.chain });
+      if (!t.tokenAddress || seen.has(t.chain + ":" + t.tokenAddress)) continue;
+      seen.set(t.chain + ":" + t.tokenAddress, { address: t.tokenAddress, chain: t.chain });
     }
     if (!seen.size) return;
     const results = await SecurityFeed.fetchMany([...seen.values()]).catch(() => ({}));
     let any = false;
     for (const t of this.allTokens()) {
-      const sec = results[String(t.tokenAddress ?? "").toLowerCase()];
+      const sec = SecurityFeed.get(t.tokenAddress, t.chain);
       if (sec && sec !== t.security) { t.security = sec; any = true; }
     }
     if (any) this.render();
@@ -208,14 +225,14 @@ export const TrenchesEngine = {
 
   normalizeMarket(r) {
     return {
-      id: "mkt_" + (r.address || r.symbol),
+      id: "mkt_" + r.chain + "_" + (r.address || r.symbol),
       symbol: r.symbol || "???",
       name: r.name || r.symbol,
       chain: r.chain || "solana",
       imageUrl: r.logo,
       status: "market",
       priceUsd: r.priceUsd,
-      mcapUsd: r.mcap || r.fdv || 0,
+      mcapUsd: r.mcap || 0,
       raisedUsd: 0,
       buyers: r.buys24h || 0,
       progress: 0,
@@ -288,7 +305,7 @@ export const TrenchesEngine = {
     try {
       await DexFeed.ensureTokens(refs);
       for (const t of this.tokens) {
-        const row = DexFeed.get(t.tokenAddress);
+        const row = DexFeed.get(t.tokenAddress, t.chain);
         if (!row) continue;
         t.dex = row;
         if (row.priceUsd > 0) t.priceUsd = row.priceUsd;
@@ -343,6 +360,7 @@ export const TrenchesEngine = {
 
   select(t) {
     this.selected = t;
+    document.getElementById("terminalSymbol")?.scrollIntoView({ behavior: "smooth", block: "center" });
     window.TradingEngine?.setAsset(t.symbol, t.chain, t.priceUsd || 0, {
       tokenAddress: t.tokenAddress ?? undefined,
       launchId: t.isMarket ? undefined : t.id,
@@ -382,8 +400,9 @@ export const TrenchesEngine = {
   },
 
   visibleIn(columnId, t) {
+    if (this.activeChain !== "all" && t.chain !== this.activeChain) return false;
     if (this.search && !(`${t.name} ${t.symbol}`.toLowerCase().includes(this.search))) return false;
-    if (columnId === "soon") return t.status !== "graduated" && t.status !== "market" && t.progress >= 40;
+    if (columnId === "soon") return t.isMarket;
     if (columnId === "migrated") {
       // TRENDING: market tokens ranked by volume; launchpad graduates join by mcap.
       return t.isMarket || t.status === "graduated";
@@ -396,7 +415,7 @@ export const TrenchesEngine = {
   },
 
   sortFor(columnId, list) {
-    if (columnId === "soon") return list.sort((a, b) => b.progress - a.progress || b.raisedUsd - a.raisedUsd);
+    if (columnId === "soon") return list.sort((a, b) => (b.dex?.liqUsd ?? 0) - (a.dex?.liqUsd ?? 0));
     if (columnId === "new") {
       // freshest real pairs first; our launches interleaved by age
       return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -434,27 +453,18 @@ export const TrenchesEngine = {
   render() {
     const el = this.target();
     if (!el) return;
-    const total = this.tokens.length + this.market.length;
+    const total = this.market.length;
     const countEl = document.getElementById("trenchesCount");
     if (countEl) countEl.textContent = `${total} tokens`;
 
     el.innerHTML = COLUMNS.map((c) => {
-      let pool;
-      if (c.id === "new") {
-        // Real market pairs < 48h first, then our launchpad launches, then the rest.
-        const freshMarket = this.market.filter((t) => t.createdAt && Date.now() / 1000 - t.createdAt < 48 * 3600);
-        const restMarket = this.market.filter((t) => !t.createdAt || Date.now() / 1000 - t.createdAt >= 48 * 3600);
-        pool = [...freshMarket, ...this.tokens, ...restMarket];
-      } else if (c.id === "migrated") {
-        pool = [...this.market, ...this.tokens.filter((t) => t.status === "graduated")];
-      } else {
-        pool = this.tokens.filter((t) => this.visibleIn(c.id, t));
-      }
-      const rows = this.sortFor(c.id, pool).slice(0, 30);
+      const pool = this.market.filter((t) => this.visibleIn(c.id, t) &&
+        (c.id !== "new" || (t.createdAt && Date.now() / 1000 - t.createdAt < 48 * 3600)));
+      const rows = this.sortFor(c.id, pool);
       const rowsHtml = rows.length
         ? rows.map((t) => this.renderRow(t)).join("")
         : `<div style="padding:22px 14px; text-align:center; color:var(--text-tertiary); font-size:11.5px">
-             ${c.id === "soon" ? "Ningún token cerca de graduar todavía." : "Conectando con DexScreener…"}
+             ${esc(this.marketError || "Sin pools disponibles para este filtro.")}
            </div>`;
       return `
       <div class="trenches-col">
@@ -464,7 +474,12 @@ export const TrenchesEngine = {
         </div>
         <div class="trenches-col-scroll">${rowsHtml}</div>
       </div>`;
-    }).join("");
+    }).join("") + `<div style="grid-column:1 / -1;display:flex;gap:12px;align-items:center;padding:8px 12px;color:var(--text-tertiary);font-size:12px">
+      <span>GeckoTerminal / DEX Screener · ${this.market.length} tokens indexados · ${this._marketAt ? new Date(this._marketAt).toLocaleTimeString() : "Cargando"}
+      ${this.marketError ? " · " + esc(this.marketError) : ""}</span>
+      <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMoreMarket()" ${(this._marketPage || 1) >= 10 ? "disabled" : ""}>Cargar más pools</button>
+      <span>Busca cualquier contrato arriba.</span>
+    </div>`;
   },
 
   renderRow(t) {
@@ -492,11 +507,12 @@ export const TrenchesEngine = {
             ${socialIcons}
           </div>
           <div class="trench-stats">
-            <span>👥 ${t.buyers}</span>
+            <span title="${esc(t.tokenAddress)}">${esc(t.chain)} · ${esc(String(t.tokenAddress).slice(0, 4))}…${esc(String(t.tokenAddress).slice(-4))}</span>
+            <span>Compras ${t.buyers}</span>
             <span>💰 ${fmtUsd(t.mcapUsd)}</span>
             ${t.progress > 0 ? `<span>${t.progress}%</span>` : ""}
             ${age ? `<span>${age}</span>` : ""}
-            ${t.dex ? `<span>💧 ${fmtMicro(t.dex.liqUsd)}</span><span>🔁 ${t.dex.txns24h || 0}</span>` : ""}
+            ${t.dex ? `<span>💧 ${fmtUsd(t.dex.liqUsd)}</span><span>🔁 ${t.dex.txns24h || 0}</span>` : ""}
           </div>
           ${t.progress > 0 ? `
           <div style="margin-top:5px; height:3px; border-radius:2px; background:rgba(255,255,255,0.06); overflow:hidden">
@@ -509,7 +525,7 @@ export const TrenchesEngine = {
             ${chg != null ? `<div class="${chgCls}">${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%</div>` : `<div style="color:var(--text-tertiary)">${esc(t.chain.slice(0, 3).toUpperCase())}</div>`}
           </div>
           <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end">
-            <button class="trench-buy-btn" onclick="window.TrenchesEngine.quickBuy('${symAttr}', '${idAttr}', event)" title="Compra rápida 0.1 USDC">⚡ 0.1</button>
+            <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById('${symAttr}', '${idAttr}')" title="Ver contrato y gráfico">Ver</button>
             <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis('${symAttr}', '${idAttr}', event)" title="Publicar tesis sobre este token">📊 Tesis</button>
           </div>
         </div>
@@ -548,6 +564,8 @@ export const TrenchesEngine = {
     if (s < 86400) return `${Math.floor(s / 3600)}h`;
     return `${Math.floor(s / 86400)}d`;
   },
+
+  setChain(chain) { this.activeChain = chain; this.render(); },
 
   setSearch(q) {
     this.search = q.toLowerCase().trim();

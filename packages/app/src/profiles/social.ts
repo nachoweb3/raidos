@@ -94,6 +94,18 @@ export interface LeaderboardEntry {
   followersCount: number;
 }
 
+/** Database row returned by the existing leaderboard HTTP contract. */
+export interface LeaderboardRow {
+  user_id: number;
+  x_handle: string | null;
+  display_name: string;
+  avatar_url: string | null;
+  total_pnl_usdc: string;
+  win_rate: number;
+  total_trades: number;
+  followers_count: number;
+}
+
 export class SocialTrading {
   constructor(
     private db: {
@@ -108,7 +120,7 @@ export class SocialTrading {
       getCall(callId: number): TradeCall | undefined;
       listUserCalls(userId: number, limit?: number): TradeCall[];
       likeCall(userId: number, callId: number): boolean;
-      getTopTraders(chain: string, limit?: number): LeaderboardEntry[];
+      getTopTraders(chain: string, limit?: number): LeaderboardRow[];
       getCopySettings(userId: number): CopyTradeSettings | undefined;
       setCopySettings(userId: number, settings: CopyTradeSettings): void;
     }
@@ -141,7 +153,7 @@ export class SocialTrading {
   }
 
   /** Get leaderboard for a chain */
-  getLeaderboard(chain: string, limit = 20): LeaderboardEntry[] {
+  getLeaderboard(chain: string, limit = 20): LeaderboardRow[] {
     return this.db.getTopTraders(chain, limit);
   }
 

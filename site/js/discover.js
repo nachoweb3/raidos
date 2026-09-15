@@ -14,6 +14,10 @@ import { EliteScoreEngine } from "./intelligence.js";
 import { ApiClient } from "./api.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed, SecurityFeed } from "./dexfeed.js";
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const jsArg = (value) => esc(JSON.stringify(value ?? ""));
+
 
 /**
  * Shared real-price feed used by Discover, Feed and the Trading terminal.
@@ -69,12 +73,8 @@ export const PriceFeed = {
     const ids = Object.values(this.coinMap).filter(Boolean);
     const fetched = [];
     try {
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(ids.join(","))}&sparkline=false&price_change_percentage=24h&order=market_cap_desc`,
-        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) }
-      );
-      if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
-      const markets = await res.json();
+      const result = await ApiClient.request("/api/market/reference?ids=" + encodeURIComponent(ids.join(",")));
+      const markets = result.markets ?? [];
       for (let i = 0; i < markets.length; i++) {
         const m = markets[i];
         const symbol = (m.symbol || "").toUpperCase();
@@ -148,122 +148,39 @@ export const DiscoverEngine = {
     await this.loadTokens();
   },
 
-  async loadTokens() {
-    // Real price layer: CoinGecko rows keyed by symbol (never by index —
-    // CoinGecko returns rows ordered by market cap, not by our map order).
-    await PriceFeed.ensureCache();
-    const priceById = new Map();
-    for (const [sym, id] of Object.entries(PriceFeed.coinMap)) {
-      const row = PriceFeed.cache?.find((r) => r.symbol === sym.toUpperCase());
-      if (row && row.price > 0) priceById.set(sym, row);
-    }
-
-    const p = (sym, key, fb) => {
-      const row = priceById.get(sym);
-      const v = row?.[key];
-      return Number.isFinite(v) && v !== 0 ? v : fb;
+  fromMarket(row) {
+    return {
+      symbol: row.symbol, name: row.name || row.symbol, chain: row.chain,
+      tokenAddress: row.address, price: row.priceUsd, delta24h: row.change24h,
+      vol24h: row.vol24h, mcap: row.mcap, imageUrl: row.logo,
+      liquidity: row.liqUsd, txns24h: row.txns24h, socials: row.socials || {},
+      category: row.createdAtMs && Date.now() - row.createdAtMs < 48 * 3600000 ? "NEW" : "TRENDING",
+      sector: "", holders: null, launchStatus: null, smInflow: null, dex: row,
+      hasLivePrice: row.priceUsd > 0, eliteScore: null, eliteTier: "NO SCORE",
+      isWatchlist: this.watchlist.has(row.chain + ":" + row.address),
     };
+  },
 
-    // Static universe: only display metadata (name/chain/sector). All numeric
-    // fields come from the real CoinGecko fetch; metrics we cannot source yet
-    // (liquidity, holder concentration, smart-money inflow) are omitted and
-    // shown as "—" instead of invented values.
-    const baseUniverse = [
-      { symbol: "SOL", name: "Solana", chain: "solana", category: "TRENDING", sector: "L1", imageUrl: TokenMeta.logoUrls.SOL },
-      { symbol: "BTC", name: "Bitcoin", chain: "bitcoin", category: "VOLUME", sector: "L1", imageUrl: TokenMeta.logoUrls.BTC },
-      { symbol: "ETH", name: "Ethereum", chain: "ethereum", category: "VOLUME", sector: "L1", imageUrl: TokenMeta.logoUrls.ETH },
-      { symbol: "BRETT", name: "Brett", chain: "base", category: "MEMECOINS", sector: "Memecoins" },
-      { symbol: "VIRTUAL", name: "Virtuals Protocol", chain: "base", category: "AI", sector: "AI" },
-      { symbol: "JUP", name: "Jupiter", chain: "solana", category: "TRENDING", sector: "DeFi" },
-      { symbol: "PENDLE", name: "Pendle", chain: "ethereum", category: "RWA", sector: "RWA" },
-      { symbol: "PEPE", name: "Pepe", chain: "ethereum", category: "LOSERS", sector: "Memecoins" },
-      { symbol: "BONK", name: "Bonk", chain: "solana", category: "MEMECOINS", sector: "Memecoins" },
-      { symbol: "MON", name: "Monad", chain: "monad", category: "NEW", sector: "L1" },
-      { symbol: "ARC", name: "Arc (Circle)", chain: "arc", category: "NEW", sector: "Stablecoin L1", fixedPrice: 1.0, imageUrl: TokenMeta.logoUrls.USDC },
-      { symbol: "AERO", name: "Aerodrome", chain: "base", category: "GAINERS", sector: "DeFi" },
-      { symbol: "BNB", name: "BNB Chain", chain: "bsc", category: "VOLUME", sector: "L1" },
-      { symbol: "GMX", name: "GMX", chain: "arbitrum", category: "PERPS", sector: "Perps" },
-      { symbol: "POL", name: "Polygon Ecosystem", chain: "polygon", category: "TRENDING", sector: "L2" },
-    ];
-
-    this.tokens = baseUniverse.map((t) => {
-      const hasLive = priceById.has(t.symbol) || t.fixedPrice !== undefined;
-      const price = t.fixedPrice ?? p(t.symbol, "price", null);
-      const delta24h = t.fixedPrice !== undefined ? 0 : p(t.symbol, "delta24h", 0);
-      const vol24h = p(t.symbol, "vol24h", 0);
-      const mcap = p(t.symbol, "mcap", 0);
-      const scoreObj = hasLive
-        ? EliteScoreEngine.calculate({
-            liquidityUsd: 0,
-            volume24hUsd: vol24h,
-            mcapUsd: mcap,
-            priceChange24h: delta24h,
-          })
-        : { score: null, tier: "NO DATA" };
-      const liveRow = priceById.get(t.symbol);
-      return {
-        ...t,
-        price: price ?? 0,
-        delta24h,
-        vol24h,
-        mcap,
-        imageUrl: t.imageUrl || liveRow?.image || null,
-        liquidity: null,
-        txns24h: null,
-        holders: null,
-        socials: {},
-        launchStatus: null,
-        buyersCount: null,
-        tokenAddress: null,
-        smInflow: null,
-        hasLivePrice: hasLive,
-        eliteScore: scoreObj.score,
-        eliteTier: scoreObj.tier,
-        isWatchlist: this.watchlist.has(t.symbol),
-      };
-    });
-
-    try {
-      const launchData = await ApiClient.request("/api/launches?limit=20");
-      if (launchData && launchData.launches) {
-        for (const l of launchData.launches) {
-          this.tokens.unshift({
-            symbol: l.symbol,
-            name: l.name,
-            chain: l.chain,
-            category: "NEW",
-            sector: "Launchpad",
-            imageUrl: l.imageUrl || null,
-            price: Number(l.priceUsdc ?? l.currentPriceUsdc ?? 0),
-            delta24h: 0,
-            vol24h: 0,
-            mcap: Number(l.marketCapUsdc ?? 0),
-            liquidity: null,
-            txns24h: null,
-            holders: null,
-            socials: {
-              ...(l.twitterUrl ? { twitter: l.twitterUrl } : {}),
-              ...(l.telegramUrl ? { telegram: l.telegramUrl } : {}),
-              ...(l.websiteUrl ? { website: l.websiteUrl } : {}),
-            },
-            launchStatus: l.status ?? null,
-            buyersCount: Number(l.buyersCount ?? 0),
-            tokenAddress: l.tokenAddress ?? null,
-            launchId: l.id,
-            progressPct: Number(l.progressPct ?? 0),
-            smInflow: null,
-            hasLivePrice: Number(l.priceUsdc ?? l.currentPriceUsdc ?? 0) > 0,
-            eliteScore: null,
-            eliteTier: "NEW LAUNCH",
-            isWatchlist: this.watchlist.has(l.symbol),
-          });
-        }
-      }
-    } catch {}
-
+  async loadTokens(page = 1) {
+    const results = await Promise.allSettled([
+      DexFeed.getTrending({ kind: "trending", page }),
+      DexFeed.getTrending({ kind: "new", page }),
+    ]);
+    const merged = new Map((page > 1 ? this.tokens : []).map((t) => [t.chain + ":" + t.tokenAddress, t]));
+    for (const result of results) {
+      if (result.status !== "fulfilled") continue;
+      for (const row of result.value) merged.set(row.chain + ":" + row.address, this.fromMarket(row));
+    }
+    this.tokens = [...merged.values()];
+    this._marketPage = page;
     this.render();
     this.renderCategoryCounts();
-    this.enrichWithDexData(); // async, re-renders when real pair data lands
+  },
+
+  async loadMore() {
+    if (this._loadingMore || (this._marketPage || 1) >= 10) return;
+    this._loadingMore = true;
+    try { await this.loadTokens((this._marketPage || 1) + 1); } finally { this._loadingMore = false; }
   },
 
   /**
@@ -315,7 +232,7 @@ export const DiscoverEngine = {
       if (secRefs.length) {
         const results = await SecurityFeed.fetchMany(secRefs).catch(() => ({}));
         for (const t of this.tokens) {
-          const sec = results[String(t.tokenAddress ?? "").toLowerCase()];
+          const sec = SecurityFeed.get(t.tokenAddress, t.chain);
           if (sec) t.security = sec;
         }
       }
@@ -394,29 +311,26 @@ export const DiscoverEngine = {
   },
 
   setSearch(query) {
-    this.searchQuery = query.toLowerCase().trim();
+    this.searchQuery = String(query).trim();
+    this._searchSeq = (this._searchSeq || 0) + 1;
+    this.serverResults = null;
     this.render();
     this.scheduleServerSearch();
   },
 
-  /** Debounced server-wide search: launches + traders beyond the static universe. */
   scheduleServerSearch() {
     if (this._searchTimer) clearTimeout(this._searchTimer);
-    if (this.searchQuery.length < 2) {
-      this.serverResults = null;
-      return;
-    }
+    if (this.searchQuery.length < 2) return;
+    const seq = this._searchSeq;
+    const query = this.searchQuery;
     this._searchTimer = setTimeout(async () => {
-      const seq = (this._searchSeq = (this._searchSeq || 0) + 1);
       try {
-        const data = await ApiClient.search(this.searchQuery, 5);
-        if (seq !== this._searchSeq) return; // stale response
-        this.serverResults = {
-          launches: data?.tokens ?? [],
-          users: data?.users ?? [],
-        };
+        const rows = await DexFeed.search(query, this.activeChain === "all" ? undefined : this.activeChain);
+        if (seq !== this._searchSeq) return;
+        this.serverResults = { market: rows.map((row) => this.fromMarket(row)) };
       } catch {
-        if (seq === this._searchSeq) this.serverResults = null;
+        if (seq !== this._searchSeq) return;
+        this.serverResults = { market: [], error: "Mercado temporalmente no disponible" };
       }
       this.render();
     }, 300);
@@ -429,13 +343,13 @@ export const DiscoverEngine = {
       this.watchlist.add(symbol);
     }
     localStorage.setItem("trenches_watchlist", JSON.stringify([...this.watchlist]));
+    this.tokens.forEach((t) => { t.isWatchlist = this.watchlist.has(t.chain + ":" + t.tokenAddress); });
+    this.serverResults?.market?.forEach((t) => { t.isWatchlist = this.watchlist.has(t.chain + ":" + t.tokenAddress); });
     this.render();
   },
 
   async refresh() {
-    await PriceFeed.refresh();
     await this.loadTokens();
-    await this.enrichWithDexData();
   },
 
   /* ── Filtering pipeline ──────────────────────────────────────────────── */
@@ -506,15 +420,16 @@ export const DiscoverEngine = {
   render() {
     if (!this.container) return;
 
-    let list = [...this.tokens];
+    let list = this.searchQuery && this.serverResults ? [...this.serverResults.market] : [...this.tokens];
 
-    if (this.searchQuery) {
+    if (this.searchQuery && !this.serverResults) {
       list = list.filter(
         (t) =>
-          t.symbol.toLowerCase().includes(this.searchQuery) ||
-          t.name.toLowerCase().includes(this.searchQuery) ||
-          t.chain.toLowerCase().includes(this.searchQuery) ||
-          (t.sector && t.sector.toLowerCase().includes(this.searchQuery))
+          t.symbol.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+          t.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+          t.chain.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+          String(t.tokenAddress).includes(this.searchQuery) ||
+          (t.sector && t.sector.toLowerCase().includes(this.searchQuery.toLowerCase()))
       );
     }
 
@@ -531,7 +446,7 @@ export const DiscoverEngine = {
     } else if (this.activeCategory === "VOLUME") {
       list = list.sort((a, b) => b.vol24h - a.vol24h);
     } else if (this.activeCategory === "SMART MONEY") {
-      list = list.sort((a, b) => (b.smInflow ?? -1) - (a.smInflow ?? -1));
+      list = list.filter((t) => t.smInflow != null).sort((a, b) => b.smInflow - a.smInflow);
     } else if (this.activeCategory === "MEMECOINS") {
       list = list.filter((t) => t.sector === "Memecoins");
     } else if (this.activeCategory === "AI") {
@@ -647,76 +562,23 @@ export const DiscoverEngine = {
 
   hasServerResults() {
     const r = this.serverResults;
-    return !!(r && (r.launches.length || r.users.length));
+    return !!(r?.market?.length);
   },
 
   /** Social icon links for a token (only real, user-visible links). */
   renderSocialIcons(t) {
     const s = t.socials ?? {};
     const icons = [];
-    if (s.twitter) icons.push(`<a href="${s.twitter}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="X / Twitter" style="color:var(--text-tertiary); text-decoration:none; font-size:13px">𝕏</a>`);
-    if (s.telegram) icons.push(`<a href="${s.telegram}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Telegram" style="color:var(--text-tertiary); text-decoration:none; font-size:13px">✈</a>`);
-    if (s.website) icons.push(`<a href="${s.website}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Website" style="color:var(--text-tertiary); text-decoration:none; font-size:12px">🌐</a>`);
+    if (s.twitter) icons.push(`<a href="${esc(s.twitter)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="X / Twitter" style="color:var(--text-tertiary); text-decoration:none; font-size:13px">𝕏</a>`);
+    if (s.telegram) icons.push(`<a href="${esc(s.telegram)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Telegram" style="color:var(--text-tertiary); text-decoration:none; font-size:13px">✈</a>`);
+    if (s.website) icons.push(`<a href="${esc(s.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Website" style="color:var(--text-tertiary); text-decoration:none; font-size:12px">🌐</a>`);
     return icons.length ? `<div style="display:flex; gap:7px; align-items:center">${icons.join("")}</div>` : "";
   },
 
-  /** Server-wide matches (launchpad tokens + registered traders) for the active query. */
   renderServerResults() {
-    if (!this.searchQuery || this.searchQuery.length < 2) return "";
-    const r = this.serverResults;
-    if (!r) return "";
-    const esc = (s) =>
-      String(s ?? "").replace(/[&<>"']/g, (c) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-      })[c]);
-    const safe = (s) => String(s ?? "").replace(/[^a-zA-Z0-9_@.\\-]/g, "");
-    let html = "";
-    if (r.launches.length) {
-      html +=
-        `<div style="padding:12px 18px 4px; font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">🚀 Launchpad</div>` +
-        r.launches
-          .map(
-            (l) => `
-        <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${safe(l.symbol)}', '${safe(l.chain)}', 0)" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
-          <div style="display:flex; align-items:center; gap:10px; min-width:0">
-            ${TokenMeta.logoHtml(l.symbol, { size: 32, round: false, imageUrl: l.imageUrl })}
-            <div style="min-width:0">
-              <div style="font-size:13px; font-weight:700; color:var(--text-primary)">${esc(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${esc(l.symbol)}</span></div>
-              <div style="font-size:10.5px; color:var(--text-tertiary)">Launchpad · ${esc(l.chain)}</div>
-            </div>
-          </div>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.MarketsEngine && window.MarketsEngine.viewLaunchpad()">Ver</button>
-        </div>`
-          )
-          .join("");
-    }
-    if (r.users.length) {
-      html +=
-        `<div style="padding:12px 18px 4px; font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">👤 Traders</div>` +
-        r.users
-          .map((u) => {
-            const handle = safe(u.x_handle) || `@trader_${u.user_id}`;
-            const name = esc(u.display_name || handle);
-            return `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle)">
-          <div style="display:flex; align-items:center; gap:10px; min-width:0">
-            <div class="author-avatar" style="width:32px; height:32px; font-size:11px">${esc((u.display_name || handle).replace("@", "").slice(0, 2).toUpperCase())}</div>
-            <div style="min-width:0">
-              <div style="font-size:13px; font-weight:700; color:var(--text-primary)">${name}</div>
-              <div style="font-size:10.5px; color:var(--text-tertiary)">${esc(handle)} · ${Number(u.followers_count ?? 0)} seguidores</div>
-            </div>
-          </div>
-        </div>`;
-          })
-          .join("");
-    }
-    if (!html) {
-      return `
-        <div style="padding:18px; text-align:center; font-size:11.5px; color:var(--text-tertiary)">
-          Sin resultados en launchpad o traders para "${esc(this.searchQuery)}"
-        </div>`;
-    }
-    return html;
+    if (this.searchQuery) return this.serverResults?.error
+      ? '<p style="padding:16px">Mercado temporalmente no disponible.</p>' : "";
+    return '<div style="padding:16px"><button class="btn btn-secondary btn-sm" onclick="window.DiscoverEngine.loadMore()">Cargar más pools</button> <span>Busca por contrato para consultar cualquier token indexado.</span></div>';
   },
 
   renderCategoryCounts() {
@@ -779,9 +641,9 @@ export const DiscoverEngine = {
         : `<div class="elite-badge mid" title="Datos insuficientes para puntuar" style="opacity:0.55">⚡ —</div>`;
 
     return `
-      <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price}, '${t.tokenAddress ?? ""}')" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
+      <div class="token-row glass-panel-interactive" onclick="window.App.openTradeForToken(${jsArg(t.symbol)}, ${jsArg(t.chain)}, ${t.price}, ${jsArg(t.tokenAddress)})" style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); cursor:pointer">
         <div style="display:flex; align-items:center; gap:14px">
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.DiscoverEngine.toggleWatchlist('${t.symbol}')" style="padding:4px; font-size:14px; color:${isSaved ? '#fde047' : 'var(--text-muted)'}" title="Guardar en Watchlist">
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.DiscoverEngine.toggleWatchlist(${jsArg(t.chain + ":" + t.tokenAddress)})" style="padding:4px; font-size:14px; color:${isSaved ? '#fde047' : 'var(--text-muted)'}" title="Guardar en Watchlist">
             ${isSaved ? '★' : '☆'}
           </button>
 
@@ -789,15 +651,15 @@ export const DiscoverEngine = {
 
           <div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
-              <span style="font-weight:800; font-size:14px; color:#fff">${t.symbol}</span>
-              <span class="brand-badge" style="font-size:9px">${t.chain.toUpperCase()}</span>
+              <span style="font-weight:800; font-size:14px; color:#fff">${esc(t.symbol)}</span>
+              <span class="brand-badge" style="font-size:9px">${esc(t.chain.toUpperCase())}</span>
               ${launchBadge}
               ${secBadge}
               ${t.sector ? `<span style="font-size:10px; color:var(--text-tertiary)">${t.sector}</span>` : ''}
               ${holders !== null ? `<span title="${t.holders ? "Holders on-chain" : "Compradores del launchpad"}" style="font-size:10px; color:var(--text-tertiary)">🐋 ${holders.toLocaleString("en-US")}</span>` : ""}
               ${this.renderSocialIcons(t)}
             </div>
-            <div style="font-size:12px; color:var(--text-secondary)">${t.name}</div>
+            <div style="font-size:12px; color:var(--text-secondary)">${esc(t.name)}</div>
           </div>
         </div>
 
@@ -824,10 +686,10 @@ export const DiscoverEngine = {
           </div>
 
           <div style="display:flex; flex-direction:column; gap:6px">
-            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.App.openTradeForToken('${t.symbol}', '${t.chain}', ${t.price})" style="width:70px">
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.App.openTradeForToken(${jsArg(t.symbol)}, ${jsArg(t.chain)}, ${t.price}, ${jsArg(t.tokenAddress)})" style="width:70px">
               TRADE
             </button>
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.App.openNewPostModal({ token: '${t.symbol}', chain: '${t.chain}', price: ${t.price}, imageUrl: '${String(t.imageUrl ?? "").replace(/'/g, "")}' })" style="width:70px; font-size:10.5px" title="Publicar tesis sobre este token">
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); window.App.openNewPostModal(${jsArg({ token: t.tokenAddress, symbol: t.symbol, chain: t.chain, price: t.price, imageUrl: t.imageUrl })})" style="width:70px; font-size:10.5px" title="Publicar tesis sobre este token">
               📊 TESIS
             </button>
           </div>

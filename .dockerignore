@@ -10,3 +10,11 @@ saur-bot
 render.yaml
 README.md
 README.es.md
+**/.env
+**/.env.*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.log
+output
+.playwright-cli
