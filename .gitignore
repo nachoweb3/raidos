@@ -17,3 +17,5 @@ dist/
 
 # Tooling/session metadata
 .freebuff/
+.playwright-cli/
+output/playwright/

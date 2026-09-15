@@ -181,7 +181,7 @@ export class RpcReceiptProvider implements ReceiptProvider {
     if (body.result.status === "0x0") return { status: "failed", receipt: body.result, error: "EVM transaction reverted" };
     return { status: "pending", error: "EVM receipt status unavailable" };
   }
-} 
+}
 
 /**
  * Reconciles durable submitted/pending transactions. This class deliberately

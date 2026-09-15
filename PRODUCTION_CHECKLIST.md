@@ -48,4 +48,3 @@ Rollback: imagen previa de Fly `raidos-api:deployment-01M223804R7DNFSR0K739ZVACD
 - Móvil 390 px: scrollWidth 390 y buscador visible; escritorio 1440 px sin desbordamiento horizontal.
 - Pruebas app: 175; typecheck y build correctos. Core sin modificaciones: 101 pruebas correctas en la comprobación inicial.
 - Evidencia local en output/playwright/. Algunos análisis RugCheck individuales fallan por CORS del proveedor: se muestran sin evaluación, no como seguros. Pendiente mover estos chequeos a una caché de servidor.
-
