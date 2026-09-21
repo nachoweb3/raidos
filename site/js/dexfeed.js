@@ -12,7 +12,7 @@
 import { ApiClient } from "./api.js";
 
 /** GoPlus chain ids for token-security lookups (EVM only). */
-const GOPUS_CHAIN_IDS = { ethereum: 1, bsc: 56, base: 8453, polygon: 137, arbitrum: 42161 };
+const nullableNumber = (value) => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
 
 function normalizeSocials(info) {
   const out = {};
@@ -49,13 +49,13 @@ function pairToRow(p, chainHint) {
     vol6h: Number(p.volume?.h6 ?? 0),
     vol1h: Number(p.volume?.h1 ?? 0),
     liqUsd: liq,
-    buys24h: Number(p.txns?.h24?.buys ?? 0),
-    sells24h: Number(p.txns?.h24?.sells ?? 0),
-    txns24h: Number(p.txns?.h24?.buys ?? 0) + Number(p.txns?.h24?.sells ?? 0),
+    buys24h: nullableNumber(p.txns?.h24?.buys),
+    sells24h: nullableNumber(p.txns?.h24?.sells),
+    txns24h: p.txns?.h24?.buys == null || p.txns?.h24?.sells == null ? null : Number(p.txns.h24.buys) + Number(p.txns.h24.sells),
     txns1h: Number(p.txns?.h1?.buys ?? 0) + Number(p.txns?.h1?.sells ?? 0),
-    change1h: Number(p.priceChange?.h1 ?? 0),
-    change6h: Number(p.priceChange?.h6 ?? 0),
-    change24h: Number(p.priceChange?.h24 ?? 0),
+    change1h: nullableNumber(p.priceChange?.h1),
+    change6h: nullableNumber(p.priceChange?.h6),
+    change24h: nullableNumber(p.priceChange?.h24),
     socials: normalizeSocials(p.info),
     logo: typeof p.info?.imageUrl === "string" && p.info.imageUrl.startsWith("http") ? p.info.imageUrl : null,
     createdAtMs: Number(p.pairCreatedAt ?? 0),
@@ -155,8 +155,10 @@ export const DexFeed = {
   async refresh(refs) { return this.ensureTokens(refs, { force: true }); },
   socialsFor(key, chain) { return this.get(key, chain)?.socials || {}; },
   async getTrending({ chains = [], limit = 60, page = 1, kind = "trending" } = {}) {
-    const response = await ApiClient.request("/api/market/pools?kind=" + encodeURIComponent(kind) + "&page=" + page);
-    return this._rows(response.pairs).filter((row) => !chains.length || chains.includes(row.chain)).slice(0, limit);
+    const networks = chains.length ? chains : ["all"];
+    const responses = await Promise.all(networks.map((chain) =>
+      ApiClient.request("/api/market/pools?kind=" + encodeURIComponent(kind) + "&page=" + page + "&chain=" + encodeURIComponent(chain))));
+    return this._rows(responses.flatMap((r) => r.pairs)).slice(0, limit);
   },
 
   narrativeHeat(tokens) {
@@ -191,7 +193,7 @@ export const DexFeed = {
  */
 export const SecurityFeed = {
   cache: {},           // address(lower) → { level, label, title, detail } | null
-  ttlMs: 30 * 60 * 1000,
+  ttlMs: 5 * 60 * 1000,
   _inflight: new Map(),
 
   get(address, chain) {
@@ -210,10 +212,13 @@ export const SecurityFeed = {
     if (cached && Date.now() - cached._at < this.ttlMs) return cached.v;
     if (this._inflight.has(key)) return this._inflight.get(key);
 
-    const chainId = String(chain ?? "solana").toLowerCase();
-    const p = (chainId === "solana" ? this._rugcheck(addr) : this._goplus(addr, chainId))
-      .then((v) => { this.cache[key] = { v, _at: Date.now() }; return v; })
-      .catch(() => { this.cache[key] = { v: null, _at: Date.now() }; return null; })
+    const p = ApiClient.request("/api/market/security?chain=" + encodeURIComponent(chain) + "&token=" + encodeURIComponent(addr))
+      .then((result) => {
+        const v = result.report ? { ...result.report, status: result.status, asOf: result.asOf } : null;
+        this.cache[key] = { v, _at: v ? result.asOf : Date.now() - this.ttlMs + 60000 };
+        return v;
+      })
+      .catch(() => { this.cache[key] = { v: null, _at: Date.now() - this.ttlMs + 60000 }; return null; })
       .finally(() => this._inflight.delete(key));
     this._inflight.set(key, p);
     return p;
@@ -230,69 +235,5 @@ export const SecurityFeed = {
     return out;
   },
 
-  /**
-   * RugCheck: /api/v2/tokens/{mint}/risk — score is 0..100+ (lower better);
-   * they also expose a discrete level. We normalize to good/warn/bad.
-   */
-  async _rugcheck(mint) {
-    const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${encodeURIComponent(mint)}/report/summary`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const j = await res.json();
-    if (!j || typeof j !== "object") return null;
-    if (!Number.isFinite(j.score_normalised) || !Array.isArray(j.risks)) return null;
-    const score = j.score_normalised;
-    const lvl = String(j.level ?? "").toLowerCase();
-    const level = lvl === "danger" || j.risks.some((r) => r.level === "danger") || score >= 75 ? "bad"
-      : lvl === "warn" || score >= 35 ? "warn"
-      : "good";
-    const dangers = (j.risks ?? []).filter((r) => String(r.level ?? "").toLowerCase() === "danger").slice(0, 2).map((r) => r.name);
-    return {
-      level,
-      score,
-      provider: "rugcheck",
-      label: level === "good" ? "RISK LOW" : level === "warn" ? "RISK MED" : "RISK HIGH",
-      title: dangers.length ? dangers.join(" · ") : `RugCheck score ${score}`,
-      detail: (j.risks ?? []).length + " señales",
-    };
-  },
 
-  /** GoPlus: public token security endpoint, no key for low QPS. */
-  async _goplus(address, chain) {
-    const cid = GOPUS_CHAIN_IDS[chain];
-    if (!cid) return null;
-    const res = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${cid}?contract_addresses=${encodeURIComponent(address)}`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const j = await res.json();
-    const d = j?.result?.[String(address).toLowerCase()];
-    if (!d || !["0", "1"].includes(d.is_honeypot) || d.buy_tax == null || d.sell_tax == null) return null;
-    const honeypot = String(d.is_honeypot ?? "0") === "1";
-    const canMint = String(d.is_mintable ?? "0") === "1";
-    const ownerPriv = String(d.owner_address ?? "") !== "" && String(d.owner_address ?? "") !== "0x0000000000000000000000000000000000000000";
-    const buyTax = Number(d.buy_tax ?? 0) * 100;
-    const sellTax = Number(d.sell_tax ?? 0) * 100;
-    const level = honeypot || buyTax >= 20 || sellTax >= 20 ? "bad"
-      : canMint || buyTax >= 5 || sellTax >= 5 ? "warn"
-      : "good";
-    const flags = [
-      honeypot ? "HONEYPOT" : null,
-      canMint ? "MINTABLE" : null,
-      buyTax >= 5 ? `BUY ${buyTax.toFixed(0)}%` : null,
-      sellTax >= 5 ? `SELL ${sellTax.toFixed(0)}%` : null,
-      ownerPriv ? "OWNER PRIV" : null,
-    ].filter(Boolean);
-    return {
-      level,
-      score: honeypot ? 100 : Math.min(99, buyTax + sellTax + (canMint ? 25 : 0)),
-      provider: "goplus",
-      label: level === "good" ? "RISK LOW" : level === "warn" ? "RISK MED" : "RISK HIGH",
-      title: flags.length ? flags.join(" · ") : "GoPlus: sin señales",
-      detail: flags.length + " flags",
-    };
-  },
 };

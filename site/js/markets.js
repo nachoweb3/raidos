@@ -1,7 +1,8 @@
 /**
  * 🎯 MARKETS ENGINE — Prediction markets (Polymarket) + Token Launchpad
  * Prediction: real events from /api/prediction/events with category filter,
- * outcome prices, and real CLOB order placement via /api/prediction/order.
+ * outcome prices. CLOB order placement remains disabled until its
+ * non-custodial signing and settlement path is certified.
  * Launchpad: bonding-curve token launches with create/buy/sell.
  * All data real or honestly empty — no invented content.
  */
@@ -34,9 +35,50 @@ const CATEGORY_ICONS = {
   science: "🔬", markets: "📈", geopolitics: "🌍", ai: "🤖", world: "🌐",
 };
 
+/** Shorten a Solana address for display. */
+const shortAddr = (s) => `${String(s || "").slice(0, 4)}…${String(s || "").slice(-4)}`;
+
+function parseLabUnits(raw, decimals) {
+  if (!/^\d+(\.\d+)?$/.test(raw)) throw new Error("Introduce un importe decimal válido");
+  const [whole, fraction = ""] = raw.split(".");
+  if (fraction.length > decimals) throw new Error(`Máximo ${decimals} decimales`);
+  const amount = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0"));
+  if (amount > 18446744073709551615n) throw new Error("Importe demasiado grande");
+  return amount;
+}
+
+/**
+ * Connect Phantom and return the user's pubkey string (self-custody flows).
+ * The server refuses any wallet not linked to the signed-in account.
+ */
+async function connectPhantomWallet() {
+  if (!window.solana?.isPhantom) throw new Error("Instala Phantom para operar en LaunchLab (self-custody)");
+  if (!window.solana.isConnected || !window.solana.publicKey) {
+    await window.solana.connect();
+  }
+  const wallet = window.solana?.publicKey?.toString();
+  if (!wallet) throw new Error("No se pudo obtener la wallet de Phantom");
+  return wallet;
+}
+
+/**
+ * Sign a base64 unsigned tx with Phantom and return the base64 signed tx.
+ * Signature happens in the user's wallet — the server never sees keys.
+ */
+async function signTxWithPhantom(serializedBase64) {
+  const { VersionedTransaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
+  const raw = Uint8Array.from(atob(serializedBase64), (c) => c.charCodeAt(0));
+  const tx = VersionedTransaction.deserialize(raw);
+  const signed = await window.solana.signTransaction(tx);
+  const bytes = signed.serialize();
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 export const MarketsEngine = {
   container: null,
-  subTab: "prediction", // 'prediction' | 'launchpad'
+  subTab: "launchlab",
   category: "",
   sort: "trending",
   events: [],
@@ -90,7 +132,7 @@ export const MarketsEngine = {
           <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px">${escapeHtml(outcomes[i])}</div>
           <div style="font-size:22px; font-weight:700; color:var(--accent-green)">${Math.round(price * 100)}¢</div>
           <div style="font-size:10.5px; color:var(--text-tertiary); margin:4px 0 12px">Gana ${escapeHtml(outcomes[i])} → $1</div>
-          <button class="btn btn-primary btn-sm" style="width:100%" onclick="window.MarketsEngine.promptOrder('${safeAttr(m.clobTokenIds?.[i] || "")}','${safeAttr(outcomes[i])}',${price},'${safeAttr(ev.slug)}')">Comprar</button>
+          <button class="btn btn-secondary btn-sm" style="width:100%" disabled title="Firma y liquidación de órdenes aún no verificadas">Solo consulta</button>
         </div>`;
     }
     document.getElementById("marketEventBody").innerHTML = `
@@ -111,35 +153,10 @@ export const MarketsEngine = {
   },
 
   async promptOrder(tokenId, outcome, price, slug) {
-    if (!tokenId) {
-      alert("Este mercado no tiene tokenId para órdenes CLOB");
-      return;
-    }
-    if (!ApiClient.isAuthenticated()) {
-      alert("Conecta tu wallet primero");
-      return;
-    }
-    const pw = prompt(`Compra ${outcome} a ${Math.round(price * 100)}¢\n\nCantidad en USDC (ej: 5):`);
-    if (!pw) return;
-    const size = parseFloat(pw);
-    if (!Number.isFinite(size) || size <= 0) {
-      alert("Cantidad inválida");
-      return;
-    }
-    const walletPw = prompt("Contraseña de tu wallet Polygon para firmar la orden:");
-    if (!walletPw) return;
-    try {
-      const res = await ApiClient.placePredictionOrder({
-        tokenId, side: "BUY", price: price.toFixed(3), size: String(size), password: walletPw,
-      });
-      alert(`✅ Orden colocada en Polymarket\n\n${res.result?.status || "OK"}`);
-      this.closeEvent();
-    } catch (err) {
-      alert("❌ " + String(err?.message || err));
-    }
+    alert("Solo consulta: la firma y liquidación de órdenes de predicción aún no están verificadas.");
   },
 
-  /* ══════════ LAUNCHPAD ══════════ */
+  /* ══════════ LAUNCHPAD (bonding curve, simulada en el servidor) ══════════ */
 
   async loadLaunches() {
     this.renderLaunchpadLoading();
@@ -147,9 +164,24 @@ export const MarketsEngine = {
       const data = await ApiClient.getLaunches({ sort: this.launchSort, limit: 30 });
       this.launches = data.launches || [];
       this.renderLaunchpad();
+      this.scheduleLaunchRefresh();
     } catch (err) {
       this.renderError(String(err?.message || err), () => this.loadLaunches());
     }
+  },
+
+  /** Live board: refresh silently every 8s while the launchpad view is open. */
+  scheduleLaunchRefresh() {
+    clearTimeout(this._launchTimer);
+    this._launchTimer = setTimeout(() => {
+      if (!this.container || this.subTab !== "launchpad") return;
+      if (document.hidden) { this.scheduleLaunchRefresh(); return; }
+      if (document.querySelector("#launchDetailModal.open, #launchCreateModal.open")) {
+        this.scheduleLaunchRefresh();
+        return;
+      }
+      this.loadLaunches();
+    }, 8000);
   },
 
   setLaunchSort(sort) {
@@ -162,73 +194,727 @@ export const MarketsEngine = {
       alert("Conecta tu wallet primero");
       return;
     }
-    const name = prompt("Nombre del token (ej: Trenches Coin):");
-    if (!name) return;
-    const symbol = prompt("Símbolo (ej: TRN):");
-    if (!symbol) return;
-    const chain = prompt("Cadena (solana, base, ethereum, bsc, arbitrum, polygon, monad, arc, robinhood):", "solana");
-    if (!chain) return;
-    const description = prompt("Descripción (opcional):") || "";
-    const imageUrl = prompt("URL del logo (opcional, https):", "") || "";
-    const twitterUrl = prompt("X / Twitter (URL opcional, ej: https://x.com/tutoken):", "") || "";
-    const telegramUrl = prompt("Telegram (URL opcional, ej: https://t.me/tutoken):", "") || "";
-    const websiteUrl = prompt("Website (URL opcional):", "") || "";
+    closeLaunchModals();
+    document.getElementById("launchCreateForm").reset();
+    const errBox = document.getElementById("launchCreateError");
+    if (errBox) { errBox.style.display = "none"; errBox.textContent = ""; }
+    toggleCreateFields();
+    document.getElementById("launchCreateModal").classList.add("open");
+  },
+
+  async submitCreateLaunch(e) {
+    e.preventDefault();
+    const get = (id) => (document.getElementById(id)?.value || "").trim();
+    const payload = {
+      chain: get("lcChain"),
+      name: get("lcName"),
+      symbol: get("lcSymbol"),
+      description: get("lcDescription"),
+      imageUrl: get("lcImage"),
+      totalSupply: get("lcSupply").replace(/[,_]/g, "") || "1000000000000",
+      twitterUrl: get("lcTwitter"),
+      telegramUrl: get("lcTelegram"),
+      websiteUrl: get("lcWebsite"),
+    };
+    const btn = document.getElementById("launchCreateSubmit");
+    btn.disabled = true;
     try {
-      await ApiClient.createLaunch({
-        chain: chain.trim().toLowerCase(), name, symbol, description, imageUrl,
-        twitterUrl, telegramUrl, websiteUrl,
-      });
-      alert("🚀 Lanzamiento creado");
+      await ApiClient.createLaunch(payload);
+      closeLaunchModals();
       this.loadLaunches();
     } catch (err) {
-      alert("❌ " + String(err?.message || err));
+      const box = document.getElementById("launchCreateError");
+      box.textContent = "❌ " + String(err?.message || err);
+      box.style.display = "block";
+    } finally {
+      btn.disabled = false;
     }
   },
 
-  async promptBuy(launchId, symbol) {
-    if (!ApiClient.isAuthenticated()) {
-      alert("Conecta tu wallet primero");
-      return;
-    }
-    const usdc = prompt(`Comprar ${symbol} — monto en USDC (ej: 10):`);
-    if (!usdc) return;
-    const usdNum = parseFloat(usdc);
-    if (!Number.isFinite(usdNum) || usdNum <= 0) {
-      alert("❌ Introduce un monto válido en USDC");
-      return;
-    }
-    // API expects micro-USDC (1 USDC = 1e6 units)
-    const usdcMicro = BigInt(Math.round(usdNum * 1e6)).toString();
+  /** Token detail sheet: stats + position + trade panel. */
+  async openLaunch(launchId) {
+    closeLaunchModals();
+    const modal = document.getElementById("launchDetailModal");
+    document.getElementById("launchDetailBody").innerHTML = `<p style="color:var(--text-tertiary); font-size:12.5px; padding:8px 0">Cargando ficha…</p>`;
+    modal.classList.add("open");
+    this._detailLaunchId = launchId;
+    await this.refreshLaunchDetail();
+  },
+
+  async refreshLaunchDetail() {
+    const id = this._detailLaunchId;
+    if (!id || !document.getElementById("launchDetailModal").classList.contains("open")) return;
     try {
-      const res = await ApiClient.buyLaunchTokens(launchId, usdcMicro);
-      const tokens = res.result?.tokenAmount || "?";
-      const priceAfter = res.result?.priceAfter ? (Number(res.result.priceAfter) / 1e6).toPrecision(3) : null;
-      alert(`✅ Comprado ${symbol}: ${Number(tokens).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens${priceAfter ? ` · nuevo precio $${priceAfter}` : ""}`);
+      const [detail, pos, claim, pool] = await Promise.all([
+        ApiClient.getLaunch(id),
+        ApiClient.isAuthenticated() ? ApiClient.getLaunchPosition(id).catch(() => null) : Promise.resolve(null),
+        ApiClient.isAuthenticated() ? ApiClient.getLaunchClaim(id).catch(() => null) : Promise.resolve(null),
+        ApiClient.getLaunchPool(id).catch(() => null),
+      ]);
+      if (this._detailLaunchId !== id) return;
+      this._lastPos = pos?.position || null;
+      this._lastClaim = claim?.claim || null;
+      this._lastPool = pool?.pool || null;
+      this._lastLaunch = detail.launch;
+      this.renderLaunchDetail(detail.launch, pos?.position || null, detail.curveSimulated !== false);
+    } catch (err) {
+      document.getElementById("launchDetailBody").innerHTML =
+        `<p style="color:var(--text-secondary); font-size:12.5px">No se pudo cargar la ficha</p>`;
+    }
+  },
+
+  renderLaunchDetail(l, pos, simulated) {
+    const mcap = Number(l.marketCapUsdc || 0) / 1e6;
+    const raised = Number(l.raisedUsdc || 0) / 1e6;
+    const price = Number(l.currentPriceUsdc || 0) / 1e6;
+    const progress = Math.min(100, Number(l.progressPct ?? 0));
+    const canTrade = (l.status === "created" || l.status === "funding") && !l.distributionLocked && ApiClient.isAuthenticated();
+    const held = pos ? Number(pos.tokens) : 0;
+    const graduated = l.graduatedOnChain === true;
+    const mintLink = l.mintAddress
+      ? `<a href="https://solscan.io/token/${encodeURIComponent(l.mintAddress)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent-teal, var(--accent-green)); font-family:monospace">${escapeHtml(String(l.mintAddress).slice(0, 6))}…${escapeHtml(String(l.mintAddress).slice(-6))}</a>`
+      : "";
+    const body = document.getElementById("launchDetailBody");
+    body.innerHTML = `
+      ${graduated
+        ? `<p style="font-size:10.5px; color:var(--accent-green); background:var(--bg-canvas); border-radius:6px; padding:6px 10px; margin-bottom:12px">🎓 <b>Graduado on-chain:</b> token real emitido (oferta fija) · mint ${mintLink}</p>`
+        : simulated ? `<p style="font-size:10px; color:var(--text-tertiary); background:var(--bg-canvas); border-radius:6px; padding:6px 10px; margin-bottom:12px">⚠️ Curva simulada en el servidor: sin contrato on-chain ni custodia de fondos todavía.</p>` : ""}
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:14px">
+        ${TokenMeta.logoHtml(l.symbol, { size: 46, round: false, imageUrl: l.imageUrl })}
+        <div style="flex:1; min-width:0">
+          <p style="font-size:15px; font-weight:700; color:var(--text-primary)">${escapeHtml(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${escapeHtml(l.symbol)}</span></p>
+          <div style="display:flex; gap:10px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap">
+            <span>⛓ ${escapeHtml(l.chain)}</span>
+            <span>📊 $${price > 0 ? price.toPrecision(3) : "0"}</span>
+            <span>💰 FDV ${fmtUsd(mcap)}</span>
+            <span>👥 ${l.buyersCount ?? 0}</span>
+            ${l.status === "graduated" ? '<span title="Graduado">🎓</span>' : ""}
+            ${l.twitterUrl ? `<a href="${escapeHtml(l.twitterUrl)}" target="_blank" rel="noopener noreferrer">𝕏</a>` : ""}
+            ${l.telegramUrl ? `<a href="${escapeHtml(l.telegramUrl)}" target="_blank" rel="noopener noreferrer">✈</a>` : ""}
+            ${l.websiteUrl ? `<a href="${escapeHtml(l.websiteUrl)}" target="_blank" rel="noopener noreferrer">🌐</a>` : ""}
+          </div>
+        </div>
+      </div>
+      ${l.description ? `<p style="font-size:11.5px; color:var(--text-secondary); line-height:1.5; margin-bottom:12px">${escapeHtml(String(l.description).slice(0, 300))}</p>` : ""}
+      <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-tertiary); margin-bottom:4px">
+        <span>💰 ${fmtUsd(raised)} recaudado</span><span>meta ${fmtUsd(Number(l.graduateThreshold || 0) / 1e6)}</span>
+      </div>
+      <div style="height:5px; background:var(--bg-canvas); border-radius:3px; overflow:hidden; margin-bottom:14px">
+        <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, var(--accent-green), var(--accent-teal, var(--accent-green)))"></div>
+      </div>
+      ${pos ? `
+      <div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px; display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--text-secondary)">
+        <span>Tus tokens: <b style="color:var(--text-primary)">${held.toLocaleString("en-US")}</b></span>
+        <span>Coste medio: <b style="color:var(--text-primary)">${pos.avgCostUsdc && Number(pos.avgCostUsdc) > 0 ? "$" + (Number(pos.avgCostUsdc) / 1e6).toPrecision(3) : "—"}</b></span>
+        <span>Valor hoy: <b style="color:var(--accent-green)">${fmtUsd(Number(pos.valueUsdc || 0) / 1e6)}</b></span>
+        <span>PnL ab.: <b style="color:${Number(pos.unrealizedUsdc || 0) >= 0 ? "var(--accent-green)" : "var(--accent-red, #ff5a5f)"}">${fmtUsd(Number(pos.unrealizedUsdc || 0) / 1e6)}</b></span>
+      </div>` : ""}
+      ${this.renderIssuanceSection(l)}
+      ${graduated || l.distributionLocked ? "" : this.renderLaunchClaimSection()}
+      ${this.renderPoolSection(l)}
+      ${canTrade ? `
+      <div style="display:flex; gap:8px; margin-bottom:10px">
+        <button class="pill-tab ${this._tradeSide !== "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setLaunchTradeSide('buy')">Comprar</button>
+        <button class="pill-tab ${this._tradeSide === "sell" ? "active" : ""}" style="flex:1" ${held > 0 ? "" : "disabled"} onclick="window.MarketsEngine.setLaunchTradeSide('sell')">Vender</button>
+      </div>
+      <div id="launchTradePresets" style="display:flex; gap:6px; margin-bottom:8px"></div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+        <input id="launchTradeAmount" type="text" inputmode="decimal" placeholder="${this._tradeSide === "sell" ? "Cantidad de tokens" : "Monto en USDC"}" style="flex:1; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 12px; color:var(--text-primary); font-size:13px">
+        <button class="btn btn-primary btn-sm" id="launchTradeSubmit" onclick="window.MarketsEngine.submitLaunchTrade()">${this._tradeSide === "sell" ? "Vender" : "Comprar"}</button>
+      </div>
+      <p id="launchQuoteLine" style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:10px">Introduce un monto para ver la estimación de la curva.</p>` : `
+      <p style="font-size:11.5px; color:var(--text-tertiary)">${!ApiClient.isAuthenticated() ? "Conecta tu cuenta para participar en la curva simulada." : l.distributionLocked ? "Distribución bloqueada durante la emisión o revisión on-chain." : "Este token ya no acepta operaciones en la curva."}</p>`}
+      <p style="font-size:9.5px; color:var(--text-tertiary); opacity:0.7">La curva vive en la base de datos del servidor: los montos no salen de tu wallet y no existen contratos aún.</p>`;
+    this._tradeSide = this._tradeSide || "buy";
+    this.setLaunchTradeSide(this._tradeSide);
+    if (this._detailTimer) clearInterval(this._detailTimer);
+    this._detailTimer = setInterval(() => this.refreshLaunchDetail(), 6000);
+  },
+
+  /** Claim section: opt-in wallet that would receive curve holdings on a real migration. */
+  renderIssuanceSection(l) {
+    const issued = l.graduatedOnChain === true && Boolean(l.mintAddress);
+    const states = { not_planned: "Pendiente de emisión", planned: "Distribución preparada", executing: "Emisión en curso", recovery_required: "Emisión pendiente de revisión", failed: "Emisión pendiente de revisión", completed: "Emisión confirmada" };
+    const status = issued ? "Emisión confirmada" : states[l.issuanceStatus] || "Pendiente de emisión";
+    return `<section class="launch-issuance" aria-label="Estado on-chain"><h3>Estado on-chain</h3>
+      <dl><div><dt>Curva</dt><dd>Simulada</dd></div><div><dt>Token Solana</dt><dd>${status}</dd></div><div><dt>Mercado DEX</dt><dd>${issued ? "Consultar disponibilidad" : "Pendiente de token y liquidez"}</dd></div></dl>
+      <p>${issued ? "La emisión no garantiza liquidez. Abre el terminal para consultar pools, actividad y rutas disponibles." : l.distributionLocked ? "No se repite la emisión automáticamente. Se conservan las transacciones para comprobar su resultado." : "La distribución solo se envía después de preparar y verificar las wallets receptoras."}</p>
+      ${issued ? '<button class="btn btn-primary btn-sm" onclick="window.MarketsEngine.openGraduatedMarket()">Ver mercado del token</button>' : ""}</section>`;
+  },
+
+  openGraduatedMarket() {
+    const launch = this._lastLaunch;
+    if (!launch?.graduatedOnChain || !launch.mintAddress) return;
+    closeLaunchModals();
+    window.TerminalView?.open(launch.symbol, "solana", 0, launch.mintAddress);
+  },
+
+  renderLaunchClaimSection() {
+    const claim = this._lastClaim;
+    if (!claim) return "";
+    const tokens = Number(claim.tokens || 0);
+    const short = (w) => `${String(w).slice(0, 4)}…${String(w).slice(-4)}`;
+    return `
+    <div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px; font-size:11px; color:var(--text-secondary)">
+      <p style="font-weight:700; color:var(--text-primary); margin-bottom:4px">🎁 Reclamo para migración on-chain</p>
+      ${claim.wallet
+        ? `<p style="margin-bottom:6px">Wallet registrada: <b style="color:var(--text-primary)">${escapeHtml(short(claim.wallet.address))}</b> <span style="color:var(--text-tertiary)">(${escapeHtml(claim.wallet.chain)})</span></p>
+           <p style="color:var(--text-tertiary); font-size:10.5px; margin-bottom:8px">Si este token se migra a un contrato real, ${tokens > 0 ? `${tokens.toLocaleString("en-US")} tokens` : "tus tokens netos"} se emitirían a esta wallet.</p>`
+        : `<p style="margin-bottom:8px">Registra tu wallet para poder reclamar si el token llega a migrarse on-chain. Requiere firmar un mensaje gratuito (sin gas); la curva sigue siendo simulada.</p>`}
+      <button class="btn btn-sm ${claim.wallet ? "" : "btn-primary"}" onclick="window.MarketsEngine.submitLaunchClaim()">${claim.wallet ? "Cambiar wallet" : "Registrar wallet para reclamo"}</button>
+    </div>`;
+  },
+
+  /** Pool section: post-graduation secondary market (real on-chain reserves). */
+  renderPoolSection(l) {
+    const pool = this._lastPool;
+    if (!pool || l.graduatedOnChain !== true) return "";
+    const price = Number(pool.priceTokenInUsdc || 0);
+    const rToken = Number(pool.reserveToken || 0);
+    const rUsdc = Number(pool.reserveUsdc || 0) / 1e6;
+    return `
+    <div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px; font-size:11px; color:var(--text-secondary)">
+      <p style="font-weight:700; color:var(--text-primary); margin-bottom:4px">🔄 Mercado (pool on-chain real)</p>
+      <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:6px">
+        <span>Precio: <b style="color:var(--accent-green)">$${price > 0 ? price.toPrecision(3) : "0"}</b></span>
+        <span>Lado token: <b>${rToken.toLocaleString("en-US")}</b></span>
+        <span>Lado USDC: <b>${fmtUsd(rUsdc)}</b></span>
+      </div>
+      <p style="color:var(--text-tertiary); font-size:11px; margin-bottom:8px">Reservas bajo control del operador. Ejecución de esta pool pendiente de validación; el trading spot está disponible en el terminal.</p>
+      <button class="btn btn-sm" disabled>Pool en preparación</button>
+    </div>`;
+  },
+
+  /** Open the pool swap flow: wallet + quote via live reserves, then sign. */
+  async openPoolSwap() {
+    const pool = this._lastPool;
+    const l = this._lastLaunch;
+    if (!pool || pool.executionAvailable !== true) return;
+    try {
+      if (!window.solana?.isConnected || !window.solana.publicKey) {
+        await window.solana?.connect?.();
+      }
+      const wallet = window.solana?.publicKey?.toString();
+      if (!wallet) throw new Error("Conecta Phantom para operar en el pool");
+      this._poolWallet = wallet;
+      const side = prompt("Escribe 'buy' (USDC → token) o 'sell' (token → USDC):", "buy");
+      if (side !== "buy" && side !== "sell") return;
+      const amountStr = prompt(side === "buy" ? "USDC a gastar (ej. 5):" : "Tokens a vender (ej. 1000):", "");
+      if (!amountStr) return;
+      const amount = Number(amountStr);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Monto inválido");
+      // Buy: USDC has 6 decimals; sell: the mint has 0 decimals (whole tokens).
+      const amountIn = BigInt(Math.round(side === "buy" ? amount * 1e6 : amount)).toString();
+      const quote = await ApiClient.quoteLaunchSwap(l.id, { side, amountIn });
+      const q = quote.quote;
+      const outHuman = side === "buy"
+        ? (Number(q.amountOut)).toLocaleString("en-US") + " tokens"
+        : "$" + (Number(q.amountOut) / 1e6).toFixed(2);
+      const inHuman = side === "buy" ? "$" + (Number(q.amountIn) / 1e6).toFixed(2) : Number(q.amountIn).toLocaleString("en-US") + " tokens";
+      const impact = Number(q.priceImpactPct || 0).toFixed(2);
+      const ok = confirm(`${side === "buy" ? "Comprar" : "Vender"} por ${inHuman}\n→ Recibes ≈ ${outHuman}\nMínimo garantizado: ${side === "buy" ? Number(q.minOut).toLocaleString("en-US") + " tokens" : "$" + (Number(q.minOut) / 1e6).toFixed(2)}\nImpacto: ${impact}%\nFee: 0.3%\n\n¿Preparar la transacción?`);
+      if (!ok) return;
+      await this.executePoolSwap(l.id, { side, amountIn: q.amountIn, minOut: q.minOut });
+    } catch (err) {
+      alert(err?.message || "No se pudo preparar el swap");
+    }
+  },
+
+  /** Prepare → sign in Phantom → submit for pool co-sign + broadcast. */
+  async executePoolSwap(launchId, { side, amountIn, minOut }) {
+    const wallet = this._poolWallet;
+    if (!wallet) throw new Error("Wallet no conectada");
+    const prepared = await ApiClient.prepareLaunchSwap(launchId, { side, amountIn, minOut, wallet });
+    const { VersionedTransaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
+    // The server sends a legacy unsigned tx with only the pool slot empty;
+    // the user is fee payer and first signer.
+    const raw = Uint8Array.from(atob(prepared.serialized), (c) => c.charCodeAt(0));
+    const tx = VersionedTransaction.deserialize(raw);
+    const signed = await window.solana.signTransaction(tx);
+    const bytes = signed.serialize();
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const serialized = btoa(binary);
+    const result = await ApiClient.submitLaunchSwap(launchId, { side, amountIn, minOut, wallet, signedTx: serialized });
+    alert(`✅ Swap confirmado:\n${result.signature}`);
+    this.refreshLaunchDetail();
+  },
+
+  /** Sign a fresh challenge with the user's wallet and register the claim. */
+  async submitLaunchClaim() {
+    const id = this._detailLaunchId;
+    if (!id) return;
+    let chain, address, message, signature;
+    try {
+      if (window.solana?.isPhantom) {
+        chain = "solana";
+        const resp = await window.solana.connect();
+        address = resp.publicKey.toString();
+        const ch = await ApiClient.getChallenge("solana");
+        const signed = await window.solana.signMessage(new TextEncoder().encode(ch.message), "utf8");
+        signature = Array.from(signed.signature).map((b) => b.toString(16).padStart(2, "0")).join("");
+        message = ch.message;
+      } else if (window.ethereum) {
+        chain = "evm";
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        address = accounts[0];
+        const ch = await ApiClient.getChallenge("evm");
+        signature = await window.ethereum.request({ method: "personal_sign", params: [ch.message, address] });
+        message = ch.message;
+      } else {
+        alert("No se detectó Phantom ni MetaMask. Instala una wallet para registrar el reclamo.");
+        return;
+      }
+      await ApiClient.registerLaunchClaim(id, { chain, address, message, signature });
+      await this.refreshLaunchDetail();
+    } catch (err) {
+      alert("❌ No se pudo registrar el reclamo: " + String(err?.message || err));
+    }
+  },
+
+  setLaunchTradeSide(side) {
+    this._tradeSide = side;
+    const presets = document.getElementById("launchTradePresets");
+    if (!presets) return;
+    if (side === "buy") {
+      presets.innerHTML = ["1", "5", "20", "100"].map((v) =>
+        `<button class="pill-tab" onclick="window.MarketsEngine.setLaunchPreset('${v}')">${v} USDC</button>`).join("");
+    } else {
+      const held = Number((this._lastPos || {}).tokens || 0);
+      presets.innerHTML = [25, 50, 75, 100].map((p) =>
+        `<button class="pill-tab" onclick="window.MarketsEngine.setLaunchPreset('${p}')">${p}%</button>`).join("");
+    }
+    const submit = document.getElementById("launchTradeSubmit");
+    if (submit) submit.textContent = side === "sell" ? "Vender" : "Comprar";
+    const input = document.getElementById("launchTradeAmount");
+    if (input) input.placeholder = side === "sell" ? "Cantidad de tokens" : "Monto en USDC";
+  },
+
+  setLaunchPreset(v) {
+    const input = document.getElementById("launchTradeAmount");
+    if (!input) return;
+    if (this._tradeSide === "sell") {
+      const held = Number((this._lastPos || {}).tokens || 0);
+      input.value = String(Math.floor(held * Number(v) / 100));
+    } else {
+      input.value = v;
+    }
+    input.dispatchEvent(new Event("input"));
+  },
+
+  /** Debounced live estimate from the server curve (no mutation). */
+  async debouncedLaunchQuote() {
+    clearTimeout(this._quoteTimer);
+    this._quoteTimer = setTimeout(() => this.fetchLaunchQuote(), 350);
+  },
+
+  async fetchLaunchQuote() {
+    const id = this._detailLaunchId;
+    const input = document.getElementById("launchTradeAmount");
+    const line = document.getElementById("launchQuoteLine");
+    if (!id || !input || !line) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    if (!raw || Number(raw) <= 0) {
+      line.textContent = "Introduce un monto para ver la estimación de la curva.";
+      return;
+    }
+    try {
+      if (this._tradeSide === "buy") {
+        const micro = BigInt(Math.round(Number(raw) * 1e6));
+        if (micro <= 0n) throw new Error("monto inválido");
+        const q = await ApiClient.quoteLaunch(id, "buy", micro.toString());
+        const tokens = Number(q.out);
+        line.textContent = tokens > 0
+          ? `≈ ${tokens.toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens por ${raw} USDC`
+          : "Monto demasiado pequeño para la curva (mínimo 0.1 USDC)";
+      } else {
+        const tokens = BigInt(Math.round(Number(raw)));
+        if (tokens <= 0n) throw new Error("cantidad inválida");
+        const q = await ApiClient.quoteLaunch(id, "sell", tokens.toString());
+        const usdc = Number(q.out) / 1e6;
+        line.textContent = usdc > 0
+          ? `≈ ${usdc.toFixed(2)} USDC por ${tokens.toLocaleString("en-US")} tokens`
+          : "Cantidad demasiado pequeña";
+      }
+    } catch (err) {
+      line.textContent = "Sin estimación: " + String(err?.message || err);
+    }
+  },
+
+  async submitLaunchTrade() {
+    const id = this._detailLaunchId;
+    const input = document.getElementById("launchTradeAmount");
+    if (!id || !input) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    const btn = document.getElementById("launchTradeSubmit");
+    if (!raw || !(Number(raw) > 0)) {
+      alert("Introduce un monto válido");
+      return;
+    }
+    btn.disabled = true;
+    try {
+      if (this._tradeSide === "buy") {
+        const micro = BigInt(Math.round(Number(raw) * 1e6));
+        await ApiClient.buyLaunchTokens(id, micro.toString());
+      } else {
+        await ApiClient.sellLaunchTokens(id, BigInt(Math.round(Number(raw))).toString());
+      }
+      closeLaunchModals();
       this.loadLaunches();
     } catch (err) {
       alert("❌ " + String(err?.message || err));
+    } finally {
+      btn.disabled = false;
     }
+  },
+
+  closeLaunch() {
+    closeLaunchModals();
+  },
+
+  /** Old inline actions kept working from cards. */
+  async promptBuy(launchId, symbol) {
+    this.openLaunch(launchId);
   },
 
   async promptSell(launchId, symbol) {
-    if (!ApiClient.isAuthenticated()) {
-      alert("Conecta tu wallet primero");
+    this._tradeSide = "sell";
+    this.openLaunch(launchId);
+  },
+
+  /* ══════════ LAUNCHLAB (Raydium, real on-chain curve, self-custody) ══════════ */
+
+  setLaunchLabTab(tab) {
+    this.subTab = tab;
+    this.renderShell();
+    if (tab === "launchlab") this.loadLaunchLab();
+    else if (tab === "prediction") this.loadPrediction();
+    else this.loadLaunches();
+  },
+
+  async loadLaunchLab() {
+    const el = document.getElementById("marketsList");
+    if (el) el.innerHTML = `<p style="color:var(--text-tertiary); font-size:12.5px; padding:20px 0">Cargando launches on-chain…</p>`;
+    try {
+      const data = await ApiClient.listLaunchLabLaunches(50);
+      this._launchlabList = data.launches || [];
+      this.renderLaunchLab();
+    } catch (err) {
+      this.renderError(String(err?.message || err), () => this.loadLaunchLab());
+    }
+  },
+
+  renderLaunchLab() {
+    const el = document.getElementById("marketsList");
+    if (!el) return;
+    const items = this._launchlabList || [];
+    if (!items.length) {
+      el.innerHTML = `
+        <div style="text-align:center; padding:48px 20px; border:1px dashed var(--border-subtle); border-radius:var(--radius-md)">
+          <p style="font-size:26px; margin-bottom:8px">🧪</p>
+          <p style="color:var(--text-secondary); font-size:13px; margin-bottom:6px">Aún no hay launches LaunchLab en la plataforma</p>
+          <p style="color:var(--text-tertiary); font-size:11.5px; margin-bottom:16px">Curva REAL en el programa de Raydium: el estado vive on-chain y los fondos salen de TU wallet, nunca del servidor.</p>
+          <button class="btn btn-primary btn-sm" onclick="window.MarketsEngine.promptLaunchLabCreate()">🧪 Crear token on-chain</button>
+        </div>`;
       return;
     }
-    const amt = prompt(`Vender ${symbol} — cantidad de tokens (enteros):`);
-    if (!amt) return;
-    const tokenNum = Number(amt);
-    if (!Number.isInteger(tokenNum) || tokenNum <= 0) {
-      alert("❌ Introduce una cantidad entera de tokens");
+    el.innerHTML = items.map((l) => `
+      <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:10px; cursor:pointer" onclick="window.MarketsEngine.openLaunchLab('${safeAttr(l.mintA)}')">
+        <div style="display:flex; gap:12px; align-items:center">
+          ${TokenMeta.logoHtml(l.symbol, { size: 42, round: false })}
+          <div style="flex:1; min-width:0">
+            <p style="font-size:13.5px; font-weight:700; color:var(--text-primary)">${escapeHtml(l.name)} <span style="color:var(--text-tertiary); font-weight:400">\$${escapeHtml(l.symbol)}</span></p>
+            <div style="display:flex; gap:10px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap">
+              <span title="${escapeHtml(l.mintA)}" style="font-family:monospace">${shortAddr(l.mintA)}</span>
+              <span>⛓ Raydium LaunchLab</span>
+              <span title="${escapeHtml(l.confirmedSignature || "")}">✅ confirmado${l.confirmedAt ? " " + new Date(l.confirmedAt * 1000).toLocaleDateString("es") : ""}</span>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.MarketsEngine.openLaunchLab('${safeAttr(l.mintA)}')">Operar</button>
+        </div>
+      </div>`).join("");
+  },
+
+  /** On-chain detail sheet: live curve state + self-custody trade panel. */
+  async openLaunchLab(mintA) {
+    closeLaunchModals();
+    const modal = document.getElementById("launchDetailModal");
+    document.getElementById("launchDetailBody").innerHTML = `<p style="color:var(--text-tertiary); font-size:12.5px; padding:8px 0">Cargando estado on-chain…</p>`;
+    modal.classList.add("open");
+    this._labMint = mintA;
+    await this.refreshLaunchLab();
+  },
+
+  async refreshLaunchLab() {
+    const mintA = this._labMint;
+    if (!mintA || !document.getElementById("launchDetailModal").classList.contains("open")) return;
+    try {
+      const [data, activity] = await Promise.all([
+        ApiClient.getLaunchLabState(mintA),
+        ApiClient.isAuthenticated()
+          ? ApiClient.getLaunchLabActivity(mintA, 10).catch(() => ({ activity: [] }))
+          : Promise.resolve({ activity: [] }),
+      ]);
+      if (this._labMint !== mintA) return;
+      this._labState = { ...data.state, ...(this._launchlabList || []).find(l => l.mintA === mintA) };
+      this._labActivity = activity.activity || [];
+      if (!this._labBusy && document.activeElement?.id !== "labAmount") this.renderLaunchLabDetail();
+      if (this._labTimer) clearInterval(this._labTimer);
+      this._labTimer = setInterval(() => this.refreshLaunchLab(), 8000);
+    } catch (err) {
+      document.getElementById("launchDetailBody").innerHTML =
+        `<p style="color:var(--accent-red, #ff5a5f); font-size:12px">❌ ${escapeHtml(String(err?.message || err))}</p>`;
+    }
+  },
+
+  renderLaunchLabDetail() {
+    const s = this._labState || {};
+    const price = Number(s.priceQuotePerBase || 0);
+    const progress = Math.min(100, Number(s.progressPct || 0));
+    const sol = (base) => (Number(base || 0) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 3 });
+    const sold = Number(s.soldBase || 0) / Math.pow(10, s.mintDecimalsA ?? 6);
+    const open = s.curveOpen === true;
+    const body = document.getElementById("launchDetailBody");
+    body.innerHTML = `
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:14px">
+        ${TokenMeta.logoHtml(s.quoteSymbol === "SOL" ? "SOL" : "LL", { size: 46, round: false })}
+        <div style="flex:1; min-width:0">
+          <p style="font-size:15px; font-weight:700; color:var(--text-primary)">${escapeHtml(s.symbol || "?")} <span style="color:var(--text-tertiary); font-weight:400">${escapeHtml(s.name || "")}</span></p>
+          <div style="display:flex; gap:10px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap">
+            <a href="https://solscan.io/account/${encodeURIComponent(s.poolId || "")}" target="_blank" rel="noopener noreferrer" style="font-family:monospace">pool ${shortAddr(s.poolId)}</a>
+            <span>📊 ${price > 0 ? price.toPrecision(4) : "0"} ${escapeHtml(s.quoteSymbol || "SOL")}</span>
+            <span>${escapeHtml(s.status || "?")}</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-tertiary); margin-bottom:4px">
+        <span>💰 ${sol(s.raisedQuote)} ${escapeHtml(s.quoteSymbol || "SOL")} recaudado</span><span>meta ${sol(s.graduationTargetQuote)}</span>
+      </div>
+      <div style="height:5px; background:var(--bg-canvas); border-radius:3px; overflow:hidden; margin-bottom:6px">
+        <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, var(--accent-green), var(--accent-teal, var(--accent-green)))"></div>
+      </div>
+      <p style="font-size:9.5px; color:var(--text-tertiary); margin-bottom:14px">Vendidos ${sold.toLocaleString("en-US", { maximumFractionDigits: 0 })} de ${Number(s.totalSellBase || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} · al completar, Raydium migra el pool a ${escapeHtml(s.migrateType || "cpmm").toUpperCase()} automáticamente.</p>
+      ${open ? `
+      <div style="display:flex; gap:8px; margin-bottom:10px">
+        <button class="pill-tab ${this._labSide !== "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setLabSide('buy')">Comprar (${escapeHtml(s.quoteSymbol || "SOL")})</button>
+        <button class="pill-tab ${this._labSide === "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setLabSide('sell')">Vender</button>
+      </div>
+      <div id="labPresets" style="display:flex; gap:6px; margin-bottom:8px"></div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+        <input id="labAmount" type="text" inputmode="decimal" placeholder="${this._labSide === "sell" ? "Cantidad de tokens" : "Monto en " + (s.quoteSymbol || "SOL")}" style="flex:1; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 12px; color:var(--text-primary); font-size:13px" oninput="window.MarketsEngine.debouncedLabQuote()">
+        <button class="btn btn-primary btn-sm" id="labSubmit" onclick="window.MarketsEngine.submitLabTrade()">${this._labSide === "sell" ? "Vender" : "Comprar"}</button>
+      </div>
+      <p id="labQuoteLine" style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:10px">Introduce un monto para ver la estimación de la curva real.</p>
+      <p style="font-size:10px; color:var(--accent-green); background:var(--bg-canvas); border-radius:6px; padding:6px 10px; margin-bottom:4px">🔐 Self-custody: la tx se construye aquí, la firma TU wallet en Phantom y se envía directo a Solana. El servidor nunca custodia fondos ni claves.</p>`
+      : `<p style="font-size:11.5px; color:var(--text-tertiary)">La curva ya no acepta operaciones (estado: ${escapeHtml(s.status || "?")}).${s.migrateType ? " El mercado secundario vive en el pool " + escapeHtml(s.migrateType.toUpperCase()) + " de Raydium." : ""}</p>`}
+      ${this.renderLabActivity()}
+      <p style="font-size:9.5px; color:var(--text-tertiary); opacity:0.7">Estado leído del programa LaunchLab (${shortAddr(s.programId)}) vía RPC · se actualiza cada 8s.</p>`;
+    this._labSide = this._labSide || "buy";
+    this.setLabSide(this._labSide);
+  },
+
+  /** The signed-in user's own LaunchLab fills on this mint (server ledger, on-chain is truth). */
+  renderLabActivity() {
+    const items = this._labActivity || [];
+    if (!items.length) return "";
+    const decimals = (this._labState || {}).mintDecimalsA ?? 6;
+    const rows = items.map((t) => {
+      const time = t.ts ? new Date(t.ts * 1000).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" }) : "";
+      const color = t.side === "buy" ? "var(--accent-green)" : "var(--accent-red, #ff5a5f)";
+      const amountIn = t.side === "buy" ? (Number(t.amountIn) / 1e9).toFixed(3) + " SOL" : (Number(t.amountIn) / Math.pow(10, decimals)).toLocaleString("en-US", { maximumFractionDigits: 2 }) + " tokens";
+      return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:var(--text-secondary); padding:4px 0; border-bottom:1px solid var(--border-subtle)">
+        <span><b style="color:${color}">${t.side === "buy" ? "▲ compra" : "▼ venta"}</b> ${escapeHtml(amountIn)}</span>
+        <a href="https://solscan.io/tx/${encodeURIComponent(t.signature)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-tertiary); font-family:monospace">${shortAddr(t.signature)} ${time}</a>
+      </div>`;
+    }).join("");
+    return `<div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px">
+      <p style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px">Tus operaciones en esta curva</p>
+      ${rows}
+    </div>`;
+  },
+
+  setLabSide(side) {
+    this._labSide = side;
+    const presets = document.getElementById("labPresets");
+    if (!presets) return;
+    const sym = (this._labState || {}).quoteSymbol || "SOL";
+    if (side === "buy") {
+      presets.innerHTML = ["0.05", "0.1", "0.5", "1"].map((v) =>
+        `<button class="pill-tab" onclick="window.MarketsEngine.setLabPreset('${v}')">${v} ${sym}</button>`).join("");
+    } else {
+      presets.innerHTML = `<span style="font-size:10px; color:var(--text-tertiary); align-self:center">Escribe la cantidad exacta de tokens a vender (mira tu balance en Phantom)</span>`;
+    }
+    const submit = document.getElementById("labSubmit");
+    if (submit) submit.textContent = side === "sell" ? "Vender" : "Comprar";
+    const input = document.getElementById("labAmount");
+    if (input) input.placeholder = side === "sell" ? "Cantidad de tokens" : "Monto en " + sym;
+  },
+
+  setLabPreset(v) {
+    const input = document.getElementById("labAmount");
+    if (!input) return;
+    input.value = v;
+    input.dispatchEvent(new Event("input"));
+  },
+
+  debouncedLabQuote() {
+    clearTimeout(this._labQuoteTimer);
+    this._labQuoteTimer = setTimeout(() => this.fetchLabQuote(), 350);
+  },
+
+  async fetchLabQuote() {
+    const mintA = this._labMint;
+    const input = document.getElementById("labAmount");
+    const line = document.getElementById("labQuoteLine");
+    if (!mintA || !input || !line) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    if (!raw || !(Number(raw) > 0)) {
+      line.textContent = "Introduce un monto para ver la estimación de la curva real.";
       return;
     }
     try {
-      const res = await ApiClient.sellLaunchTokens(launchId, amt.trim());
-      const usdcOut = res.result?.usdcAmount ? (Number(res.result.usdcAmount) / 1e6).toFixed(2) : "?";
-      alert(`✅ Vendido: +${usdcOut} USDC`);
-      this.loadLaunches();
+      const amountIn = parseLabUnits(raw, this._labSide === "buy" ? 9 : (this._labState || {}).mintDecimalsA ?? 6);
+      const { quote } = await ApiClient.quoteLaunchLab(mintA, { side: this._labSide, amount: amountIn.toString(), slippageBps: this._labSlippageBps || 100 });
+      const out = this._labSide === "buy"
+        ? `${(Number(quote.amountOut) / Math.pow(10, (this._labState || {}).mintDecimalsA ?? 6)).toLocaleString("en-US", { maximumFractionDigits: 2 })} tokens`
+        : `${(Number(quote.amountOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${this._labState?.quoteSymbol || "SOL"}`;
+      const min = this._labSide === "buy"
+        ? `${(Number(quote.minOut) / Math.pow(10, (this._labState || {}).mintDecimalsA ?? 6)).toLocaleString("en-US", { maximumFractionDigits: 2 })} tokens`
+        : `${(Number(quote.minOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${this._labState?.quoteSymbol || "SOL"}`;
+      line.innerHTML = `≈ Recibes <b style="color:var(--text-primary)">${out}</b> · mínimo garantizado ${min} (slippage ${(this._labSlippageBps || 100) / 100}%)${quote.totalFeeQuote ? ` · fee curva ${(Number(quote.totalFeeQuote) / 1e9).toFixed(4)} ${this._labState?.quoteSymbol || "SOL"}` : ""}`;
+    } catch (err) {
+      line.textContent = "Sin estimación: " + String(err?.message || err);
+    }
+  },
+
+  /** Prepare → sign in Phantom → submit → on-chain confirm. */
+  async submitLabTrade() {
+    const mintA = this._labMint;
+    const input = document.getElementById("labAmount");
+    if (!mintA || !input) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    if (!raw || !(Number(raw) > 0)) {
+      alert("Introduce un monto válido");
+      return;
+    }
+    const side = this._labSide === "sell" ? "sell" : "buy";
+    const btn = document.getElementById("labSubmit");
+    btn.disabled = true;
+    this._labBusy = true;
+    try {
+      const wallet = await connectPhantomWallet();
+      const amountIn = parseLabUnits(raw, side === "buy" ? 9 : (this._labState || {}).mintDecimalsA ?? 6).toString();
+      const prepared = await ApiClient.prepareLaunchLabSwap(mintA, { wallet, side, amountIn, slippageBps: this._labSlippageBps || 100 });
+      const q = prepared.quote;
+      const outHuman = side === "buy"
+        ? `${(Number(q.amountOut) / Math.pow(10, (this._labState || {}).mintDecimalsA ?? 6)).toLocaleString("en-US", { maximumFractionDigits: 2 })} tokens`
+        : `${(Number(q.amountOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${this._labState?.quoteSymbol || "SOL"}`;
+      const minHuman = side === "buy"
+        ? `${(Number(q.minOut) / Math.pow(10, (this._labState || {}).mintDecimalsA ?? 6)).toLocaleString("en-US", { maximumFractionDigits: 2 })} tokens`
+        : `${(Number(q.minOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${this._labState?.quoteSymbol || "SOL"}`;
+      const ok = confirm(`${side === "buy" ? "Comprar" : "Vender"} en la curva LaunchLab\n→ Recibes ≈ ${outHuman}\nMínimo garantizado: ${minHuman}\n\nSe abrirá Phantom para firmar. ¿Continuar?`);
+      if (!ok) return;
+      const signedTx = await signTxWithPhantom(prepared.serialized);
+      localStorage.setItem("inusaur.launchlab.pending", prepared.sessionId);
+      const result = await ApiClient.submitLaunchLabSwap(mintA, { wallet, sessionId: prepared.sessionId, signedTx });
+      localStorage.removeItem("inusaur.launchlab.pending");
+      alert(`✅ Confirmado on-chain:\n${result.signature}`);
+      this._labBusy = false;
+      await this.refreshLaunchLab();
     } catch (err) {
       alert("❌ " + String(err?.message || err));
+    } finally {
+      this._labBusy = false;
+      btn.disabled = false;
+    }
+  },
+
+  async recoverLaunchLab() {
+    const id = localStorage.getItem("inusaur.launchlab.pending");
+    if (!id) return alert("No tienes operaciones pendientes en este navegador.");
+    try {
+      const result = await ApiClient.request(`/api/launchlab/sessions/${encodeURIComponent(id)}`);
+      if (["confirmed", "failed", "not_broadcast"].includes(result.status)) localStorage.removeItem("inusaur.launchlab.pending");
+      alert(`Estado: ${result.status}${result.signature ? "\nhttps://solscan.io/tx/" + result.signature : ""}`);
+      if (result.status === "confirmed") this.loadLaunchLab();
+    } catch (err) { alert(String(err?.message || err)); }
+  },
+
+  /** Create-token flow: mint keypair generated + kept in the BROWSER. */
+  async promptLaunchLabCreate() {
+    document.getElementById("raydiumCreateDialog")?.remove();
+    const dialog = document.createElement("dialog");
+    dialog.id = "raydiumCreateDialog";
+    dialog.className = "raydium-create";
+    dialog.innerHTML = `<form id="raydiumCreateForm">
+      <div class="raydium-eyebrow">INUSAUR × RAYDIUM / SOLANA</div>
+      <h2>Tu próximo lanzamiento.</h2>
+      <p>Token con oferta fija de 1.000 millones. Curva en SOL y migración a Raydium CPMM al alcanzar 85 SOL.</p>
+      <label>Nombre<input name="name" maxlength="32" required placeholder="Nombre del proyecto"></label>
+      <label>Símbolo<input name="symbol" maxlength="10" pattern="[A-Za-z0-9]{1,10}" required placeholder="TOKEN"></label>
+      <label>URL de metadatos<input name="uri" type="url" maxlength="200" pattern="https://.*" required placeholder="https://…/metadata.json"></label>
+      <small>JSON público con name, symbol e image. La imagen debe estar alojada antes de crear el token.</small>
+      <label>Compra inicial en SOL<input name="buy" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,9})?" value="0" required></label>
+      <small>0 para crear sin comprar. Mínimo de compra: 0,01 SOL. Slippage inicial: 1%. Phantom mostrará la transacción y los costes de red.</small>
+      <p id="raydiumCreateError" role="status"></p>
+      <div class="raydium-actions"><button type="button" class="btn" onclick="document.getElementById('raydiumCreateDialog').close()">Cerrar</button><button class="btn btn-primary" type="submit">Revisar en Phantom</button></div>
+    </form>`;
+    document.body.appendChild(dialog);
+    dialog.querySelector("form").addEventListener("submit", event => { event.preventDefault(); this.submitLaunchLabCreate(event.target); });
+    dialog.showModal();
+  },
+
+  async submitLaunchLabCreate(form) {
+    if (!ApiClient.isAuthenticated()) {
+      document.getElementById("raydiumCreateError").textContent = "Inicia sesión con tu wallet antes de crear el token.";
+      return;
+    }
+    const values = new FormData(form);
+    const name = String(values.get("name"));
+    const symbol = String(values.get("symbol"));
+    const uri = String(values.get("uri"));
+    const buySol = String(values.get("buy"));
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      const buyAmountLamports = parseLabUnits(buySol, 9).toString();
+      const wallet = await connectPhantomWallet();
+      // Mint keypair is generated in the browser via a throwaway web3 import:
+      // only its PUBLIC key goes to the server. The private key never leaves.
+      const { Keypair, Transaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
+      const { ed25519 } = await import("https://esm.sh/@noble/curves@1.9.7/ed25519");
+      const mintKeypair = Keypair.generate();
+      const prepared = await ApiClient.prepareLaunchLabCreate({
+        wallet, mintPubkey: mintKeypair.publicKey.toString(), name: name.trim(), symbol: symbol.trim().toUpperCase(), uri: uri.trim(), buyAmountLamports,
+      });
+      // The browser-held mint keypair signs the EXACT prepared message locally.
+      // Some wallets replace the signature list when signing, so afterwards we
+      // reconcile: the mint signature is re-attached if the provider dropped it.
+      const tx = Transaction.from(Uint8Array.from(atob(prepared.serialized), (c) => c.charCodeAt(0)));
+      const messageBytes = new Uint8Array(tx.serializeMessage());
+      const mintSignature = tx.serializeMessage().constructor.from(ed25519.sign(messageBytes, mintKeypair.secretKey.slice(0, 32)));
+      tx.addSignature(mintKeypair.publicKey, mintSignature);
+      const userSigned = await window.solana.signTransaction(tx); // creator signs as fee payer
+      if (userSigned?.signatures) {
+        const idx = userSigned.signatures.findIndex((s) => s.publicKey.equals(mintKeypair.publicKey));
+        if (idx >= 0 && !userSigned.signatures[idx].signature) {
+          userSigned.signatures[idx].signature = mintSignature; // provider dropped it; restore
+        }
+      }
+      if (!userSigned.serializeMessage().equals(tx.serializeMessage())) throw new Error("La wallet modificó la transacción preparada");
+      const bytes = userSigned.serialize({ requireAllSignatures: true, verifySignatures: true });
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      localStorage.setItem("inusaur.launchlab.pending", prepared.sessionId);
+      const result = await ApiClient.confirmLaunchLabCreate({ wallet, sessionId: prepared.sessionId, signedTx: btoa(binary) });
+      localStorage.removeItem("inusaur.launchlab.pending");
+      document.getElementById("raydiumCreateDialog")?.close();
+      alert(`🚀 Token creado on-chain:\nMint: ${result.mint}\nTx: ${result.signature}`);
+      this.loadLaunchLab();
+    } catch (err) {
+      document.getElementById("raydiumCreateError").textContent = String(err?.message || err);
+    } finally {
+      button.disabled = false;
     }
   },
 
@@ -238,22 +924,17 @@ export const MarketsEngine = {
     if (!this.container) return;
     this.renderShell();
     if (this.subTab === "prediction") this.loadPrediction();
+    else if (this.subTab === "launchlab") this.loadLaunchLab();
     else this.loadLaunches();
   },
 
   setSubTab(tab, btn) {
-    this.subTab = tab;
-    document.querySelectorAll("#view-markets .markets-subtab").forEach((b) =>
-      b.classList.toggle("active", b === btn || b.getAttribute("data-subtab") === tab)
-    );
-    this.renderShell();
-    if (tab === "prediction") this.loadPrediction();
-    else this.loadLaunches();
+    this.setLaunchLabTab(tab, btn);
   },
 
   /** Jump to the launchpad from anywhere (e.g. Discover search results). */
   viewLaunchpad() {
-    this.subTab = "launchpad";
+    this.subTab = "launchlab";
     if (window.App?.switchView) window.App.switchView("markets");
     this.render();
   },
@@ -262,7 +943,7 @@ export const MarketsEngine = {
     const subtabs = `
       <div class="pill-tabs-bar" style="margin-bottom:16px">
         <button class="pill-tab markets-subtab ${this.subTab === "prediction" ? "active" : ""}" onclick="window.MarketsEngine.setSubTab('prediction', this)">🎯 Predicción</button>
-        <button class="pill-tab markets-subtab ${this.subTab === "launchpad" ? "active" : ""}" onclick="window.MarketsEngine.setSubTab('launchpad', this)">🚀 Launchpad</button>
+        <button class="pill-tab markets-subtab ${this.subTab === "launchlab" ? "active" : ""}" onclick="window.MarketsEngine.setSubTab('launchlab', this)">Launchpad · Raydium</button>
       </div>`;
     if (this.subTab === "prediction") {
       this.container.innerHTML = `
@@ -278,6 +959,16 @@ export const MarketsEngine = {
           <button class="pill-tab ${this.sort === "new" ? "active" : ""}" onclick="window.MarketsEngine.setSort('new')">🆕 Nuevos</button>
         </div>
         <div id="marketsList"></div>`;
+    } else if (this.subTab === "launchlab") {
+      this.container.innerHTML = `
+        ${subtabs}
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <div><div class="raydium-eyebrow">INUSAUR × RAYDIUM</div><h2>De idea a mercado.</h2><p style="font-size:12px; color:var(--text-tertiary); margin-top:8px">Lanza en Solana. Opera la curva. Firma desde tu wallet.</p></div>
+          <button class="btn btn-primary btn-sm" onclick="window.MarketsEngine.promptLaunchLabCreate()">+ Crear on-chain</button>
+        </div>
+        <button class="btn btn-sm" style="margin-bottom:16px" onclick="window.MarketsEngine.recoverLaunchLab()">Consultar operación pendiente</button>
+        <form style="display:flex;gap:8px;margin-bottom:20px" onsubmit="event.preventDefault();window.MarketsEngine.openLaunchLab(this.elements.mint.value.trim())"><input name="mint" aria-label="Dirección del token LaunchLab" placeholder="Explorar un token LaunchLab por su dirección…" pattern="[1-9A-HJ-NP-Za-km-z]{32,44}" required style="min-width:0;flex:1;background:var(--bg-canvas);color:var(--text-primary);border:1px solid var(--border-subtle);border-radius:8px;padding:10px"><button class="btn btn-sm" type="submit">Explorar</button></form>
+        <div id="marketsList"></div>`;
     } else {
       this.container.innerHTML = `
         ${subtabs}
@@ -285,10 +976,16 @@ export const MarketsEngine = {
           <div style="display:flex; gap:8px">
             <button class="pill-tab ${this.launchSort === "latest" ? "active" : ""}" onclick="window.MarketsEngine.setLaunchSort('latest')">Recientes</button>
             <button class="pill-tab ${this.launchSort === "raised" ? "active" : ""}" onclick="window.MarketsEngine.setLaunchSort('raised')">💰 Más recaudado</button>
+            <button class="pill-tab ${this.launchSort === "active" ? "active" : ""}" onclick="window.MarketsEngine.setLaunchSort('active')">⏳ En curva</button>
           </div>
           <button class="btn btn-primary btn-sm" onclick="window.MarketsEngine.promptCreateLaunch()">+ Crear token</button>
         </div>
-        <div id="marketsList"></div>`;
+        <p style="font-size:10px; color:var(--text-tertiary); margin-bottom:12px">⚠️ Curva de bonding simulada en el servidor: sin token on-chain ni custodia todavía.</p>
+        <div id="marketsList"></div>
+        <div style="margin-top:16px">
+          <p style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:8px">Actividad reciente</p>
+          <div id="launchActivity" style="display:flex; flex-direction:column; gap:6px"><p style="font-size:10.5px; color:var(--text-tertiary)">Cargando…</p></div>
+        </div>`;
     }
   },
 
@@ -300,6 +997,30 @@ export const MarketsEngine = {
   renderLaunchpadLoading() {
     const el = document.getElementById("marketsList");
     if (el) el.innerHTML = `<p style="color:var(--text-tertiary); font-size:12.5px; padding:20px 0">Cargando lanzamientos…</p>`;
+    this.renderLaunchActivity([]);
+    ApiClient.getLaunchActivity(12)
+      .then((d) => this.renderLaunchActivity(d.activity || []))
+      .catch(() => this.renderLaunchActivity([]));
+  },
+
+  renderLaunchActivity(items) {
+    const el = document.getElementById("launchActivity");
+    if (!el) return;
+    if (!items.length) {
+      el.innerHTML = `<p style="font-size:10.5px; color:var(--text-tertiary)">Sin operaciones en la curva todavía.</p>`;
+      return;
+    }
+    el.innerHTML = items.map((t) => {
+      const usdc = Number(t.usdcAmount || 0) / 1e6;
+      const tokens = Number(t.tokenAmount || 0);
+      const time = t.ts ? new Date(t.ts * 1000).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" }) : "";
+      const color = t.side === "buy" ? "var(--accent-green)" : "var(--accent-red, #ff5a5f)";
+      const who = t.traderName ? escapeHtml(t.traderName) : "anon";
+      return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:10.5px; color:var(--text-secondary); background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:8px; padding:6px 10px">
+        <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"><b style="color:var(--text-primary)">${who}</b> ${t.side === "buy" ? "compró" : "vendió"} <b style="color:var(--text-primary)">${escapeHtml(t.symbol)}</b></span>
+        <span style="flex-shrink:0; margin-left:8px"><b style="color:${color}">${t.side === "buy" ? "+" : "−"}${fmtUsd(usdc)}</b> <span style="color:var(--text-tertiary)">· ${tokens.toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens · ${time}</span></span>
+      </div>`;
+    }).join("");
   },
 
   renderError(msg, retry) {
@@ -374,7 +1095,7 @@ export const MarketsEngine = {
         const price = Number(l.currentPriceUsdc || 0) / 1e6;
         const progress = Math.min(100, Number(l.progressPct ?? 0));
         return `
-        <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:10px">
+        <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:10px; cursor:pointer" onclick="window.MarketsEngine.openLaunch(${Number(l.id)})">
           <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:10px">
             ${TokenMeta.logoHtml(l.symbol, { size: 42, round: false, imageUrl: l.imageUrl })}
             <div style="flex:1; min-width:0">
@@ -382,9 +1103,9 @@ export const MarketsEngine = {
               <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap">
                 <span>⛓ ${escapeHtml(l.chain)}</span>
                 <span>📊 $${price > 0 ? price.toPrecision(3) : "0"}</span>
-                <span>💰 MC ${fmtUsd(mcap)}</span>
+                <span>💰 FDV ${fmtUsd(mcap)}</span>
                 <span>👥 ${l.buyersCount ?? l.buyers_count ?? 0}</span>
-                ${l.status === "graduated" ? '<span title="Graduado a DEX">🎓</span>' : ""}
+                ${l.status === "graduated" ? '<span title="Graduado">🎓</span>' : ""}
                 ${l.twitterUrl ? `<a href="${escapeHtml(l.twitterUrl)}" target="_blank" rel="noopener noreferrer" title="X / Twitter" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">𝕏</a>` : ""}
                 ${l.telegramUrl ? `<a href="${escapeHtml(l.telegramUrl)}" target="_blank" rel="noopener noreferrer" title="Telegram" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">✈</a>` : ""}
                 ${l.websiteUrl ? `<a href="${escapeHtml(l.websiteUrl)}" target="_blank" rel="noopener noreferrer" title="Website" onclick="event.stopPropagation()" style="color:var(--text-tertiary); text-decoration:none">🌐</a>` : ""}
@@ -400,8 +1121,8 @@ export const MarketsEngine = {
             <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, var(--accent-green), var(--accent-teal, var(--accent-green)))"></div>
           </div>
           <div style="display:flex; gap:8px">
-            <button class="btn btn-primary btn-sm" style="flex:1" onclick="window.MarketsEngine.promptBuy(${Number(l.id)}, '${safeAttr(l.symbol)}')">Comprar</button>
-            <button class="btn btn-sm" style="flex:1; background:var(--bg-canvas); border:1px solid var(--border-subtle); color:var(--text-secondary)" onclick="window.MarketsEngine.promptSell(${Number(l.id)}, '${safeAttr(l.symbol)}')">Vender</button>
+            <button class="btn btn-primary btn-sm" style="flex:1" onclick="event.stopPropagation(); window.MarketsEngine.openLaunch(${Number(l.id)})">Ficha y trading</button>
+            <button class="btn btn-sm" style="flex:1; background:var(--bg-canvas); border:1px solid var(--border-subtle); color:var(--text-secondary)" onclick="event.stopPropagation(); window.MarketsEngine.promptSell(${Number(l.id)}, '${safeAttr(l.symbol)}')">Vender</button>
           </div>
         </div>`;
       })
@@ -412,4 +1133,18 @@ export const MarketsEngine = {
 // Expose for inline onclick handlers
 if (typeof window !== "undefined") {
   window.MarketsEngine = MarketsEngine;
+}
+
+/** Close every launchpad modal and stop its detail refresh timer. */
+function closeLaunchModals() {
+  document.getElementById("launchDetailModal")?.classList.remove("open");
+  document.getElementById("launchCreateModal")?.classList.remove("open");
+  if (MarketsEngine._detailTimer) {
+    clearInterval(MarketsEngine._detailTimer);
+    MarketsEngine._detailTimer = null;
+  }
+  if (MarketsEngine._labTimer) {
+    clearInterval(MarketsEngine._labTimer);
+    MarketsEngine._labTimer = null;
+  }
 }

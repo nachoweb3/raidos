@@ -221,14 +221,12 @@ export const CHAINS: Record<string, ChainConfig> = {
   ethereum: ETHEREUM,
   base: BASE,
   bsc: BSC,
-  arbitrum: ARBITRUM,
-  polygon: POLYGON,
   robinhood: ROBINHOOD,
-  monad: MONAD,
   arc: ARC,
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS) as (keyof typeof CHAINS)[];
+export const DISABLED_CHAIN_IDS = ["polygon", "polygon_pos", "arbitrum", "monad"];
 export const EVM_CHAINS = CHAIN_IDS.filter((k) => CHAINS[k]?.evm);
 export const ALL_CHAIN_IDS = CHAIN_IDS.map((k) => CHAINS[k]!.chainId);
 

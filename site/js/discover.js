@@ -1,6 +1,6 @@
 /**
  * 🧭 DISCOVER ENGINE — Multi-Chain Market Radar (real data layer)
- * Real-time scanning across Solana, Base, Ethereum, BNB Chain, Arbitrum, Polygon, Monad, Arc.
+ * Market discovery across enabled networks.
  * Categories: Trending, Gainers, Losers, New, Volume, Smart Money, Memecoins, AI, RWA, Perps, Watchlist.
  * Advanced filters: MCap, volume, txns, liquidity, socials, sector + quick chips
  * (Launchpad, Graduated, Most holded, Hot narratives) and multi-column sorting.
@@ -39,7 +39,6 @@ export const PriceFeed = {
     PENDLE: "pendle-finance",
     PEPE: "pepe",
     BONK: "bonk",
-    MON: "monad",
     AERO: "aerodrome",
     BNB: "binancecoin",
     GMX: "gmx",
@@ -162,10 +161,14 @@ export const DiscoverEngine = {
   },
 
   async loadTokens(page = 1) {
+    const chain = this.activeChain;
+    const seq = this._marketSeq = (this._marketSeq || 0) + 1;
+    const chains = chain === "all" ? [] : [chain];
     const results = await Promise.allSettled([
-      DexFeed.getTrending({ kind: "trending", page }),
-      DexFeed.getTrending({ kind: "new", page }),
+      DexFeed.getTrending({ kind: "trending", page, chains }),
+      DexFeed.getTrending({ kind: "new", page, chains }),
     ]);
+    if (seq !== this._marketSeq || chain !== this.activeChain) return;
     const merged = new Map((page > 1 ? this.tokens : []).map((t) => [t.chain + ":" + t.tokenAddress, t]));
     for (const result of results) {
       if (result.status !== "fulfilled") continue;
@@ -307,7 +310,9 @@ export const DiscoverEngine = {
 
   setChain(chain) {
     this.activeChain = chain;
-    this.render();
+    this.tokens = [];
+    this.setSearch(this.searchQuery);
+    this.loadTokens();
   },
 
   setSearch(query) {
@@ -681,7 +686,7 @@ export const DiscoverEngine = {
             ${scoreBadge}
             <div style="font-family:var(--font-mono); font-weight:700; font-size:13.5px; margin-top:3px; color:#fff">${formattedPrice}</div>
             <div style="font-family:var(--font-mono); font-size:11.5px; color:${isUp ? 'var(--delta-green)' : 'var(--delta-red)'}">
-              ${isUp ? '+' : ''}${t.delta24h.toFixed(2)}%
+              ${t.delta24h == null ? '—' : (isUp ? '+' : '') + t.delta24h.toFixed(2) + '%'}
             </div>
           </div>
 

@@ -15,6 +15,7 @@ import { PremiumEngine } from "./premium.js";
 import { DexFeed } from "./dexfeed.js";
 import { MarketsEngine } from "./markets.js";
 import { TokenMeta } from "./tokens.js";
+import { TerminalView } from "./terminal-view.js";
 
 export const App = {
   currentView: "feed",
@@ -63,6 +64,8 @@ export const App = {
     // 6. Setup Viewport Mobile Fixes
     this.setupMobileViewport();
     this.switchView("trade");
+    window.TerminalView = TerminalView;
+    TerminalView.init();
   },
 
   /** Populate feed sidebars: real top movers (CoinGecko) + real top traders (API). */
@@ -204,13 +207,7 @@ export const App = {
   },
 
   openTradeForToken(symbol, chain, price, tokenAddress) {
-    TradingEngine.setAsset(symbol, chain, price, { tokenAddress: tokenAddress || undefined });
-    this.switchView("trade");
-    // Reflect the selection in the Trenches board when it loads.
-    setTimeout(() => {
-      TrenchesEngine.init();
-      document.getElementById("terminalSymbol")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 100);
+    TerminalView.open(symbol, chain, price, tokenAddress);
   },
 
   /* ── 🔎 Universal token search (header) ─────────────────────────────── */
@@ -231,7 +228,8 @@ export const App = {
     const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     try {
-      const rows = await DexFeed.search(query);
+      const selectedChain = document.getElementById("globalChainSelect")?.value;
+      const rows = await DexFeed.search(query, selectedChain && selectedChain !== "all" ? selectedChain : undefined);
       if (sequence !== this._usSeq) return;
       if (!rows.length) {
         box.innerHTML = '<div style="padding:12px">Sin pares indexados para esta búsqueda.</div>';
@@ -297,11 +295,103 @@ export const App = {
   openWalletModal() {
     const modal = document.getElementById("walletModal");
     if (modal) modal.classList.add("active");
+    // Signed-in users (Google/X/API key) see the linking option: they need a
+    // signature-verified wallet attached to THIS account before trading.
+    const linkBtn = document.getElementById("linkWalletBtn");
+    if (linkBtn) linkBtn.style.display = ApiClient.isAuthenticated() ? "flex" : "none";
   },
 
   closeWalletModal() {
     const modal = document.getElementById("walletModal");
     if (modal) modal.classList.remove("active");
+  },
+
+  // ── Operator panel (admin, self-custody execution controls) ──
+
+  operatorSecret() {
+    return document.getElementById("operatorSecretInput")?.value || "";
+  },
+
+  openOperatorPanel() {
+    const modal = document.getElementById("operatorModal");
+    if (modal) modal.classList.add("active");
+  },
+
+  closeOperatorPanel() {
+    const modal = document.getElementById("operatorModal");
+    if (modal) modal.classList.remove("active");
+  },
+
+  operatorShowError(message) {
+    const errEl = document.getElementById("operatorError");
+    if (errEl) {
+      errEl.textContent = message;
+      errEl.style.display = "block";
+    }
+  },
+
+  operatorResetError() {
+    const errEl = document.getElementById("operatorError");
+    if (errEl) errEl.style.display = "none";
+  },
+
+  async operatorLoad() {
+    this.operatorResetError();
+    try {
+      const status = await ApiClient.getExecutionStatus(this.operatorSecret());
+      const statusEl = document.getElementById("operatorStatus");
+      const controlsEl = document.getElementById("operatorControls");
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.dataset.enabled = status.executionEnabled ? "1" : "0";
+        statusEl.innerHTML = `
+          <div><strong>${status.executionEnabled ? "🟢 Ejecución activa" : "⏸️ Ejecución pausada"}</strong>
+            <span style="color:var(--text-tertiary)">(origen: ${status.source})</span></div>
+          <div>Límite diario por usuario: <strong>${Number(status.limits.dailyLimitUsdc) / 1e6} USDC</strong></div>
+          <div>Sesiones en la ventana: <strong>${status.limits.sessionCount}</strong> · exposición contada: <strong>${Number(status.limits.exposureUsdc) / 1e6} USDC</strong></div>
+          <div>Modo: <strong>${status.mode}</strong></div>`;
+      }
+      if (controlsEl) {
+        controlsEl.style.display = "flex";
+        const btn = document.getElementById("operatorToggleBtn");
+        if (btn) {
+          btn.textContent = status.executionEnabled ? "⏸️ Pausar ejecución" : "▶️ Reanudar ejecución";
+          btn.style.background = status.executionEnabled ? "var(--delta-red)" : "var(--accent-green)";
+        }
+      }
+    } catch (err) {
+      const statusEl = document.getElementById("operatorStatus");
+      const controlsEl = document.getElementById("operatorControls");
+      if (statusEl) statusEl.style.display = "none";
+      if (controlsEl) controlsEl.style.display = "none";
+      this.operatorShowError(err instanceof Error ? err.message : "no se pudo consultar el estado");
+    }
+  },
+
+  async operatorToggle() {
+    this.operatorResetError();
+    const statusEl = document.getElementById("operatorStatus");
+    const enabled = statusEl?.dataset.enabled === "1";
+    try {
+      await ApiClient.setExecutionEnabled(this.operatorSecret(), !enabled);
+      await this.operatorLoad();
+    } catch (err) {
+      this.operatorShowError(err instanceof Error ? err.message : "no se pudo cambiar el estado");
+    }
+  },
+
+  async operatorReconcile() {
+    this.operatorResetError();
+    try {
+      const result = await ApiClient.reconcilePending(this.operatorSecret());
+      const statusEl = document.getElementById("operatorStatus");
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.innerHTML = `<div>Reconciliación: <strong>${result.confirmed} confirmadas</strong>, ${result.pending} pendientes, ${result.failed} fallidas</div>`;
+      }
+    } catch (err) {
+      this.operatorShowError(err instanceof Error ? err.message : "no se pudo reconciliar");
+    }
   },
 
   openAccessCodeModal() {
@@ -322,6 +412,7 @@ export const App = {
   openNewPostModal(prefill) {
     const modal = document.getElementById("newPostModal");
     if (!modal) return;
+    if (TerminalView.dialog?.open) TerminalView.dialog.querySelector(".terminal-content").appendChild(modal);
     const p = prefill ?? {};
     const tokenInput = document.getElementById("thesisToken");
     const entryInput = document.getElementById("thesisEntry");
@@ -348,11 +439,12 @@ export const App = {
     }
     this._thesisPrefill = { ...p, symbol: sym };
     modal.classList.add("active");
+    if (TerminalView.dialog?.open) document.getElementById("thesisText")?.focus();
   },
 
   closeNewPostModal() {
     const modal = document.getElementById("newPostModal");
-    if (modal) modal.classList.remove("active");
+    if (modal) { modal.classList.remove("active"); document.body.appendChild(modal); }
   },
 
   openProfileModal(handle) {
@@ -455,6 +547,44 @@ export const App = {
       }
     } else {
       alert("MetaMask no detectada. Por favor instala la extensión o app de MetaMask.");
+    }
+  },
+
+  /**
+   * Link a signature-verified wallet to the CURRENT account without rotating
+   * the API key or switching identity — required before self-custody trades.
+   * Used by Google/X/API-key sessions; wallet-login users are linked at login.
+   */
+  async linkWalletToAccount() {
+    try {
+      let chain, address, message, signature, nonce;
+      if (window.solana?.isPhantom) {
+        chain = "solana";
+        const resp = await window.solana.connect();
+        address = resp.publicKey.toString();
+        const ch = await ApiClient.getChallenge("solana");
+        const encoded = new TextEncoder().encode(ch.message);
+        const signed = await window.solana.signMessage(encoded, "utf8");
+        message = ch.message;
+        nonce = ch.nonce;
+        signature = Array.from(signed.signature).map((b) => b.toString(16).padStart(2, "0")).join("");
+      } else if (window.ethereum) {
+        chain = "evm";
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        address = accounts[0];
+        const ch = await ApiClient.getChallenge("evm");
+        signature = await window.ethereum.request({ method: "personal_sign", params: [ch.message, address] });
+        message = ch.message;
+        nonce = ch.nonce;
+      } else {
+        alert("No se detectó Phantom ni MetaMask. Instala una wallet para vincular.");
+        return;
+      }
+      await ApiClient.linkWallet({ chain, address, message, signature, nonce });
+      this.closeWalletModal();
+      alert("✅ Wallet vinculada a tu cuenta. Ya puedes operar con ella.");
+    } catch (err) {
+      alert("❌ No se pudo vincular: " + String(err?.message || err));
     }
   },
 

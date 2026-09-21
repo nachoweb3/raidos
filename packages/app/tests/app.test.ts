@@ -45,16 +45,16 @@ describe("wallet crypto", () => {
 });
 
 describe("chain configs", () => {
-  it("has all 9 chains configured", () => {
-    expect(CHAIN_IDS.length).toBe(9);
+  it("has six enabled chains and excludes the three removed networks", () => {
+    expect(CHAIN_IDS.length).toBe(6);
     expect(CHAIN_IDS).toContain("solana");
     expect(CHAIN_IDS).toContain("ethereum");
     expect(CHAIN_IDS).toContain("base");
     expect(CHAIN_IDS).toContain("bsc");
-    expect(CHAIN_IDS).toContain("arbitrum");
-    expect(CHAIN_IDS).toContain("polygon");
+    expect(CHAIN_IDS).not.toContain("arbitrum");
+    expect(CHAIN_IDS).not.toContain("polygon");
     expect(CHAIN_IDS).toContain("robinhood");
-    expect(CHAIN_IDS).toContain("monad");
+    expect(CHAIN_IDS).not.toContain("monad");
     expect(CHAIN_IDS).toContain("arc");
   });
 
@@ -136,6 +136,13 @@ describe("database", () => {
 
     const launch = db.getLaunch(id);
     expect(launch.symbol).toBe("TEST");
+
+    db.setLaunchFactoryStatus(id, "planned", "{\"plan\":1}", "mint");
+    expect(db.beginLaunchFactoryExecution(id, "different-plan", "{}")).toBe(false);
+    expect(db.beginLaunchFactoryExecution(id, "{\"plan\":1}", "{\"transactions\":[]}")).toBe(true);
+    expect(db.beginLaunchFactoryExecution(id, "{\"plan\":1}", "{}")).toBe(false);
+    expect(() => db.setLaunchFactoryStatus(id, "planned", "{}", "another-mint")).toThrow("review");
+    expect(db.getLaunch(id).factory_status).toBe("executing");
 
     cleanup();
   });

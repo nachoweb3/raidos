@@ -4,6 +4,9 @@ import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed } from "./dexfeed.js";
+import { ChartTools } from "./chart-tools.js";
+import { PoolActivity } from "./pool-activity.js";
+import { publicPoolData } from "./public-market.js";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -13,8 +16,6 @@ const WELL_KNOWN_ADDR = {
   ethereum: { USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
   base: { USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
   bsc: { USDC: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" },
-  polygon: { USDC: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" },
-  arbitrum: { USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" },
 };
 
 export const TradingEngine = {
@@ -34,6 +35,21 @@ export const TradingEngine = {
   orders: [],
   chartInterval: 300, // seconds; matches common Candle UI (used for request size)
   lastCandleFetch: 0,
+  chainCapabilities: null, // /api/chains cache: { [chainId]: { liveExecution, status, ... } }
+
+  /** Cache real execution capabilities so the order button never lies. */
+  async refreshCapabilities() {
+    try {
+      const data = await ApiClient.getChains();
+      const map = {};
+      for (const row of data?.chains ?? []) map[row.id] = row;
+      this.chainCapabilities = map;
+    } catch {
+      // Unknown capabilities keep every order button disabled (fail closed).
+      this.chainCapabilities = this.chainCapabilities || {};
+    }
+    this.updateTokenDisplay();
+  },
 
   /** Best current real price for the active symbol from PriceFeed. */
   async refreshPrice() {
@@ -46,6 +62,7 @@ export const TradingEngine = {
 
   init() {
     this.initChart();
+    this.refreshCapabilities();
     this.refreshPrice().then(async () => {
       if (ApiClient.isAuthenticated()) {
         await this.fetchPendingTrades();
@@ -204,6 +221,12 @@ export const TradingEngine = {
       alert("No se pudo resolver la dirección on-chain de " + t.symbol + " — usa el terminal.");
       return null;
     }
+    // Capability gate mirrors executeTrade: no wallet prompt on disabled chains.
+    const chain = this.chainCapabilities?.[t.chain || this.currentChain];
+    if (!chain?.liveExecution || chain.status !== "LIVE") {
+      alert("Ejecución real no disponible en " + String(t.chain || this.currentChain).toUpperCase() + " todavía.");
+      return null;
+    }
     try {
       const walletAddress = t.chain === "solana"
         ? window.solana?.publicKey?.toString()
@@ -242,7 +265,7 @@ export const TradingEngine = {
     if (priceEl) {
       priceEl.textContent =
         this.currentPrice > 0 && this.currentPrice < 0.01
-          ? "$" + this.currentPrice.toFixed(6)
+          ? "$" + this.currentPrice.toLocaleString(undefined, { maximumSignificantDigits: 6 })
           : this.currentPrice > 0
             ? "$" + this.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })
             : "—";
@@ -253,8 +276,12 @@ export const TradingEngine = {
       deltaEl.style.color = isUp ? "var(--delta-green)" : "var(--delta-red)";
     }
     if (orderBtn) {
-      orderBtn.disabled = true;
-      orderBtn.textContent = "Ejecución no disponible";
+      const chain = this.chainCapabilities?.[this.currentChain];
+      const executable = Boolean(chain?.liveExecution && chain.status === "LIVE" && this.currentTokenAddress);
+      orderBtn.disabled = !executable;
+      orderBtn.textContent = executable
+        ? (this.orderSide === "BUY" ? `Comprar ${this.currentSymbol} con USDC` : `Vender ${this.currentSymbol} por USDC`)
+        : "Ejecución no disponible en esta red";
       orderBtn.className = `btn btn-lg ${this.orderSide === "BUY" ? "btn-primary" : "btn-secondary"}`;
       if (this.orderSide === "SELL") {
         orderBtn.style.background = "var(--delta-red)";
@@ -270,6 +297,10 @@ export const TradingEngine = {
   initChart() {
     const container = document.getElementById("tvChartContainer");
     if (!container || typeof window.LightweightCharts === "undefined") return;
+    if (this.chart) {
+      this.chart.applyOptions({ width: container.clientWidth || 600 });
+      return;
+    }
 
     container.innerHTML = "";
     this.chart = window.LightweightCharts.createChart(container, {
@@ -307,6 +338,8 @@ export const TradingEngine = {
       wickDownColor: "#ef4444",
     });
 
+    this.chartTools = new ChartTools(this.chart, this.candleSeries, window.LightweightCharts);
+    this.poolActivity = new PoolActivity(this.chartTools);
     this.generateCandleData();
 
     window.addEventListener("resize", () => {
@@ -317,48 +350,77 @@ export const TradingEngine = {
   },
 
   /** Real pool OHLCV for any resolved token; reference OHLC only for known assets. */
-  async fetchRealCandles() {
+  async fetchRealCandles(refresh = false) {
     if (!this.candleSeries) return [];
     const request = this._candleRequest = (this._candleRequest || 0) + 1;
-    this.candleSeries.setData([]);
+    const chain = this.currentChain, symbol = this.currentSymbol, address = this.currentTokenAddress, aggregate = this.chartInterval / 60;
+    this._chartAbort?.abort();
+    this._chartAbort = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const options = this._chartAbort ? { signal: this._chartAbort.signal } : {};
+    if (!refresh) { this.setChartData([]); this.poolActivity?.stop(); }
     const label = document.getElementById("chartDataStatus");
     if (label) label.textContent = "Cargando historial real...";
     try {
       let result;
-      const token = this.currentTokenAddress || WELL_KNOWN_ADDR[this.currentChain]?.[this.currentSymbol];
-      let pair = token ? DexFeed.get(token, this.currentChain) : null;
+      const token = address || WELL_KNOWN_ADDR[chain]?.[symbol];
+      let pair = token ? DexFeed.get(token, chain) : null;
       if (token && !pair && DexFeed.ensureAddresses) {
-        await DexFeed.ensureAddresses([{ address: token, chain: this.currentChain }]);
-        pair = DexFeed.get(token, this.currentChain);
+        await DexFeed.ensureAddresses([{ address: token, chain }]);
+        if (request !== this._candleRequest) return [];
+        pair = DexFeed.get(token, chain);
       }
+      const referenceCoin = !address ? CoinGeckoIdForSymbol(symbol)
+        : chain === "solana" && token === WELL_KNOWN_ADDR.solana.SOL ? "solana" : null;
+      let reference = false;
       if (pair?.pairAddress && token) {
-        result = await ApiClient.request("/api/market/candles?chain=" + encodeURIComponent(this.currentChain) +
-          "&pool=" + encodeURIComponent(pair.pairAddress) + "&token=" + encodeURIComponent(token) + "&aggregate=5");
-      } else {
-        const coin = CoinGeckoIdForSymbol(this.currentSymbol);
-        // A random contract with a familiar symbol is not the reference asset.
-        if (!coin || this.currentTokenAddress) throw new Error("No indexed pool history");
-        result = await ApiClient.request("/api/market/reference-candles?coin=" + encodeURIComponent(coin));
+        if (!refresh) this.poolActivity?.start(chain, pair.pairAddress, token, this.chartInterval);
+        try {
+          result = await ApiClient.request("/api/market/candles?chain=" + encodeURIComponent(chain) +
+            "&pool=" + encodeURIComponent(pair.pairAddress) + "&token=" + encodeURIComponent(token) + "&aggregate=" + aggregate, options)
+            .catch(error => { if (options.signal?.aborted) throw error; return publicPoolData("candles", chain, pair.pairAddress, token, aggregate); });
+        } catch {
+          if (!referenceCoin) throw new Error("No indexed pool history");
+        }
       }
+      if (!result?.candles?.length && referenceCoin) {
+        if (request !== this._candleRequest) return [];
+        reference = true;
+        result = await ApiClient.request("/api/market/reference-candles?coin=" + encodeURIComponent(referenceCoin), options);
+      }
+      if (!result) throw new Error("No indexed pool history");
       if (request !== this._candleRequest) return [];
       const data = result.candles ?? [];
       if (!data.length) throw new Error("No real candles");
-      this.candleSeries.setData(data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      this.setChartData(data);
+      if (!refresh) this.chart?.timeScale().fitContent();
+      if (reference) this.poolActivity?.stop();
+      else this.poolActivity?.mark();
       this.lastCandleFetch = result.asOf;
-      if (label) label.textContent = result.status === "DEGRADED"
-        ? "Historial en caché · " + new Date(result.asOf).toLocaleTimeString()
-        : "OHLC · " + result.source + " · " + new Date(result.asOf).toLocaleTimeString();
+      if (label) label.textContent = `${reference ? "Referencia 30m (sin pool)" : "Pool " + pair.pairAddress + " · " + aggregate + "m"} · ${result.source} · ${result.status === "DEGRADED" ? "Caché · " : ""}${new Date(result.asOf).toLocaleTimeString()}`;
       return data;
     } catch {
       if (request === this._candleRequest) {
-        this.candleSeries.setData([]);
+        if (!refresh) this.setChartData([]);
         if (label) label.textContent = "Historial no disponible para este token";
       }
       return [];
     }
   },
 
+  setChartData(data) {
+    if (this.chartTools) this.chartTools.setData(data);
+    else this.candleSeries.setData(data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+    this.poolActivity?.mark();
+  },
+
   generateCandleData() {
+    return this.fetchRealCandles();
+  },
+
+  setCandleInterval(minutes) {
+    const value = Number(minutes);
+    if (![1, 5, 15].includes(value)) return;
+    this.chartInterval = value * 60;
     return this.fetchRealCandles();
   },
 
@@ -421,6 +483,12 @@ export const TradingEngine = {
     btn.disabled = true;
 
     try {
+      // Capability gate: never ask the wallet to sign on an unavailable chain.
+      const chain = this.chainCapabilities?.[this.currentChain];
+      if (!chain?.liveExecution || chain.status !== "LIVE") {
+        alert("Ejecución real no disponible en " + String(this.currentChain).toUpperCase() + " todavía.");
+        return;
+      }
       // Route by REAL address — Jupiter/0x don't understand tickers. Well-known
       // tokens resolve to canonical addresses; everything else must have been
       // selected from a row that carries its address (Trenches/Discover).
@@ -439,12 +507,24 @@ export const TradingEngine = {
         );
         return;
       }
+      // Exact integer micro-USDC from the decimal input — no float math on money.
+      const raw = String(amountInput?.value ?? "").trim();
+      const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(raw);
+      if (!match) {
+        alert("Cantidad inválida. Usa un número en USDC con hasta 6 decimales.");
+        return;
+      }
+      const micros = BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0") || "0");
+      if (micros <= 0n) {
+        alert("Por favor introduce una cantidad en USDC.");
+        return;
+      }
       const tradeParams = {
         fromChain: this.currentChain,
         toChain: this.currentChain,
         sellToken: sellAddr,
         buyToken: buyAddr,
-        amount: String(Math.floor(amount * 1_000_000)), // USDC units
+        amount: micros.toString(),
         type: "swap",
       };
 
@@ -459,9 +539,11 @@ export const TradingEngine = {
       if (amountInput) amountInput.value = "";
       alert(
         status === "settled"
-          ? `Orden ${this.orderSide} de $${amount} ${this.currentSymbol} liquidada (mode: ${mode}).`
-          : `Orden ${this.orderSide} pendiente (status: ${status}, mode: ${mode}).`
+          ? `Orden ${this.orderSide} liquidada on-chain (mode: ${mode}).`
+          : `Orden ${this.orderSide} enviada. Estado: ${status}. Se confirmará al verificar el recibo on-chain.`
       );
+    } catch (err) {
+      alert("❌ " + String(err?.message || err));
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
@@ -627,7 +709,6 @@ function CoinGeckoIdForSymbol(symbol) {
     PENDLE: "pendle-finance",
     PEPE: "pepe",
     BONK: "bonk",
-    MON: "monad",
     AERO: "aerodrome",
     BNB: "binancecoin",
     GMX: "gmx",

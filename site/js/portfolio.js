@@ -441,6 +441,7 @@ export const PortfolioEngine = {
 
     try {
       const data = await ApiClient.getWalletBalances();
+      const failures = (data?.balances ?? []).filter((b) => b.error);
       const rows = (data?.balances ?? []).filter(
         (b) => !b.error && (b.usdcAmount > 0 || b.nativeAmount > 0.0001 || (b.tokens ?? []).length > 0),
       );
@@ -451,11 +452,12 @@ export const PortfolioEngine = {
       panel.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px">
           <div style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">⛓️ Balances On-Chain</div>
-          <div class="mono" style="font-size:12px; font-weight:800; color:#fff">${fmtUsd(totalUsdc)} <span style="color:var(--text-tertiary); font-weight:400; font-size:10.5px">en USDC</span></div>
+          <div class="mono" style="font-size:12px; font-weight:800; color:#fff">${failures.length ? "Total no disponible" : fmtUsd(totalUsdc)} <span style="color:var(--text-tertiary); font-weight:400; font-size:10.5px">en USDC</span></div>
         </div>
         ${rows.length === 0
-          ? `<div style="font-size:11.5px; color:var(--text-tertiary)">Sin balances on-chain todavía (o RPCs no disponibles ahora mismo).</div>`
+          ? `<div style="font-size:11.5px; color:var(--text-tertiary)">${failures.length ? "No se pudieron consultar los balances." : "Sin balances positivos en las wallets consultadas."}</div>`
           : rows.map((b) => this.renderBalanceRow(b)).join("")}
+        ${failures.map((b) => `<p role="status">${escHtml(b.chain)}: balance desconocido; RPC no disponible.</p>`).join("")}
       `;
       placeholder.replaceWith(panel);
     } catch {
@@ -626,7 +628,7 @@ export const PortfolioEngine = {
   /* ── Wallet import/delete (server requires the password to decrypt) ── */
 
   promptImportWallet() {
-    const chain = prompt("Cadena (solana, ethereum, base, bsc, arbitrum, polygon, robinhood, monad, arc):");
+    const chain = prompt("Cadena (solana, ethereum, base, bsc, robinhood, arc):");
     if (!chain) return;
     const privateKey = prompt("Clave privada (hex para EVM, base58 para Solana):");
     if (!privateKey) return;

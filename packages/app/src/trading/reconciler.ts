@@ -1,13 +1,16 @@
 import type { AppDb } from "../database/app-db.js";
 import { assertTransition, type ExecutionStatus } from "./lifecycle.js";
+import { getEvmAffiliateFeeBps, getSolanaPlatformFeeBps } from "./engine.js";
 
 export interface ReceiptFill {
   sellToken: string;
   buyToken: string;
   sellAmount: string;
   buyAmount: string;
-  /** Application fee assessed for the fill, in micro-USDC. */
-  feeUsdc: string;
+  /** Platform fee taken inside the swap, in raw units of the fee token. */
+  feeAmount: string;
+  /** Which swap leg carried the fee (Jupiter: buy; 0x swapFeeToken: sell). */
+  feeToken: "sell" | "buy";
 }
 
 export interface ReceiptParseContext {
@@ -15,6 +18,9 @@ export interface ReceiptParseContext {
   sellToken: string;
   buyToken: string;
   sellAmount: string;
+  /** Platform fee bps configured for the chain (0 = none). Used to account
+   * for the fee taken inside the swap; positions always use measured deltas. */
+  expectedFeeBps?: number;
 }
 
 export interface ReceiptResult {
@@ -90,9 +96,10 @@ function balanceDelta(
  * routes can contain many intermediate transfers, while the wallet-owned
  * aggregate is the stable accounting boundary.
  *
- * The current app does not collect a platform fee on-chain for self-custody
- * swaps, so a verified receipt produces feeUsdc = "0". Network lamports are
- * not trading fees and are not included in USDC accounting.
+ * When a platform fee is configured (see engine.ts), Jupiter deducts it from
+ * the output mint before delivery, so the wallet's received delta is already
+ * net: positions stay exact while the fee is reconstructed arithmetically.
+ * Network lamports are not trading fees and are not part of USDC accounting.
  */
 export function parseSolanaJupiterFill(
   receipt: unknown,
@@ -114,8 +121,99 @@ export function parseSolanaJupiterFill(
     buyToken: context.buyToken,
     sellAmount: sellAmount.toString(),
     buyAmount: buyDelta.toString(),
-    feeUsdc: "0",
+    feeAmount: jupiterPlatformFee(buyDelta, context),
+    feeToken: "buy",
   };
+}
+
+/**
+ * Jupiter takes the configured platform fee out of the output mint before
+ * delivery, so the wallet's measured delta is net. Reconstruct the fee from
+ * the measured net amount: fee = net * bps / (10000 - bps). Positions use
+ * measured deltas and stay exact regardless; only this fee accounting
+ * assumes the aggregator applied the configured bps.
+ */
+function jupiterPlatformFee(netBuyDelta: bigint, context: ReceiptParseContext): string {
+  const bps = context.expectedFeeBps ?? 0;
+  if (bps <= 0 || bps >= 10000) return "0";
+  return (netBuyDelta * BigInt(bps) / BigInt(10000 - bps)).toString();
+}
+
+type EvmLog = { address?: string; topics?: string[]; data?: string };
+type EvmReceipt = { status?: string; logs?: EvmLog[] | null };
+
+/** Keccak256("Transfer(address,address,uint256)") — the ERC-20 transfer event. */
+const EVM_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4dfbff2e9";
+
+function addressFromTopic(hex: string): string | undefined {
+  if (typeof hex !== "string" || !/^0x[0-9a-f]{64}$/i.test(hex)) return undefined;
+  return "0x" + hex.slice(26).toLowerCase();
+}
+
+/**
+ * Parse an ERC-20 swap fill from an EVM receipt using owner-scoped Transfer
+ * log deltas. Aggregator routes can touch many intermediate pools, so the
+ * wallet's net balance change per token is the stable accounting boundary —
+ * the same principle as the Solana parser above.
+ *
+ * When an affiliate fee is configured (see engine.ts), 0x takes it from the
+ * taker's sellAmount (the swapFeeToken leg we set), so the verified sell
+ * delta still equals the requested amount and the fee is deterministic.
+ * Gas is paid in the native token and is not part of USDC accounting.
+ */
+export function parseEvmTransferFill(
+  receipt: unknown,
+  context: ReceiptParseContext,
+): ReceiptFill | undefined {
+  const parsed = receipt as EvmReceipt;
+  if (parsed?.status !== "0x1" || !Array.isArray(parsed.logs)) return undefined;
+  if (!context.walletAddress || !/^0x[0-9a-f]{40}$/.test(context.walletAddress)) return undefined;
+  if (!/^0x[0-9a-f]{40}$/i.test(context.sellToken) || !/^0x[0-9a-f]{40}$/i.test(context.buyToken)) return undefined;
+  if (context.sellToken.toLowerCase() === context.buyToken.toLowerCase()) return undefined;
+  if (!/^\d+$/.test(context.sellAmount)) return undefined;
+
+  const owner = context.walletAddress.toLowerCase();
+  const deltas = new Map<string, bigint>();
+  let sawOwnedTransfer = false;
+  for (const log of parsed.logs) {
+    const topics = log?.topics ?? [];
+    if (topics.length < 3 || String(topics[0]).toLowerCase() !== EVM_TRANSFER_TOPIC) continue;
+    const token = typeof log.address === "string" ? log.address.toLowerCase() : "";
+    if (token !== context.sellToken.toLowerCase() && token !== context.buyToken.toLowerCase()) continue;
+    const from = addressFromTopic(String(topics[1]));
+    const to = addressFromTopic(String(topics[2]));
+    // ERC-20 Transfer carries the value in the log data (32 bytes). Anything
+    // malformed or oversized is refused rather than silently truncated.
+    const raw = log.data;
+    if (typeof raw !== "string" || !/^0x[0-9a-f]{1,64}$/i.test(raw)) return undefined;
+    const value = BigInt(raw);
+    if (from === undefined && to === undefined) continue;
+    sawOwnedTransfer = true;
+    if (from === owner) deltas.set(token, (deltas.get(token) ?? 0n) - value);
+    if (to === owner) deltas.set(token, (deltas.get(token) ?? 0n) + value);
+  }
+  if (!sawOwnedTransfer) return undefined;
+
+  const sellDelta = deltas.get(context.sellToken.toLowerCase());
+  const buyDelta = deltas.get(context.buyToken.toLowerCase());
+  if (sellDelta === undefined || buyDelta === undefined || sellDelta >= 0n || buyDelta <= 0n) return undefined;
+  const sellAmount = -sellDelta;
+  if (sellAmount.toString() !== context.sellAmount) return undefined;
+  return {
+    sellToken: context.sellToken,
+    buyToken: context.buyToken,
+    sellAmount: sellAmount.toString(),
+    buyAmount: buyDelta.toString(),
+    feeAmount: evmAffiliateFee(sellAmount, context),
+    feeToken: "sell",
+  };
+}
+
+/** 0x swapFeeBps applies to the sell leg: fee = sellAmount * bps / 10000. */
+function evmAffiliateFee(sellAmount: bigint, context: ReceiptParseContext): string {
+  const bps = context.expectedFeeBps ?? 0;
+  if (bps <= 0 || bps >= 10000) return "0";
+  return (sellAmount * BigInt(bps) / 10000n).toString();
 }
 
 export class RpcReceiptProvider implements ReceiptProvider {
@@ -177,7 +275,17 @@ export class RpcReceiptProvider implements ReceiptProvider {
     const body = await response.json() as { result?: { status?: string } | null; error?: unknown };
     if (body.error) return { status: "pending", error: "EVM receipt lookup unavailable" };
     if (!body.result) return { status: "pending" };
-    if (body.result.status === "0x1") return { status: "confirmed", receipt: body.result };
+    if (body.result.status === "0x1") {
+      // A success status proves execution, not the exact token amounts. Parse
+      // the Transfer deltas before allowing accounting settlement.
+      const fill = context ? parseEvmTransferFill(body.result, context) : undefined;
+      return {
+        status: "confirmed",
+        receipt: body.result,
+        fill,
+        ...(fill ? {} : { error: "EVM receipt fill could not be verified" }),
+      };
+    }
     if (body.result.status === "0x0") return { status: "failed", receipt: body.result, error: "EVM transaction reverted" };
     return { status: "pending", error: "EVM receipt status unavailable" };
   }
@@ -190,18 +298,30 @@ export class RpcReceiptProvider implements ReceiptProvider {
  */
 export type SettlementHandler = (transaction: any, receipt: unknown, fill?: ReceiptFill) => Promise<void> | void;
 
+/** Effective on-chain platform fee bps configured for a chain (0 = none). */
+function expectedFeeBpsFor(chain: string): number {
+  return chain === "solana" ? getSolanaPlatformFeeBps() : getEvmAffiliateFeeBps();
+}
+
 function receiptContext(tx: any): ReceiptParseContext | undefined {
   if (typeof tx.request_json !== "string") return undefined;
   try {
-    const request = JSON.parse(tx.request_json) as { params?: Partial<ReceiptParseContext> & { amount?: string }; walletAddress?: string };
+    const request = JSON.parse(tx.request_json) as { params?: Partial<ReceiptParseContext> & { amount?: string }; walletAddress?: string; platformFeeBps?: number };
     const params = request.params;
     if (!params || typeof request.walletAddress !== "string" || typeof params.sellToken !== "string" ||
       typeof params.buyToken !== "string" || typeof params.amount !== "string") return undefined;
+    // Prefer the bps persisted with the session at prepare time: the fee can
+    // legitimately differ from current env per swap (missing fee ATA on
+    // Solana), and accounted history must not shift with config changes.
+    const sessionBps = typeof request.platformFeeBps === "number" && Number.isInteger(request.platformFeeBps) && request.platformFeeBps >= 0 && request.platformFeeBps <= 1000
+      ? request.platformFeeBps
+      : undefined;
     return {
       walletAddress: request.walletAddress,
       sellToken: params.sellToken,
       buyToken: params.buyToken,
       sellAmount: params.amount,
+      expectedFeeBps: sessionBps ?? expectedFeeBpsFor(tx.chain),
     };
   } catch {
     return undefined;
@@ -215,9 +335,9 @@ export class ExecutionReconciler {
     private readonly onSettled?: SettlementHandler,
   ) {}
 
-  async reconcilePending(): Promise<{ pending: number; confirmed: number; failed: number }> {
+  async reconcilePending(userId?: number): Promise<{ pending: number; confirmed: number; failed: number }> {
     const summary = { pending: 0, confirmed: 0, failed: 0 };
-    for (const tx of this.db.getPendingExecutionTransactions(undefined, Boolean(this.onSettled))) {
+    for (const tx of this.db.getPendingExecutionTransactions(userId, Boolean(this.onSettled))) {
       if (tx.mode !== "live") continue;
       let result: ReceiptResult;
       try {

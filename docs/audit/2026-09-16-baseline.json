@@ -1,0 +1,134 @@
+[
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "app typecheck",
+      "chunk_id": "e07fdf",
+      "wall_time_seconds": 4.9153672,
+      "exit_code": 0,
+      "original_token_count": 24,
+      "output": "\n> raidos-app@0.1.0 typecheck C:\\Users\\Usuario\\Desktop\\trenches\\packages\\app\n> tsc --noEmit\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "app lint",
+      "chunk_id": "5205f4",
+      "wall_time_seconds": 0.2563135,
+      "exit_code": 1,
+      "original_token_count": 19,
+      "output": " ERR_PNPM_NO_SCRIPT  Missing script: lint\n\nCommand \"lint\" not found.\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "app tests",
+      "chunk_id": "268eff",
+      "wall_time_seconds": 2.5579651,
+      "exit_code": 0,
+      "original_token_count": 578,
+      "output": "\n> raidos-app@0.1.0 test C:\\Users\\Usuario\\Desktop\\trenches\\packages\\app\n> vitest run\n\n\n RUN  v2.1.9 C:/Users/Usuario/Desktop/trenches/packages/app\n\n(node:33236) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:39196) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n ✓ tests/market-ui.test.ts (5 tests) 7ms\n ✓ tests/trading-ui-safety.test.ts (7 tests) 11ms\n(node:34216) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n ✓ tests/site-modules.test.ts (15 tests) 11ms\n ✓ tests/rpc-config.test.ts (3 tests) 2ms\n ✓ tests/prediction.test.ts (7 tests) 6ms\n ✓ tests/lifecycle.test.ts (3 tests) 11ms\n ✓ tests/market-data.test.ts (15 tests) 24ms\n ✓ tests/reconciler.test.ts (7 tests) 114ms\n ✓ tests/clob.test.ts (6 tests) 64ms\n(node:19748) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:35940) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:6120) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n ✓ tests/app.test.ts (17 tests) 329ms\nstderr | tests/accounting-safety.test.ts > live capability policy and financial input > does not turn a failed live quote into a mock\n[api] live quote provider failed: offline\n\n ✓ tests/rewards.test.ts (14 tests) 235ms\n ✓ tests/accounting-safety.test.ts (27 tests) 315ms\n ✓ tests/api.test.ts (58 tests) 1387ms\n   ✓ wallets > scans on-chain balances without touching keys (RPC may be offline in CI) 371ms\n\n Test Files  13 passed (13)\n      Tests  184 passed (184)\n   Start at  23:50:00\n   Duration  2.12s (transform 731ms, setup 0ms, collect 2.68s, tests 2.52s, environment 2ms, prepare 1.33s)\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "app build",
+      "chunk_id": "be0753",
+      "wall_time_seconds": 1.4087284,
+      "exit_code": 0,
+      "original_token_count": 20,
+      "output": "\n> raidos-app@0.1.0 build C:\\Users\\Usuario\\Desktop\\trenches\\packages\\app\n> tsc\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "core typecheck",
+      "chunk_id": "22359b",
+      "wall_time_seconds": 1.3236298,
+      "exit_code": 0,
+      "original_token_count": 13,
+      "output": "\n> community-brain@0.1.0 typecheck\n> tsc --noEmit\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "core lint",
+      "chunk_id": "32a46f",
+      "wall_time_seconds": 0.4249913,
+      "exit_code": 1,
+      "original_token_count": 83,
+      "output": "npm error Missing script: \"lint\"\nnpm error\nnpm error Did you mean this?\nnpm error   npm link # Symlink a package folder\nnpm error\nnpm error To see a list of scripts, run:\nnpm error   npm run\nnpm error A complete log of this run can be found in: C:\\Users\\Usuario\\AppData\\Local\\npm-cache\\_logs\\2026-09-15T21_50_01_947Z-debug-0.log\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "core tests",
+      "chunk_id": "812d13",
+      "wall_time_seconds": 1.6397055,
+      "exit_code": 0,
+      "original_token_count": 140,
+      "output": "\n> community-brain@0.1.0 test\n> vitest run\n\n\n RUN  v2.1.9 C:/Users/Usuario/Desktop/trenches/packages/core\n\n ✓ tests/cloud.test.ts (6 tests) 21ms\n ✓ tests/unit.test.ts (13 tests) 5ms\n ✓ tests/integration.test.ts (10 tests) 377ms\n ✓ tests/raidos.test.ts (31 tests) 454ms\n ✓ tests/gamification.test.ts (18 tests) 489ms\n ✓ tests/content.test.ts (23 tests) 564ms\n\n Test Files  6 passed (6)\n      Tests  101 passed (101)\n   Start at  23:50:02\n   Duration  1.05s (transform 460ms, setup 0ms, collect 898ms, tests 1.91s, environment 1ms, prepare 594ms)\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "core build",
+      "chunk_id": "7c4bf4",
+      "wall_time_seconds": 1.7022265,
+      "exit_code": 0,
+      "original_token_count": 10,
+      "output": "\n> community-brain@0.1.0 build\n> tsc\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "bot typecheck",
+      "chunk_id": "d7b17b",
+      "wall_time_seconds": 1.1637745,
+      "exit_code": 0,
+      "original_token_count": 11,
+      "output": "\n> saur-bot@1.0.0 typecheck\n> tsc --noEmit\n\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "bot lint",
+      "chunk_id": "a7f45e",
+      "wall_time_seconds": 1.3520558,
+      "exit_code": 1,
+      "original_token_count": 83,
+      "output": "npm error Missing script: \"lint\"\nnpm error\nnpm error Did you mean this?\nnpm error   npm link # Symlink a package folder\nnpm error\nnpm error To see a list of scripts, run:\nnpm error   npm run\nnpm error A complete log of this run can be found in: C:\\Users\\Usuario\\AppData\\Local\\npm-cache\\_logs\\2026-09-15T21_50_01_069Z-debug-0.log\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "bot tests",
+      "chunk_id": "b7e60e",
+      "wall_time_seconds": 1.5863577,
+      "exit_code": 1,
+      "original_token_count": 61,
+      "output": "npm error Missing script: \"test\"\nnpm error\nnpm error To see a list of scripts, run:\nnpm error   npm run\nnpm error A complete log of this run can be found in: C:\\Users\\Usuario\\AppData\\Local\\npm-cache\\_logs\\2026-09-15T21_50_00_875Z-debug-0.log\n"
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "label": "bot build",
+      "chunk_id": "e7fbe2",
+      "wall_time_seconds": 1.8382346,
+      "exit_code": 0,
+      "original_token_count": 8,
+      "output": "\n> saur-bot@1.0.0 build\n> tsc\n\n"
+    }
+  }
+]

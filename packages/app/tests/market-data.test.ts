@@ -15,6 +15,62 @@ const gecko = {
 function response(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
 
 describe("shared market data", () => {
+  it("fills gaps in a partial DEX batch from GeckoTerminal", async () => {
+    const other = "B" + mint.slice(1);
+    const backup = JSON.parse(JSON.stringify(gecko).replaceAll(mint, other));
+    const service = new MarketDataService({ fetcher: async (url) =>
+      String(url).includes("dexscreener") ? response([pair]) : response(backup) });
+    const result = await service.tokens("solana", [mint, other]);
+    expect(new Set(result.data.map((p) => p.baseToken.address))).toEqual(new Set([mint, other]));
+    expect(result.source).toBe("mixed");
+    expect(result.data.map((p) => p.source).sort()).toEqual(["dexscreener", "geckoterminal"]);
+  });
+
+  it("resolves a requested quote token without assigning the base token's price or market cap", async () => {
+    const quote = "0x" + "b".repeat(40);
+    const service = new MarketDataService({ fetcher: async () => response([
+      { chainId: "base", pairAddress: "0x" + "c".repeat(40),
+        baseToken: { address: "0x" + "a".repeat(40), symbol: "OTHER" },
+        quoteToken: { address: quote, symbol: "TARGET" }, priceUsd: "10", priceNative: "2",
+        marketCap: 100000, priceChange: { h24: 20 } },
+    ]) });
+    const result = await service.tokens("base", [quote]);
+    expect(result.data[0].baseToken.address).toBe(quote);
+    expect(Number(result.data[0].priceUsd)).toBe(5);
+    expect(result.data[0].marketCap).toBeNull();
+    expect(result.data[0].priceChange.h24).toBeUndefined();
+  });
+  it("filters exact contract search results even when the provider returns a namesake", async () => {
+    const service = new MarketDataService({ fetcher: async () => response({ pairs: [
+      pair, { ...pair, baseToken: { address: "DifferentMint1111111111111111111111111111", symbol: "NEW" } },
+    ] }) });
+    const result = await service.search(mint);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].baseToken.address).toBe(mint);
+  });
+  it("uses the requested network for paginated pools", async () => {
+    let requested = "";
+    const service = new MarketDataService({ fetcher: async (url) => { requested = String(url); return response({ data: [] }); } });
+    await service.pools("base", "new", 2);
+    expect(requested).toContain("/networks/base/new_pools?");
+    expect(requested).toContain("page=2");
+  });
+  it("preserves unavailable risk instead of interpreting missing fields as low risk", async () => {
+    const service = new MarketDataService({ fetcher: async () => response({}) });
+    const result = await service.security("solana", mint);
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.report).toBeNull();
+  });
+  it("treats a danger signal as high risk even with a low normalized score", async () => {
+    const fetcher = vi.fn(async () => response({ score_normalised: 10, risks: [{ level: "danger", name: "Low liquidity" }] }));
+    const service = new MarketDataService({ fetcher });
+    const result = await service.security("solana", mint);
+    expect(result.report?.level).toBe("bad");
+    expect(result.source).toBe("rugcheck");
+    await service.security("solana", mint);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("looks up an arbitrary mint without any curated token list", async () => {
     const fetcher = vi.fn(async () => response([pair]));
     const service = new MarketDataService({ fetcher });
@@ -39,12 +95,13 @@ describe("shared market data", () => {
     expect(result.data[0].priceUsd).toBe("0.2");
   });
   it("keeps chains and case-sensitive Solana mints separate", async () => {
-    const fetcher = vi.fn(async () => response({ pairs: [pair, { ...pair, chainId: "base" }] }));
+    const fetcher = vi.fn(async (url: string) => String(url).includes("dexscreener") ? response({ pairs: [pair, { ...pair, chainId: "base" }] }) : response({ data: [] }));
     const service = new MarketDataService({ fetcher });
     const solana = await service.search(mint, "solana");
     expect(solana.data).toHaveLength(1);
-    await service.search(mint.toLowerCase(), "solana");
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    const wrongCase = await service.search(mint.toLowerCase(), "solana");
+    expect(wrongCase.data).toEqual([]);
+    expect(fetcher.mock.calls.filter(([url]) => url.includes("dexscreener"))).toHaveLength(2);
   });
   it("labels stale cached data as degraded after an upstream failure", async () => {
     let now = 1000;

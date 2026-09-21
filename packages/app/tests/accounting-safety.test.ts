@@ -49,7 +49,7 @@ async function httpApp(mode: "mock" | "live" = "live") {
   };
 }
 const usdc = getChain("solana")!.usdcAddress;
-const buy: ReceiptFill = { sellToken: usdc, buyToken: TOKEN, sellAmount: "1000000", buyAmount: "100", feeUsdc: "1000" };
+const buy: ReceiptFill = { sellToken: usdc, buyToken: TOKEN, sellAmount: "1000000", buyAmount: "100", feeAmount: "1000", feeToken: "sell" };
 
 describe("settled accounting", () => {
   it("accepts integer receipt fills and projects exactly once", () => {
@@ -64,8 +64,8 @@ describe("settled accounting", () => {
   it("sums only each partial sale's realized PnL and the USDC leg as volume", () => {
     const app = setup();
     settle(app, buy);
-    const partial = settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "40", buyAmount: "800000", feeUsdc: "1000" });
-    const close = settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "60", buyAmount: "1500000", feeUsdc: "1000" });
+    const partial = settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "40", buyAmount: "800000", feeAmount: "1000", feeToken: "buy" });
+    const close = settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "60", buyAmount: "1500000", feeAmount: "1000", feeToken: "buy" });
     expect(app.db.getTrade(partial.trade_id).realized_pnl_usdc).toBe("398600");
     expect(app.db.getTrade(close.trade_id).realized_pnl_usdc).toBe("898400");
     const pnl = app.db.getUserPnl(1);
@@ -79,7 +79,7 @@ describe("settled accounting", () => {
   it("does not repeat previous realized PnL on a later buy", () => {
     const app = setup();
     settle(app, buy);
-    settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "40", buyAmount: "800000", feeUsdc: "1000" });
+    settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "40", buyAmount: "800000", feeAmount: "1000", feeToken: "buy" });
     const additional = settle(app, buy);
     expect(app.db.getTrade(additional.trade_id).realized_pnl_usdc).toBeNull();
     expect(app.db.getUserPnl(1).totalPnlUsdc).toBe("398600");
@@ -103,19 +103,26 @@ describe("settled accounting", () => {
 });
 
 describe("live capability policy and financial input", () => {
-  it("reports unavailable execution and blocks unsigned preparation before calling a provider", async () => {
+  it("keeps chains without a verified adapter unavailable and rejects unknown wallets", async () => {
     const { call } = await httpApp();
     const prepare = vi.spyOn(TradingEngine.prototype, "prepareSelfCustodyTransaction").mockRejectedValue(new Error("must not call provider"));
     const chains = await (await call("/api/chains")).json();
-    expect(chains.chains.every((c: any) => c.status === "UNAVAILABLE" && c.liveExecution === false)).toBe(true);
-    const response = await call("/api/trades/prepare", { fromChain: "solana", sellToken: usdc, buyToken: TOKEN, amount: "100", walletAddress: "fixture" });
-    expect(response.status).toBe(503);
+    // bsc/robinhood/arc have no self-custody adapter; solana lacks a Jupiter
+    // key in this fixture, so only keyed EVM chains (base) advertise LIVE.
+    for (const id of ["bsc", "robinhood", "arc", "solana"]) {
+      const chain = chains.chains.find((c: any) => c.id === id);
+      expect(chain.liveExecution).toBe(false);
+      expect(chain.status).toBe("UNAVAILABLE");
+    }
+    // An unlinked wallet is refused before any provider call.
+    const response = await call("/api/trades/prepare", { fromChain: "solana", sellToken: usdc, buyToken: TOKEN, amount: "100", walletAddress: "11111111111111111111111111111111" });
+    expect(response.status).toBe(403);
     expect(prepare).not.toHaveBeenCalled();
   });
   it("blocks unverified hash submission without changing accounting", async () => {
     const { app, call } = await httpApp();
-    const response = await call("/api/trades/submit", { sessionId: "unknown", txHash: "arbitrary-unverified-hash" });
-    expect(response.status).toBe(503);
+    const response = await call("/api/trades/submit", { sessionId: "d4c9a2f1-0000-4000-8000-000000000000", txHash: "arbitrary-unverified-hash" });
+    expect(response.status).toBe(404);
     expect(app.db.getUserTrades(1)).toEqual([]);
   });
   it("does not return simulated holders when live data is unavailable", async () => {
@@ -201,7 +208,7 @@ describe("settlement follow-through", () => {
   it("ranks exact settled PnL and honors the chain filter", () => {
     const app = setup();
     settle(app, buy);
-    settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "100", buyAmount: "10000000", feeUsdc: "0" });
+    settle(app, { sellToken: TOKEN, buyToken: usdc, sellAmount: "100", buyAmount: "10000000", feeAmount: "0", feeToken: "buy" });
     expect(app.db.getTopTraders("solana")[0].total_pnl_usdc).toBe("8999000");
     expect(app.db.getTopTraders("base")).toEqual([]);
   });

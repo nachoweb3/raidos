@@ -19,6 +19,7 @@
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed, SecurityFeed } from "./dexfeed.js";
+import { CatalogBoard } from "./catalog-board.js";
 
 const COLUMNS = [
   { id: "new", title: "New Pools", icon: "+", hint: "Pools de menos de 48 h" },
@@ -68,7 +69,9 @@ export const TrenchesEngine = {
   _marketAt: 0,
 
   async init() {
-    if (this.loadedOnce) return;
+    if (this._initialized) return;
+    this._initialized = true;
+    this._board = new CatalogBoard(this);
     this.load();
     this.loadMarket();
     this.loadTraders();
@@ -153,17 +156,26 @@ export const TrenchesEngine = {
    * a fresh install: Solana + BSC pairs with real price, mcap, volume, liq.
    */
   async loadMarket(force = false, page = 1) {
+    if (this._board) return this._board.refresh();
+    const chain = this.activeChain;
+    const sequence = this._marketSequence = (this._marketSequence || 0) + 1;
+    const chains = chain === "all" ? [] : [chain];
+    this.marketStatus = "LOADING";
     const result = await Promise.allSettled([
-      DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT, page, kind: "new" }),
-      DexFeed.getTrending({ chains: MARKET_CHAINS, limit: MARKET_LIMIT, page, kind: "trending" }),
+      DexFeed.getTrending({ chains, limit: MARKET_LIMIT, page, kind: "new" }),
+      DexFeed.getTrending({ chains, limit: MARKET_LIMIT, page, kind: "trending" }),
     ]);
+    if (sequence !== this._marketSequence || chain !== this.activeChain) return;
     const rows = result.flatMap((entry) => entry.status === "fulfilled" ? entry.value : []);
     if (!rows.length && result.every((entry) => entry.status === "rejected")) {
+      this.market = this.market.filter((t) => Date.now() - (t.dex?._updatedAt || 0) <= 300000);
+      this.marketStatus = this.market.length ? "DEGRADED" : "UNAVAILABLE";
       this.marketError = "Proveedores de mercado no disponibles. Reintenta en un minuto.";
       if (this.loadedOnce) this.render();
       return;
     }
-    this.marketError = "";
+    this.marketStatus = result.some((r) => r.status === "rejected") || rows.some((r) => r.status === "DEGRADED") ? "DEGRADED" : "LIVE";
+    this.marketError = this.marketStatus === "DEGRADED" ? "Cobertura parcial o datos en caché" : "";
     const merged = new Map((page > 1 ? this.market : []).map((row) => [row.id, row]));
     for (const row of rows) {
       const token = this.normalizeMarket(row);
@@ -171,11 +183,12 @@ export const TrenchesEngine = {
     }
     this.market = [...merged.values()];
     this._marketPage = page;
-    this._marketAt = Date.now();
+    this._marketAt = rows.length ? Math.min(...rows.map((r) => r._updatedAt)) : Date.now();
     if (this.loadedOnce) { this.render(); this.loadSecurity(); }
   },
 
   async loadMoreMarket() {
+    if (this._board) return Promise.all(this._board.columns.map((c) => this._board.load(c, true)));
     const page = (this._marketPage || 1) + 1;
     if (page > 10 || this._loadingMore) return;
     this._loadingMore = true;
@@ -217,10 +230,10 @@ export const TrenchesEngine = {
   /** Badge html for a token's security verdict (empty when unknown). */
   securityBadge(t) {
     const s = t.security;
-    if (!s) return "";
+    if (!s) return '<span title="Sin evaluación disponible" style="font-size:9px;color:var(--text-tertiary)">N/D</span>';
     const color = s.level === "good" ? "var(--delta-green)" : s.level === "warn" ? "#fde047" : "var(--delta-red)";
     const title = esc(s.title ?? s.label ?? "");
-    return `<span title="🛡️ ${title}" style="font-size:8.5px; font-weight:800; letter-spacing:0.4px; color:${color}; border:1px solid ${color}; border-radius:4px; padding:0 4px; line-height:13px; opacity:0.9">🛡️ ${s.level === "good" ? "OK" : s.level === "warn" ? "MED" : "HIGH"}</span>`;
+    return `<span title="🛡️ ${title}" style="font-size:8.5px; font-weight:800; letter-spacing:0.4px; color:${color}; border:1px solid ${color}; border-radius:4px; padding:0 4px; line-height:13px; opacity:0.9">🛡️ ${s.level === "good" ? "LOW" : s.level === "warn" ? "MED" : "HIGH"}</span>`;
   },
 
   normalizeMarket(r) {
@@ -234,7 +247,7 @@ export const TrenchesEngine = {
       priceUsd: r.priceUsd,
       mcapUsd: r.mcap || 0,
       raisedUsd: 0,
-      buyers: r.buys24h || 0,
+      buyers: r.buys24h,
       progress: 0,
       socials: r.socials ?? {},
       tokenAddress: r.address,
@@ -360,12 +373,7 @@ export const TrenchesEngine = {
 
   select(t) {
     this.selected = t;
-    document.getElementById("terminalSymbol")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    window.TradingEngine?.setAsset(t.symbol, t.chain, t.priceUsd || 0, {
-      tokenAddress: t.tokenAddress ?? undefined,
-      launchId: t.isMarket ? undefined : t.id,
-    });
-    this.render();
+    window.App?.openTradeForToken(t.symbol, t.chain, t.priceUsd || 0, t.tokenAddress);
   },
 
   /** ⚡ quick buy: 0.1 USDC — bonding curve for launches, DEX swap for market. */
@@ -451,8 +459,14 @@ export const TrenchesEngine = {
   },
 
   render() {
+    if (this._board) return this._board.render();
     const el = this.target();
     if (!el) return;
+    const badge = document.getElementById("trenchesLiveBadge");
+    if (badge) {
+      badge.textContent = this.marketStatus || "LOADING";
+      badge.style.color = this.marketStatus === "LIVE" ? "var(--delta-green)" : "var(--text-secondary)";
+    }
     const total = this.market.length;
     const countEl = document.getElementById("trenchesCount");
     if (countEl) countEl.textContent = `${total} tokens`;
@@ -493,11 +507,11 @@ export const TrenchesEngine = {
       t.socials?.website ? `<a href="${esc(t.socials.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Web" style="color:var(--text-tertiary); text-decoration:none; font-size:10px">🌐</a>` : "",
     ].join("");
     const age = t.createdAt ? this.ageLabel(t.createdAt) : "";
-    const idAttr = t.isMarket ? safeAttr(t.id) : String(Number(t.id));
-    const symAttr = safeAttr(t.symbol);
+    const idAttr = esc(JSON.stringify(String(t.id)));
+    const symAttr = esc(JSON.stringify(t.symbol));
     const addrAttr = safeAttr(t.tokenAddress ?? "");
     return `
-      <div class="trench-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById('${symAttr}', '${idAttr}')">
+      <div class="trench-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
         ${TokenMeta.logoHtml(t.symbol, { size: 34, round: false, imageUrl: t.imageUrl })}
         <div style="flex:1; min-width:0">
           <div style="display:flex; align-items:center; gap:6px; min-width:0">
@@ -508,11 +522,11 @@ export const TrenchesEngine = {
           </div>
           <div class="trench-stats">
             <span title="${esc(t.tokenAddress)}">${esc(t.chain)} · ${esc(String(t.tokenAddress).slice(0, 4))}…${esc(String(t.tokenAddress).slice(-4))}</span>
-            <span>Compras ${t.buyers}</span>
+            <span>Compras ${t.buyers ?? "—"}</span>
             <span>💰 ${fmtUsd(t.mcapUsd)}</span>
             ${t.progress > 0 ? `<span>${t.progress}%</span>` : ""}
             ${age ? `<span>${age}</span>` : ""}
-            ${t.dex ? `<span>💧 ${fmtUsd(t.dex.liqUsd)}</span><span>🔁 ${t.dex.txns24h || 0}</span>` : ""}
+            ${t.dex ? `<span>💧 ${fmtUsd(t.dex.liqUsd)}</span><span>🔁 ${t.dex.txns24h ?? "—"}</span>` : ""}
           </div>
           ${t.progress > 0 ? `
           <div style="margin-top:5px; height:3px; border-radius:2px; background:rgba(255,255,255,0.06); overflow:hidden">
@@ -525,8 +539,8 @@ export const TrenchesEngine = {
             ${chg != null ? `<div class="${chgCls}">${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%</div>` : `<div style="color:var(--text-tertiary)">${esc(t.chain.slice(0, 3).toUpperCase())}</div>`}
           </div>
           <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end">
-            <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById('${symAttr}', '${idAttr}')" title="Ver contrato y gráfico">Ver</button>
-            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis('${symAttr}', '${idAttr}', event)" title="Publicar tesis sobre este token">📊 Tesis</button>
+            <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById(${symAttr}, ${idAttr})" title="Ver contrato y gráfico">Ver</button>
+            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis(${symAttr}, ${idAttr}, event)" title="Publicar tesis sobre este token">📊 Tesis</button>
           </div>
         </div>
       </div>`;
@@ -565,10 +579,20 @@ export const TrenchesEngine = {
     return `${Math.floor(s / 86400)}d`;
   },
 
-  setChain(chain) { this.activeChain = chain; this.render(); },
+  setChain(chain) {
+    this.activeChain = chain;
+    this._board?.persist();
+    this.market = [];
+    this.marketStatus = "LOADING";
+    this._marketPage = 1;
+    this.render();
+    return this.loadMarket(true);
+  },
 
   setSearch(q) {
-    this.search = q.toLowerCase().trim();
-    this.render();
+    this.search = q.trim();
+    this._board?.persist();
+    clearTimeout(this._searchTimer);
+    this._searchTimer = setTimeout(() => this._board ? this._board.refresh() : this.render(), 300);
   },
 };

@@ -34,9 +34,9 @@ export interface WalletBalance {
   address: string;
   label: string;
   nativeSymbol: string;
-  nativeAmount: number;
+  nativeAmount: number | null;
   /** USDC balance (the trading base pair on every chain). */
-  usdcAmount: number;
+  usdcAmount: number | null;
   /** Other SPL/EVM tokens with meaningful balances. */
   tokens: TokenBalance[];
   error?: string;
@@ -72,7 +72,10 @@ async function scanSolana(address: string): Promise<Omit<WalletBalance, "chain" 
     }),
   ]);
 
-  const lamports = Number(native?.result?.value ?? 0);
+  const lamports = native?.result?.value;
+  if (!Number.isSafeInteger(lamports) || lamports < 0 || !Array.isArray(tokenAccounts?.result?.value)) {
+    throw new Error("invalid Solana balance response");
+  }
   const tokens: TokenBalance[] = [];
   let usdcAmount = 0;
 
@@ -109,13 +112,13 @@ async function scanEvm(chain: string, address: string): Promise<Omit<WalletBalan
   const provider = new ethers.JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
 
   const nativeWei = await provider.getBalance(address);
-  let usdcAmount = 0;
+  let usdcAmount: number;
   try {
     const usdc = new ethers.Contract(config.usdcAddress, ERC20_ABI, provider) as any;
     const bal: unknown = await usdc.balanceOf(address);
     usdcAmount = Number(ethers.formatUnits(bal as bigint, config.usdcDecimals));
-  } catch {
-    // USDC read failed (RPC quirk) — report native, leave usdc at 0
+  } finally {
+    provider.destroy();
   }
 
   return {
@@ -144,10 +147,10 @@ export class BalanceScanner {
           return {
             ...base,
             nativeSymbol: getChain(w.chain)?.nativeCurrency ?? "?",
-            nativeAmount: 0,
-            usdcAmount: 0,
+            nativeAmount: null,
+            usdcAmount: null,
             tokens: [],
-            error: err instanceof Error ? err.message : String(err),
+            error: "Balance RPC unavailable or invalid; balances are unknown",
           };
         }
       }),

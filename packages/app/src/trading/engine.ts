@@ -6,6 +6,8 @@
  */
 
 import { CHAINS, type ChainConfig, getChain } from "../chains/config.js";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 /** Supported trade types */
 export type TradeType = "swap" | "bridge" | "limit";
@@ -102,6 +104,14 @@ const DEFAULT_FEES: TradingFeeConfig = {
   feeRecipient: "",    // set in env
 };
 
+function sellTokenOf(url: URL): string {
+  return url.searchParams.get("sellToken") ?? "";
+}
+
+function buyTokenOf(url: URL): string {
+  return url.searchParams.get("buyToken") ?? "";
+}
+
 export class TradingEngine {
   private fees: TradingFeeConfig;
 
@@ -146,6 +156,13 @@ export class TradingEngine {
     url.searchParams.set("outputMint", params.buyToken);
     url.searchParams.set("amount", params.amount);
     url.searchParams.set("slippageBps", String(params.slippageBps ?? 50));
+    // Jupiter rejects /swap with 400 when the quote carries platformFeeBps
+    // but the swap omits feeAccount. Resolve the fee account FIRST and only
+    // request a fee in the quote when the account exists (same cached
+    // resolution reused by the /swap call), keeping quote and swap always
+    // consistent — and swaps working when the treasury ATA is missing.
+    const feeAccount = await resolveJupiterFeeAccount(params.buyToken, config.rpcUrl);
+    if (feeAccount) url.searchParams.set("platformFeeBps", String(getSolanaPlatformFeeBps()));
 
     const res = await fetch(url.toString(), {
       headers: process.env.JUPITER_API_KEY ? { "x-api-key": process.env.JUPITER_API_KEY } : undefined,
@@ -201,6 +218,7 @@ export class TradingEngine {
     url.searchParams.set("sellAmount", params.amount);
     url.searchParams.set("taker", params.taker || DEFAULT_TAKER);
     url.searchParams.set("slippageBps", String(params.slippageBps ?? 100));
+    this.applyEvmAffiliateFee(url, resolveToken);
 
     const res = await fetch(url.toString(), {
       headers: { "0x-version": "v2", "0x-api-key": process.env.ZERO_X_API_KEY ?? "" },
@@ -239,6 +257,8 @@ export class TradingEngine {
    */
   async prepareSelfCustodyTransaction(params: TradeParams, walletAddress: string): Promise<{
     quote: TradeQuote;
+    /** Effective on-chain fee bps applied to THIS swap (0 = none). */
+    platformFeeBps?: number;
     unsignedTransaction: {
       kind: "solana" | "evm";
       serialized?: string;
@@ -254,6 +274,7 @@ export class TradingEngine {
     if (params.fromChain === "solana") {
       const config = getChain(params.fromChain);
       if (!config || !quote.raw) throw new Error("quote is missing a Solana transaction payload");
+      const swapFeeAccount = await resolveJupiterFeeAccount(params.buyToken, config.rpcUrl);
       const response = await fetch(`${config.dexApiUrl}/swap`, {
         method: "POST",
         headers: {
@@ -264,6 +285,7 @@ export class TradingEngine {
           quoteResponse: quote.raw,
           userPublicKey: walletAddress,
           wrapAndUnwrapSol: true,
+          ...(swapFeeAccount ? { feeAccount: swapFeeAccount } : {}),
         }),
       });
       if (!response.ok) throw new Error(`swap transaction preparation failed: ${response.status}`);
@@ -271,6 +293,7 @@ export class TradingEngine {
       if (!body.swapTransaction) throw new Error("provider returned no Solana transaction");
       return {
         quote,
+        platformFeeBps: swapFeeAccount ? getSolanaPlatformFeeBps() : 0,
         unsignedTransaction: {
           kind: "solana",
           serialized: body.swapTransaction,
@@ -287,6 +310,7 @@ export class TradingEngine {
     }
     return {
       quote,
+      platformFeeBps: getEvmAffiliateFeeBps(),
       unsignedTransaction: {
         kind: "evm",
         to: transaction.to,
@@ -297,6 +321,32 @@ export class TradingEngine {
         chainId: config.chainId,
       },
     };
+  }
+
+  /**
+   * On-chain affiliate fee (0x v2): taken inside the swap by the aggregator,
+   * so the taker's sell delta still equals sellAmount and receipt parsing
+   * remains valid. Off by default — set EVM_SWAP_FEE_RECIPIENT (0x address)
+   * and optionally EVM_SWAP_FEE_BPS (0-1000, default 30 = 0.3%) to enable.
+   * The fee token is the sell token (USDC when buying), falling back to the
+   * buy token when selling a native-adjacent route.
+   */
+  private applyEvmAffiliateFee(url: URL, resolveToken: (raw: string) => string): void {
+    const bps = getEvmAffiliateFeeBps();
+    if (bps <= 0) return;
+    const recipient = process.env.EVM_SWAP_FEE_RECIPIENT!;
+    const NATIVE_SENTINEL = "0xeeee";
+    const sell = resolveToken(sellTokenOf(url));
+    const feeToken = !sell.toLowerCase().startsWith(NATIVE_SENTINEL)
+      ? sell
+      : (() => {
+          const buy = resolveToken(buyTokenOf(url));
+          return buy.toLowerCase().startsWith(NATIVE_SENTINEL) ? null : buy;
+        })();
+    if (!feeToken) return;
+    url.searchParams.set("swapFeeRecipient", recipient);
+    url.searchParams.set("swapFeeBps", String(bps));
+    url.searchParams.set("swapFeeToken", feeToken);
   }
 
   /** Li.Fi bridge quote for cross-chain */
@@ -331,4 +381,102 @@ export class TradingEngine {
       expiresAt: Date.now() + 60_000,
     };
   }
+}
+
+/**
+ * EVM affiliate fee env parsing. Returns 0 when disabled or misconfigured —
+ * never a half-applied fee. Shared by the engine (quote params) and the
+ * reconciler (expected-fee accounting) so both sides always agree.
+ */
+export function getEvmAffiliateFeeBps(): number {
+  const recipient = process.env.EVM_SWAP_FEE_RECIPIENT;
+  if (!recipient || !/^0x[0-9a-fA-F]{40}$/.test(recipient)) return 0;
+  const bpsRaw = process.env.EVM_SWAP_FEE_BPS ?? "30";
+  if (!/^\d{1,4}$/.test(bpsRaw) || Number(bpsRaw) > 1000) return 0;
+  return Number(bpsRaw);
+}
+
+/**
+ * Solana platform fee env parsing (shared by quote and swap-build). Returns
+ * 0 when disabled or misconfigured — never a half-applied fee.
+ */
+export function getSolanaPlatformFeeBps(): number {
+  if (!getSolanaPlatformFeeAccount() && !getSolanaPlatformFeeOwner()) return 0;
+  const bpsRaw = process.env.SOLANA_PLATFORM_FEE_BPS ?? "30";
+  if (!/^\d{1,4}$/.test(bpsRaw) || Number(bpsRaw) > 1000) return 0;
+  return Number(bpsRaw);
+}
+
+function getSolanaPlatformFeeAccount(): string | undefined {
+  const account = process.env.SOLANA_PLATFORM_FEE_ACCOUNT;
+  if (!account || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(account)) return undefined;
+  return account;
+}
+
+function getSolanaPlatformFeeOwner(): string | undefined {
+  const owner = process.env.SOLANA_PLATFORM_FEE_OWNER;
+  if (!owner || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(owner)) return undefined;
+  return owner;
+}
+
+/**
+ * Jupiter's swap-level feeAccount must be a token account owned by the fee
+ * recipient for the OUTPUT mint of each swap. With SOLANA_PLATFORM_FEE_OWNER
+ * set, derive the owner's Associated Token Account per output mint.
+ * SOLANA_PLATFORM_FEE_ACCOUNT (static) takes precedence as an override —
+ * it only works when every traded output mint shares one account, so the
+ * owner-based derivation is the preferred configuration. Returns undefined
+ * when the fee is disabled or the config is invalid — never a guessed
+ * account.
+ */
+export function getSolanaPlatformFeeAccountForMint(outputMint: string): string | undefined {
+  const staticAccount = getSolanaPlatformFeeAccount();
+  if (staticAccount) return staticAccount;
+  const owner = getSolanaPlatformFeeOwner();
+  if (!owner) return undefined;
+  try {
+    return getAssociatedTokenAddressSync(new PublicKey(outputMint), new PublicKey(owner), true).toBase58();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Fee-account existence cache: true = fee applies, false = skip fee. Exported for test isolation. */
+export const feeAccountExistsCache = new Map<string, { exists: boolean; checkedAt: number }>();
+const FEE_ACCOUNT_CACHE_TTL_MS = 5 * 60_000;
+
+/**
+ * Jupiter debits the platform fee by transferring output tokens to the
+ * configured feeAccount, which must ALREADY EXIST or the whole swap fails
+ * on-chain (SPL transfers to a non-existent account abort). With a fresh
+ * treasury most fee ATAs do not exist yet, so the fee is applied per output
+ * mint only when the derived account exists (RPC check with a short-TTL
+ * cache); otherwise the swap proceeds fee-free — a slightly missed fee is
+ * always preferable to breaking user swaps. RPC trouble also degrades to
+ * fee-off, never to a broken swap.
+ */
+export async function resolveJupiterFeeAccount(outputMint: string, rpcUrl: string): Promise<string | undefined> {
+  const bps = getSolanaPlatformFeeBps();
+  if (bps <= 0) return undefined;
+  const feeAccount = getSolanaPlatformFeeAccountForMint(outputMint);
+  if (!feeAccount) return undefined;
+  const cached = feeAccountExistsCache.get(feeAccount);
+  if (cached && Date.now() - cached.checkedAt < FEE_ACCOUNT_CACHE_TTL_MS) {
+    return cached.exists ? feeAccount : undefined;
+  }
+  let exists = false;
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [feeAccount, { encoding: "base64" }] }),
+    });
+    const data = await res.json() as { result?: { value?: unknown } };
+    exists = Boolean(data.result?.value);
+  } catch {
+    exists = false;
+  }
+  if (feeAccountExistsCache.size > 500) feeAccountExistsCache.clear();
+  feeAccountExistsCache.set(feeAccount, { exists, checkedAt: Date.now() });
+  return exists ? feeAccount : undefined;
 }

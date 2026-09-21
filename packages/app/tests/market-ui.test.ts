@@ -12,6 +12,14 @@ async function feed(request: (path: string) => Promise<any> = async () => ({ pai
   return (module.namespace as any).DexFeed;
 }
 describe("market identity and batches", () => {
+  it("requests pools for the selected network, not a filtered global sample", async () => {
+    const calls: string[] = [];
+    const f = await feed(async (path) => { calls.push(path); return { pairs: [] }; });
+    await f.getTrending({ chains: ["base"], page: 3, kind: "new" });
+    expect(calls[0]).toContain("chain=base");
+    expect(calls[0]).toContain("page=3");
+  });
+
   it("does not conflate the same contract on different chains", async () => {
     const f = await feed();
     const address = "0x" + "a".repeat(40);

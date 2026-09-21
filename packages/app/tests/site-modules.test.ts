@@ -17,6 +17,14 @@ const SITE_JS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 
 describe("frontend module graph", () => {
   const files = readdirSync(SITE_JS_DIR).filter((f) => f.endsWith(".js"));
+  it("versions the whole module graph so deployments cannot mix cached releases", () => {
+    const html = readFileSync(join(SITE_JS_DIR, "..", "app.html"), "utf8");
+    const map = JSON.parse(html.match(/<script type="importmap">([\s\S]*?)<\/script>/)![1]).imports;
+    const version = new URL(map["./js/app.js"], "https://test.local").search;
+    expect(version).toMatch(/^\?v=\d{8}-\d+$/);
+    for (const file of files) expect(map["./js/" + file]).toBe("./js/" + file + version);
+    expect(html).toContain('src="js/app.js' + version + '"');
+  });
 
   it("finds the expected site modules", () => {
     expect(files.length).toBeGreaterThanOrEqual(10);

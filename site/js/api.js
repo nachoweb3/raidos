@@ -75,6 +75,38 @@ export const ApiClient = {
     });
   },
 
+  /** Attach a signature-verified wallet to the currently authenticated account. */
+  async linkWallet(payload) {
+    return this.request("/api/wallet/link", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // ── Operator (admin) endpoints — secret via header, never the body ──
+
+  async getExecutionStatus(adminSecret) {
+    return this.request("/api/admin/execution", {
+      headers: { "x-admin-secret": adminSecret },
+    });
+  },
+
+  async setExecutionEnabled(adminSecret, enabled) {
+    return this.request("/api/admin/execution", {
+      method: "POST",
+      headers: { "x-admin-secret": adminSecret },
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  async reconcilePending(adminSecret) {
+    return this.request("/api/admin/reconcile", {
+      method: "POST",
+      headers: { "x-admin-secret": adminSecret },
+      body: "{}",
+    });
+  },
+
   async loginWallet(chain, address, message, signature, nonce) {
     // Referral attribution: ?ref=CODE captured on landing is attached to the
     // FIRST wallet login (server binds referred_by once, immutably).
@@ -263,6 +295,7 @@ export const ApiClient = {
     return this.request(`/api/prediction/events?${q.toString()}`);
   },
 
+  /** Prediction markets are read-only until a non-custodial CLOB adapter is certified. */
   async placePredictionOrder(payload) {
     return this.request("/api/prediction/order", {
       method: "POST",
@@ -299,6 +332,121 @@ export const ApiClient = {
       method: "POST",
       body: JSON.stringify({ tokenAmount }),
     });
+  },
+
+  /** Public launch detail. */
+  async getLaunch(launchId) {
+    return this.request(`/api/launches/${launchId}`);
+  },
+
+  /** Curve quote. Buy amounts are micro-USDC; sell amounts whole tokens. */
+  async quoteLaunch(launchId, side, amount) {
+    const q = new URLSearchParams({ side, amount: String(amount) });
+    return this.request(`/api/launches/${launchId}/quote?${q.toString()}`);
+  },
+
+  /** Caller's own position on a launch. */
+  async getLaunchPosition(launchId) {
+    return this.request(`/api/launches/${launchId}/position`);
+  },
+
+  /** Real ledger activity across all launches. */
+  async getLaunchActivity(limit = 15) {
+    return this.request(`/api/launches/activity?limit=${limit}`);
+  },
+
+  /** Caller's claim state on a launch (net tokens + registered wallet). */
+  async getLaunchClaim(launchId) {
+    return this.request(`/api/launches/${launchId}/claim`);
+  },
+
+  /**
+   * Register the wallet that would receive curve holdings if the launch
+   * migrates on-chain. Requires a fresh signature (same challenge flow as
+   * wallet linking); the server verifies it before storing the wallet.
+   */
+  async registerLaunchClaim(launchId, payload) {
+    return this.request(`/api/launches/${launchId}/claim`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // ── Launch AMM (post-graduation pool) ──
+
+  /** Pool snapshot: live reserves + price (chain truth). */
+  async getLaunchPool(launchId) {
+    return this.request(`/api/launches/${launchId}/pool`);
+  },
+
+  /** Quote a swap against live reserves. amountIn/minOut are base-unit strings. */
+  async quoteLaunchSwap(launchId, payload) {
+    return this.request(`/api/launches/${launchId}/pool/quote`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Get the unsigned swap tx. Requires live mode + linked wallet. */
+  async prepareLaunchSwap(launchId, payload) {
+    return this.request(`/api/launches/${launchId}/pool/swap/prepare`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Submit the user-signed swap for pool co-sign + broadcast. */
+  async submitLaunchSwap(launchId, payload) {
+    return this.request(`/api/launches/${launchId}/pool/swap/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // ── Raydium LaunchLab (real on-chain curve, self-custody) ──
+  async listLaunchLabLaunches(limit = 50) {
+    return this.request(`/api/launchlab/list?limit=${limit}`);
+  },
+
+  async getLaunchLabState(mintA, quote = "sol") {
+    return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/state?quote=${quote}`);
+  },
+
+  async quoteLaunchLab(mintA, { side, amount, slippageBps = 100, quote = "sol" }) {
+    const qs = new URLSearchParams({ side, amount, slippageBps: String(slippageBps), quote });
+    return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/quote?${qs}`);
+  },
+
+  async prepareLaunchLabSwap(mintA, payload) {
+    return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/prepare`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async submitLaunchLabSwap(mintA, payload) {
+    return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async prepareLaunchLabCreate(payload) {
+    return this.request("/api/launchlab/create-tx", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async confirmLaunchLabCreate(payload) {
+    return this.request("/api/launchlab/confirm-create", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getLaunchLabActivity(mintA, limit = 20) {
+    return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/activity?limit=${limit}`);
   },
 
   // ── Copy-trade settings ──

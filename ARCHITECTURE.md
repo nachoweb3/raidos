@@ -1,6 +1,20 @@
 # Trenches: arquitectura real
 
+## Auditoría vigente — 2026-09-16
+
+Consultar `MASTER_PLAN.md` y `IMPLEMENTATION_STATUS.md` para el estado vigente. Los apartados siguientes documentan la base heredada; «mercado integrado» no significa indexación persistente ni capacidad certificada de operar. La auditoría detectó un bypass de ejecución en prediction/order, balances desconocidos convertidos en cero y ausencia de catálogo/worker. La evolución será aditiva, conservando el frontend ES modules y SQLite en una instancia hasta medir carga. Referencia: `docs/audit/2026-09-16-baseline.md`.
+
 Estado de esta entrega: mercado público integrado; ejecución con dinero real deshabilitada. Las capacidades se publican en `GET /api/chains`. Tener un proveedor de precios o una cotización no acredita una ejecución.
+
+### Ampliación local verificada: catálogo y terminal
+
+`MarketDataService` → `MarketCatalog` (SQLite) → `/api/market/catalog` → `CatalogBoard` (tres consultas independientes, páginas de 40 y DOM virtualizado). Las búsquedas/pools existentes alimentan el catálogo. POST `/api/market/import` valida red+contrato y exige pools del activo solicitado.
+
+`MarketIndexer` usa `market_jobs`: descubrimiento paginado del proveedor y actualización de activos observados. El worker es un proceso separado con el mismo DB_PATH; los leases, checkpoints y escrituras se confirman atómicamente. Los datos antiguos se conservan con estado explícito; no se inventan precios. Las migraciones del catálogo son aditivas y versionadas.
+
+`TerminalView` mantiene montadas las columnas mientras abre un diálogo nativo: ventana amplia en escritorio, pantalla completa en móvil. La URL conserva red+contrato, filtros y búsqueda. Atrás/Escape restauran el contexto; la instancia del gráfico se reutiliza. Las referencias por símbolo se etiquetan como referencias sin contrato.
+
+Esta ampliación está publicada en inusaur.online y raidos-api.fly.dev; verificación pública final el 2026-09-17. Polygon, Arbitrum y Monad están retiradas de las redes disponibles; sus registros históricos no se borran. No es indexación exhaustiva on-chain, no certifica rutas USDC y no cambia la política de firma/envío. Evidencia en `docs/audit/2026-09-17-release.md`; límites en `docs/MARKET_OPERATIONS.md`.
 
 ## Repositorios y despliegue
 

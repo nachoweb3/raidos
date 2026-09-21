@@ -39,7 +39,7 @@ describe("execution reconciler", () => {
         ],
       },
     }, { walletAddress: wallet, sellToken: usdc, buyToken: moon, sellAmount: "10000000" })).toEqual({
-      sellToken: usdc, buyToken: moon, sellAmount: "10000000", buyAmount: "100000", feeUsdc: "0",
+      sellToken: usdc, buyToken: moon, sellAmount: "10000000", buyAmount: "100000", feeAmount: "0", feeToken: "buy",
     });
   });
 
@@ -107,7 +107,8 @@ describe("execution reconciler", () => {
           buyToken: "MOON",
           sellAmount: "10000000",
           buyAmount: "10000000",
-          feeUsdc: "30000",
+          feeAmount: "30000",
+          feeToken: "sell",
         },
       }),
     };
@@ -117,7 +118,7 @@ describe("execution reconciler", () => {
         side: "buy",
         tokenAmount: fill!.buyAmount,
         usdcAmount: fill!.sellAmount,
-        feeUsdc: fill!.feeUsdc,
+        feeUsdc: fill!.feeAmount, // sell-token fee on a USDC sell = USDC fee
         ts: Math.floor(Date.now() / 1000),
       });
       state.db.settleExecutionTransaction({
@@ -129,7 +130,7 @@ describe("execution reconciler", () => {
         buyToken: fill!.buyToken,
         sellAmount: fill!.sellAmount,
         buyAmount: fill!.buyAmount,
-        feeUsdc: fill!.feeUsdc,
+        feeUsdc: fill!.feeAmount,
         settlementSource: "receipt",
         apply: () => state.db.upsertPosition({ ...position, id: undefined, user_id: tx.user_id, chain: tx.chain, token: "MOON", token_symbol: "MOON" }),
       });
@@ -150,7 +151,7 @@ describe("execution reconciler", () => {
       getReceipt: async () => ({
         status: "confirmed",
         receipt: { block: 11 },
-        fill: { sellToken: "USDC", buyToken: "MOON", sellAmount: "100", buyAmount: "100", feeUsdc: "1" },
+        fill: { sellToken: "USDC", buyToken: "MOON", sellAmount: "100", buyAmount: "100", feeAmount: "1", feeToken: "sell" },
       }),
     };
     const reconciler = new ExecutionReconciler(state.db, provider, async (tx, _receipt, fill) => {
@@ -163,7 +164,7 @@ describe("execution reconciler", () => {
         buyToken: fill!.buyToken,
         sellAmount: fill!.sellAmount,
         buyAmount: fill!.buyAmount,
-        feeUsdc: fill!.feeUsdc,
+        feeUsdc: fill!.feeAmount,
         settlementSource: "receipt",
         apply: () => {
           state.db.addFeedEvent({ type: "swap", actor_id: 1, chain: "solana", token: "MOON", token_symbol: "MOON", ts: 1 });

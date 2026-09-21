@@ -11,6 +11,34 @@
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="stylesheet" href="css/design-system.css">
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="css/catalog.css?v=20260919-4">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260921-4">
+  <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
+  <script type="importmap">
+    { "imports": {
+      "./js/api.js": "./js/api.js?v=20260921-4",
+      "./js/app.js": "./js/app.js?v=20260921-4",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260921-4",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260921-4",
+      "./js/discover.js": "./js/discover.js?v=20260921-4",
+      "./js/feed.js": "./js/feed.js?v=20260921-4",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260921-4",
+      "./js/markets.js": "./js/markets.js?v=20260921-4",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260921-4",
+      "./js/premium.js": "./js/premium.js?v=20260921-4",
+      "./js/rewards.js": "./js/rewards.js?v=20260921-4",
+      "./js/social.js": "./js/social.js?v=20260921-4",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260921-4",
+      "./js/tokens.js": "./js/tokens.js?v=20260921-4",
+      "./js/trading.js": "./js/trading.js?v=20260921-4",
+      "./js/trenches.js": "./js/trenches.js?v=20260921-4",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260921-4",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260921-4",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260921-4",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260921-4",
+      "./js/public-market.js": "./js/public-market.js?v=20260921-4"
+    } }
+  </script>
 
   <style>
     /* ── Mobile-First Shell Layout ── */
@@ -345,12 +373,11 @@
           <option value="base">Base</option>
           <option value="ethereum">Ethereum</option>
           <option value="bsc">BNB Chain</option>
-          <option value="arbitrum">Arbitrum</option>
-          <option value="polygon">Polygon</option>
           <option value="robinhood">Robinhood Chain</option>
-          <option value="monad">Monad</option>
           <option value="arc">Arc</option>
         </select>
+
+        <button class="btn btn-ghost btn-sm" onclick="window.App.openOperatorPanel()" title="Control de operador" style="font-size:11px">⚙</button>
 
         <button class="btn btn-primary btn-sm" id="headerAuthBtn" onclick="window.App.openWalletModal()">
           Conectar
@@ -506,7 +533,7 @@
             <span class="brand-badge" id="trenchesLiveBadge" style="font-size:9px; background:rgba(34,197,94,0.12); color:var(--delta-green); border:1px solid rgba(34,197,94,0.3)">LIVE</span>
           </h2>
           <input type="text" id="trenchesSearch" placeholder="Filtrar por nombre o símbolo…" oninput="window.TrenchesEngine.setSearch(this.value)" style="flex:1; min-width:160px; max-width:300px; padding:7px 10px; font-size:12px">
-          <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.load(true)" title="Recargar">↻</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMarket(true)" title="Recargar catálogo">↻</button>
           <span id="trenchesCount" style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)"></span>
         </div>
 
@@ -514,12 +541,14 @@
         <div id="trenchesTradersStrip" style="display:flex; align-items:center; gap:8px; overflow-x:auto; padding:0 2px 10px; scrollbar-width:none"></div>
 
         <!-- TRENCHES Grid: scan columns + execution sidebar -->
-        <div style="display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:14px; align-items:start" class="trenches-layout">
+        <div style="display:grid; grid-template-columns:minmax(0,1fr); gap:14px; align-items:start" class="trenches-layout">
           <!-- Scan Columns (New / Soon / Migrated) -->
           <div class="trenches-grid" id="trenchesColumns"></div>
 
           <!-- Execution Sidebar -->
-          <div style="display:flex; flex-direction:column; gap:12px; min-width:0">
+          <dialog id="tokenTerminal" class="token-terminal" aria-labelledby="terminalSymbol">
+          <header class="terminal-navigation"><button type="button" data-terminal-close>Volver</button><span data-terminal-message role="status"></span><button type="button" data-terminal-share>Copiar enlace</button></header>
+          <div class="terminal-content">
           <!-- Token Header Bar (execution terminal) -->
           <div class="glass-panel" style="padding:14px 16px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
             <div style="display:flex; align-items:center; gap:12px; min-width:0">
@@ -540,14 +569,18 @@
           </div>
 
           <!-- Chart Column -->
-          <div class="glass-panel" style="padding:16px; display:flex; flex-direction:column">
+          <div id="terminalChartPanel" class="glass-panel" style="padding:16px; display:flex; flex-direction:column; min-width:0">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px; color:var(--text-tertiary); font-family:var(--font-mono)">
-              <span>OHLC · Pools 5 min / referencia 30 min</span>
+              <label>Pool OHLC <select aria-label="Intervalo de velas" onchange="window.TradingEngine.setCandleInterval(this.value)" style="font-size:11px;padding:3px"><option value="1">1 min</option><option value="5" selected>5 min</option><option value="15">15 min</option></select><small> · referencia 30 min</small></label>
               <span id="chartDataStatus">Historial pendiente</span>
             </div>
 
             <!-- Lightweight Chart Mount -->
+            <div id="chartTools"></div>
             <div id="tvChartContainer" style="width:100%; height:380px"></div>
+            <div id="rsiChart" hidden style="width:100%; height:150px" aria-label="RSI de Wilder"></div>
+            <section id="poolActivity" class="pool-activity" aria-label="Actividad de wallets del pool"></section>
+            <small class="chart-attribution">TradingView Lightweight Charts™ · Copyright © 2023 TradingView, Inc. · <a href="https://www.tradingview.com/">TradingView</a> · <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a></small>
           </div>
 
           <!-- Order Form Column -->
@@ -586,11 +619,11 @@
               </div>
               <div style="display:flex; justify-content:space-between">
                 <span>Comisión cotizada:</span>
-                <span id="estFeeAmount">$0.00</span>
+                <span id="estFeeAmount">—</span>
               </div>
             </div>
 
-            <p id="terminalStatus" style="font-size:12px;color:var(--text-tertiary)">Mercado disponible. La ejecución requiere verificación de firma y liquidación on-chain.</p>
+            <p id="terminalStatus" style="font-size:12px;color:var(--text-tertiary)">Ejecución real self-custody: firmas en tu wallet (Phantom/MetaMask), liquidación solo con recibo on-chain verificado. Redes: Solana, Ethereum y Base.</p>
             <!-- Execute Button -->
             <button class="btn btn-primary btn-lg" id="executeOrderBtn" disabled onclick="window.TradingEngine.executeTrade()">
               Ejecución no disponible
@@ -608,6 +641,7 @@
             </div>
           </div>
           </div><!-- /execution sidebar -->
+          </dialog>
         </div>
 
         <!-- Active Positions Section -->
@@ -716,6 +750,9 @@
         </button>
         <button class="btn btn-secondary btn-lg" onclick="window.App.connectMetaMask()" style="justify-content:flex-start">
           <span>🦊</span> MetaMask (EVM / Base / Ethereum)
+        </button>
+        <button class="btn btn-ghost btn-sm" id="linkWalletBtn" onclick="window.App.linkWalletToAccount()" style="display:none; justify-content:center; font-size:11px">
+          Vincular otra wallet a esta cuenta (para operar)
         </button>
       </div>
 
@@ -882,6 +919,73 @@
     </div>
   </div>
 
+  <!-- 6b. Launchpad: create token modal -->
+  <div class="modal-backdrop" id="launchCreateModal">
+    <div class="modal-window" style="padding:24px; max-width:460px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 style="font-size:15px; font-weight:700; color:var(--text-primary); margin:0">🚀 Crear token</h3>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="closeLaunchModals()">✕</button>
+      </div>
+      <form id="launchCreateForm" onsubmit="window.MarketsEngine.submitCreateLaunch(event)">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px">
+          <label style="font-size:10.5px; color:var(--text-secondary)">Cadena
+            <select id="lcChain" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px">
+              <option value="solana">Solana</option>
+              <option value="base">Base</option>
+              <option value="ethereum">Ethereum</option>
+              <option value="bsc">BNB Chain</option>
+              <option value="arc">Arc</option>
+              <option value="robinhood">Robinhood Chain</option>
+            </select>
+          </label>
+          <label style="font-size:10.5px; color:var(--text-secondary)">Símbolo (2-10, A-Z/0-9)
+            <input id="lcSymbol" required maxlength="10" pattern="[A-Za-z0-9]{2,10}" placeholder="TRN" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px; text-transform:uppercase">
+          </label>
+        </div>
+        <label style="display:block; font-size:10.5px; color:var(--text-secondary); margin-bottom:10px">Nombre
+          <input id="lcName" required maxlength="64" placeholder="Trenches Coin" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px">
+        </label>
+        <label style="display:block; font-size:10.5px; color:var(--text-secondary); margin-bottom:10px">Supply inicial (entero, opcional — default 1B)
+          <input id="lcSupply" inputmode="numeric" placeholder="1000000000000" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px">
+        </label>
+        <label style="display:block; font-size:10.5px; color:var(--text-secondary); margin-bottom:10px">Descripción (opcional)
+          <textarea id="lcDescription" maxlength="500" rows="2" placeholder="En qué consiste tu token…" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px; resize:vertical"></textarea>
+        </label>
+        <div id="launchCreateLinks" style="display:none">
+          <label style="display:block; font-size:10.5px; color:var(--text-secondary); margin-bottom:10px">URL del logo (https)
+            <input id="lcImage" type="url" placeholder="https://…" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12.5px">
+          </label>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:10px">
+            <label style="font-size:10.5px; color:var(--text-secondary)">𝕏 / Twitter
+              <input id="lcTwitter" type="url" placeholder="https://x.com/…" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12px">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-secondary)">Telegram
+              <input id="lcTelegram" type="url" placeholder="https://t.me/…" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12px">
+            </label>
+            <label style="font-size:10.5px; color:var(--text-secondary)">Website
+              <input id="lcWebsite" type="url" placeholder="https://…" style="width:100%; margin-top:4px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 10px; color:var(--text-primary); font-size:12px">
+            </label>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="toggleCreateFields()" style="margin-bottom:12px">＋ Redes y logo (opcional)</button>
+        <p id="launchCreateError" style="display:none; font-size:11px; color:var(--accent-red, #ff5a5f); margin-bottom:10px"></p>
+        <p style="font-size:9.5px; color:var(--text-tertiary); margin-bottom:12px">La curva es una simulación en el servidor (sin contrato on-chain todavía). Fee de listado: 10 USDC.</p>
+        <button type="submit" id="launchCreateSubmit" class="btn btn-primary" style="width:100%">🚀 Lanzar token</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 6c. Launchpad: token detail + trade modal -->
+  <div class="modal-backdrop" id="launchDetailModal">
+    <div class="modal-window" style="padding:24px; max-width:480px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 style="font-size:15px; font-weight:700; color:var(--text-primary); margin:0">🚀 Ficha del token</h3>
+        <button class="btn btn-ghost btn-sm" onclick="closeLaunchModals()">✕</button>
+      </div>
+      <div id="launchDetailBody"></div>
+    </div>
+  </div>
+
   <!-- 7. Market Event Modal (prediction markets) -->
   <div class="modal-backdrop" id="marketEventModal">
     <div class="modal-window" style="padding:24px; max-width:480px">
@@ -894,9 +998,19 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=20260921-4"></script>
 
   <script>
+    // Launchpad modal helpers
+    function closeLaunchModals() {
+      if (window.MarketsEngine?.closeLaunch) window.MarketsEngine.closeLaunch();
+    }
+
+    function toggleCreateFields() {
+      const box = document.getElementById('launchCreateLinks');
+      if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    }
+
     // Inline helpers for filters
     function setFeedFilter(btn, filter) {
       btn.parentElement.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
@@ -1125,6 +1239,29 @@
           <button type="submit" class="btn btn-primary" id="epSaveBtn">Guardar perfil</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 4. Operator Panel (admin) -->
+  <div class="modal-backdrop" id="operatorModal">
+    <div class="modal-window" style="padding:28px; max-width:420px">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 style="font-size:18px; font-weight:800">⚙ Panel de operador</h3>
+        <button class="btn btn-ghost btn-sm" onclick="window.App.closeOperatorPanel()">✕</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-secondary); margin-bottom:14px">
+        Acceso restringido. Introduce el secreto de operador para consultar y controlar la ejecución real.
+      </p>
+      <input type="password" id="operatorSecretInput" placeholder="Secreto de operador" autocomplete="off" style="width:100%; margin-bottom:10px">
+      <div style="display:flex; gap:10px; margin-bottom:14px">
+        <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window.App.operatorLoad()">Consultar</button>
+        <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window.App.operatorReconcile()">Reconciliar</button>
+      </div>
+      <div id="operatorStatus" style="display:none; font-size:12.5px; line-height:1.7; padding:12px; border-radius:var(--radius-sm); background:var(--bg-secondary); margin-bottom:14px"></div>
+      <div id="operatorControls" style="display:none; gap:10px">
+        <button class="btn btn-lg" id="operatorToggleBtn" style="width:100%" onclick="window.App.operatorToggle()">—</button>
+      </div>
+      <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
 </body>

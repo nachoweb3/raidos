@@ -14,6 +14,7 @@ const fmtUsd = (n) =>
 
 /** Keep only characters safe for inline JS handler strings. */
 const safeHandle = (h) => String(h || "").replace(/[^a-zA-Z0-9_@.\-]/g, "");
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 export const SocialEngine = {
   container: null,
@@ -139,11 +140,11 @@ export const SocialEngine = {
               #${l.rank}
             </span>
 
-            <div class="author-avatar" style="width:40px; height:40px; font-size:14px">${l.avatar}</div>
+            <div class="author-avatar" style="width:40px; height:40px; font-size:14px">${esc(l.avatar)}</div>
 
             <div>
               <div style="display:flex; align-items:center; gap:8px">
-                <span style="font-weight:700; font-size:14.5px; color:#fff">${l.displayName}</span>
+                <span style="font-weight:700; font-size:14.5px; color:#fff">${esc(l.displayName)}</span>
                 <span class="brand-badge" style="font-size:10px; color:var(--text-tertiary)">${l.handle}</span>
               </div>
               <div style="font-size:11.5px; color:var(--text-tertiary); font-family:var(--font-mono); margin-top:2px">
@@ -166,7 +167,7 @@ export const SocialEngine = {
               <button class="btn ${isFollowing ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="window.SocialEngine.toggleFollow('${l.handle}')">
                 ${isFollowing ? 'Siguiendo' : 'Follow'}
               </button>
-              <button class="btn btn-primary btn-sm" onclick='window.SocialEngine.openCopyModal(${JSON.stringify({ handle: l.handle, displayName: l.displayName }).replace(/'/g, "&#39;")})'>
+              <button class="btn btn-primary btn-sm" onclick='window.SocialEngine.openCopyModal(${esc(JSON.stringify({ handle: l.handle, displayName: l.displayName }))})'>
                 Copy
               </button>
             </div>

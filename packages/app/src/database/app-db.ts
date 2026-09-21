@@ -9,9 +9,11 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateApiKey } from "../api/auth.js";
 import { summarizeSettledTrades } from "../trading/pnl.js";
+import { MarketCatalog } from "../market/catalog.js";
 
 export class AppDb {
   private db: Database.Database;
+  readonly marketCatalog: MarketCatalog;
 
   constructor(dbPath: string, private readonly accountingMode?: "live" | "mock") {
     // better-sqlite3 creates the file but not its parent dir — ensure it exists
@@ -20,6 +22,7 @@ export class AppDb {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.migrate();
+    this.marketCatalog = new MarketCatalog(this.db);
   }
 
   private migrate(): void {
@@ -310,6 +313,30 @@ export class AppDb {
       );
       CREATE INDEX IF NOT EXISTS idx_execution_fills_user ON execution_fills(user_id, settled_at DESC);
 
+      -- Self-custody execution sessions: durable prepare → sign → submit handoff.
+      -- The server stores the exact unsigned request; the user signs it in their
+      -- own wallet. A session is consumable exactly once by its owner.
+      CREATE TABLE IF NOT EXISTS self_custody_sessions (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'prepared',
+        result_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_self_custody_sessions_user ON self_custody_sessions(user_id, created_at DESC);
+
+      -- Durable application settings (kill switches, feature gates).
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
       -- Leaderboard snapshots per period
       CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
         period TEXT NOT NULL,
@@ -327,7 +354,41 @@ export class AppDb {
     if (!hasExecutionTrade) this.db.exec("ALTER TABLE execution_transactions ADD COLUMN trade_id INTEGER");
     const hasPositionMode = this.db.prepare("SELECT 1 FROM pragma_table_info('positions') WHERE name = 'accounting_mode'").get();
     if (!hasPositionMode) this.db.exec("ALTER TABLE positions ADD COLUMN accounting_mode TEXT NOT NULL DEFAULT 'legacy'");
-    // Launchpad social links (Discover advanced filters + market cards).
+    // Launchpad trading ledger: per-user gross buys and sells on the curve.
+    // Selling must be covered by real (non-sold) holdings, so every fill is
+    // recorded in the same SQLite transaction that moves the curve state.
+    for (const [col, decl] of [
+      ["token_symbol", "TEXT"],
+      ["launch_image_url", "TEXT"],
+      ["launch_twitter_url", "TEXT"],
+      ["launch_telegram_url", "TEXT"],
+      ["launch_website_url", "TEXT"],
+      ["graduation_simulated", "INTEGER NOT NULL DEFAULT 0"],
+      ["last_trade_at", "INTEGER"],
+      // On-chain graduation factory state (v1: Solana SPL via Token-2022).
+      ["mint_address", "TEXT"],
+      ["factory_status", "TEXT"],
+      ["factory_result", "TEXT"],
+      ["graduated_on_chain", "INTEGER NOT NULL DEFAULT 0"],
+    ] as const) {
+      const has = this.db.prepare("SELECT 1 FROM pragma_table_info('launches') WHERE name = ?").get(col);
+      if (!has) this.db.exec(`ALTER TABLE launches ADD COLUMN ${col} ${decl}`);
+    }
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS launch_trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        launch_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        side TEXT NOT NULL,               -- 'buy' | 'sell'
+        token_amount TEXT NOT NULL,       -- whole tokens, absolute value
+        usdc_amount TEXT NOT NULL,        -- micro-USDC, absolute value
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_launch_trades_launch_user ON launch_trades(launch_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_launch_trades_ts ON launch_trades(ts DESC);
+    `);
+
+    // Legacy launchpad columns (older databases may predate them).
     for (const col of ["twitter_url", "telegram_url", "website_url"]) {
       const has = this.db.prepare("SELECT 1 FROM pragma_table_info('launches') WHERE name = ?").get(col);
       if (!has) this.db.exec(`ALTER TABLE launches ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
@@ -335,6 +396,93 @@ export class AppDb {
     // Advanced profile: social links JSON ({twitter, telegram, website, discord}).
     const hasSocial = this.db.prepare("SELECT 1 FROM pragma_table_info('profiles') WHERE name = 'social_links'").get();
     if (!hasSocial) this.db.exec("ALTER TABLE profiles ADD COLUMN social_links TEXT NOT NULL DEFAULT '{}'");
+
+    // ── Launchpad claims: on-chain wallet that will receive curve holdings ──
+    // The simulated curve is pure accounting. To eventually migrate to a real
+    // token, every holder must register (and sign for) a wallet NOW: the
+    // snapshot is derived from the ledger, but the payout target is opt-in.
+    // UNIQUE(user_id, launch_id) makes re-registration an update, never a
+    // duplicate; UNIQUE(launch_id, wallet_address) stops one wallet absorbing
+    // several accounts' holdings.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS launch_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        launch_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(user_id, launch_id),
+        UNIQUE(launch_id, wallet_address)
+      );
+      CREATE INDEX IF NOT EXISTS idx_launch_claims_launch ON launch_claims(launch_id);
+    `);
+
+    // ── Launch AMM pools: post-graduation secondary market ──
+    // Registry only — reserves live on-chain (the SPL vault balances are the
+    // single source of truth). One active pool per launch.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS launch_pools (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        launch_id INTEGER NOT NULL,
+        mint_a TEXT NOT NULL,
+        mint_b TEXT NOT NULL,
+        vault_a TEXT NOT NULL,
+        vault_b TEXT NOT NULL,
+        pool_address TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_launch_pools_launch ON launch_pools(launch_id);
+      CREATE TABLE IF NOT EXISTS pool_swaps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pool_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        side TEXT NOT NULL,
+        amount_in TEXT NOT NULL,
+        amount_out TEXT NOT NULL,
+        min_out TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pool_swaps_pool ON pool_swaps(pool_id, ts DESC);
+
+      -- Raydium LaunchLab (real on-chain curve) launch registry. State lives
+      -- on-chain; this table only remembers which mints OUR platform created
+      -- and confirmed. UNIQUE(mint_a) keeps one row per real SPL mint.
+      CREATE TABLE IF NOT EXISTS launchlab_launches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mint_a TEXT NOT NULL UNIQUE,
+        quote_mint TEXT NOT NULL,
+        pool_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        name TEXT NOT NULL,
+        creator TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        confirmed_at INTEGER,
+        confirmed_signature TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_launchlab_launches_created ON launchlab_launches(created_at DESC);
+
+      -- OUR users' LaunchLab curve fills (buy/sell receipts). The on-chain
+      -- program is the source of truth; this is only a personal activity
+      -- ledger keyed by the confirmed transaction signature (dedup-safe).
+      CREATE TABLE IF NOT EXISTS launchlab_trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mint_a TEXT NOT NULL,
+        quote_mint TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        side TEXT NOT NULL,
+        amount_in TEXT NOT NULL,
+        min_out TEXT NOT NULL,
+        signature TEXT NOT NULL UNIQUE,
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_launchlab_trades_mint ON launchlab_trades(mint_a, ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_launchlab_trades_user ON launchlab_trades(user_id, ts DESC);
+    `);
 
     // ── Rewards program (fee-funded trading + referral rewards) ──
     this.db.exec(`
@@ -550,6 +698,221 @@ export class AppDb {
     this.db.prepare(
       "INSERT INTO launch_buyers (launch_id, user_id, usdc_amount, token_amount, ts) VALUES (?, ?, ?, ?, ?)"
     ).run(launchId, userId, usdcAmount, tokenAmount, Math.floor(Date.now() / 1000));
+  }
+
+  /** Run fn inside a single SQLite transaction; rolls back on throw. */
+  launchTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  /** Lifetime gross buys per user on one launch (whole tokens, micro-USDC). */
+  getLaunchBuyTotals(launchId: number, userId: number): { tokens: bigint; usdc: bigint } {
+    const r = this.db.prepare(
+      "SELECT token_amount, usdc_amount FROM launch_trades WHERE launch_id = ? AND user_id = ? AND side = 'buy'"
+    ).all(launchId, userId) as any[];
+    return r.reduce(
+      (acc, row) => ({ tokens: acc.tokens + BigInt(row.token_amount), usdc: acc.usdc + BigInt(row.usdc_amount) }),
+      { tokens: 0n, usdc: 0n },
+    );
+  }
+
+  /** Lifetime gross sells per user on one launch (whole tokens, micro-USDC). */
+  getLaunchSellTotals(launchId: number, userId: number): { tokens: bigint; usdc: bigint } {
+    const r = this.db.prepare(
+      "SELECT token_amount, usdc_amount FROM launch_trades WHERE launch_id = ? AND user_id = ? AND side = 'sell'"
+    ).all(launchId, userId) as any[];
+    return r.reduce(
+      (acc, row) => ({ tokens: acc.tokens + BigInt(row.token_amount), usdc: acc.usdc + BigInt(row.usdc_amount) }),
+      { tokens: 0n, usdc: 0n },
+    );
+  }
+
+  /** Record one curve fill; the absolute amounts are what moved the launch row. */
+  addLaunchTrade(launchId: number, userId: number, side: "buy" | "sell", tokenAmount: string, usdcAmount: string, ts?: number) {
+    this.db.prepare(
+      "INSERT INTO launch_trades (launch_id, user_id, side, token_amount, usdc_amount, ts) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(launchId, userId, side, tokenAmount, usdcAmount, ts ?? Math.floor(Date.now() / 1000));
+  }
+
+  /** Most recent curve fills across all launches (public activity feed). */
+  listRecentLaunchTrades(limit = 20) {
+    return this.db.prepare(`
+      SELECT t.id, t.launch_id AS launchId, t.user_id AS userId, t.side, t.token_amount AS tokenAmount,
+             t.usdc_amount AS usdcAmount, t.ts,
+             l.symbol, l.name, i.display_name AS traderName
+      FROM launch_trades t
+      JOIN launches l ON l.id = t.launch_id
+      LEFT JOIN identities i ON i.user_id = t.user_id AND i.provider IN ('solana', 'evm')
+      ORDER BY t.ts DESC, t.id DESC LIMIT ?
+    `).all(limit) as any[];
+  }
+
+  // ── Raydium LaunchLab (real on-chain curve) registry + own fills ──
+
+  upsertLaunchLabLaunch(row: { mintA: string; quoteMint: string; poolId: string; symbol: string; name: string; creator: string; ts: number }): void {
+    this.db.prepare(`
+      INSERT INTO launchlab_launches (mint_a, quote_mint, pool_id, symbol, name, creator, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(mint_a) DO UPDATE SET
+        quote_mint = excluded.quote_mint,
+        pool_id = excluded.pool_id,
+        symbol = excluded.symbol,
+        name = excluded.name
+    `).run(row.mintA, row.quoteMint, row.poolId, row.symbol, row.name, row.creator, row.ts);
+  }
+
+  getLaunchLabLaunch(mintA: string): { mint_a: string; quote_mint: string; pool_id: string; symbol: string; name: string; creator: string; created_at: number; confirmed_at: number | null; confirmed_signature: string | null } | null {
+    return this.db.prepare("SELECT * FROM launchlab_launches WHERE mint_a = ?").get(mintA) as any ?? null;
+  }
+
+  markLaunchLabLaunchConfirmed(mintA: string, signature: string, ts: number): void {
+    this.db.prepare("UPDATE launchlab_launches SET confirmed_at = ?, confirmed_signature = ? WHERE mint_a = ?").run(ts, signature, mintA);
+  }
+
+  listLaunchLabLaunches(limit = 50) {
+    return this.db.prepare("SELECT * FROM launchlab_launches ORDER BY created_at DESC LIMIT ?").all(limit) as any[];
+  }
+
+  /**
+   * Record one of OUR users' LaunchLab fills. UNIQUE(signature) makes replays
+   * a no-op; returns true only when a new row was inserted.
+   */
+  recordLaunchLabTrade(row: { mintA: string; quoteMint: string; userId: number; side: "buy" | "sell"; amountIn: string; minOut: string; signature: string; ts?: number }): boolean {
+    const info = this.db.prepare(`
+      INSERT OR IGNORE INTO launchlab_trades (mint_a, quote_mint, user_id, side, amount_in, min_out, signature, ts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(row.mintA, row.quoteMint, row.userId, row.side, row.amountIn, row.minOut, row.signature, row.ts ?? Math.floor(Date.now() / 1000));
+    return info.changes > 0;
+  }
+
+  listLaunchLabTrades(mintA: string, limit = 20) {
+    return this.db.prepare("SELECT * FROM launchlab_trades WHERE mint_a = ? ORDER BY ts DESC, id DESC LIMIT ?").all(mintA, limit) as any[];
+  }
+
+  listUserLaunchLabTrades(userId: number, limit = 20) {
+    return this.db.prepare("SELECT * FROM launchlab_trades WHERE user_id = ? ORDER BY ts DESC, id DESC LIMIT ?").all(userId, limit) as any[];
+  }
+
+  // ── Launch claims (wallet registration for future on-chain migration) ──
+
+  /** Insert or update the claim wallet for (userId, launchId). Throws on wallet collision. */
+  upsertLaunchClaim(launchId: number, userId: number, chain: string, walletAddress: string, message: string): { created: boolean } {
+    const now = Math.floor(Date.now() / 1000);
+    const run = this.db.transaction((): { created: boolean } => {
+      const existing = this.db.prepare(
+        "SELECT id, wallet_address FROM launch_claims WHERE user_id = ? AND launch_id = ?"
+      ).get(userId, launchId) as { id: number; wallet_address: string } | undefined;
+      if (existing) {
+        // Changing to a wallet already claimed by another account on this
+        // launch would let one wallet absorb several holdings.
+        const collision = this.db.prepare(
+          "SELECT user_id FROM launch_claims WHERE launch_id = ? AND wallet_address = ? AND user_id != ?"
+        ).get(launchId, walletAddress, userId) as { user_id: number } | undefined;
+        if (collision) throw new Error("WALLET_IN_USE");
+        this.db.prepare(
+          "UPDATE launch_claims SET chain = ?, wallet_address = ?, message = ?, updated_at = ? WHERE id = ?"
+        ).run(chain, walletAddress, message, now, existing.id);
+        return { created: false };
+      }
+      const info = this.db.prepare(
+        "INSERT INTO launch_claims (launch_id, user_id, chain, wallet_address, message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(launchId, userId, chain, walletAddress, message, now, now);
+      return { created: Number(info.lastInsertRowid) > 0 };
+    });
+    return run();
+  }
+
+  /** The caller's registered claim wallet on a launch, if any. */
+  getLaunchClaim(launchId: number, userId: number) {
+    return this.db.prepare(
+      "SELECT launch_id, chain, wallet_address, created_at, updated_at FROM launch_claims WHERE launch_id = ? AND user_id = ?"
+    ).get(launchId, userId) as any;
+  }
+
+  /**
+   * Net token position per registered claim wallet, derived from the ledger.
+   * Gross buys − gross sells, in whole tokens (ledger unit). Only claims with
+   * a positive net are returned; rows without a claim are excluded entirely —
+   * the factory mints only to wallets that opted in via signed claim.
+   * wallet_address NULL for non-Solana claims (factory skips them).
+   */
+  getLaunchDistribution(launchId: number) {
+    return this.db.prepare(`
+      SELECT c.user_id AS userId,
+             CASE WHEN c.chain = 'solana' THEN c.wallet_address ELSE NULL END AS walletAddress,
+             SUM(CASE WHEN t.side = 'buy' THEN CAST(t.token_amount AS INTEGER) ELSE 0 END)
+               - SUM(CASE WHEN t.side = 'sell' THEN CAST(t.token_amount AS INTEGER) ELSE 0 END) AS netTokens
+      FROM launch_claims c
+      LEFT JOIN launch_trades t ON t.launch_id = c.launch_id AND t.user_id = c.user_id
+      WHERE c.launch_id = ?
+      GROUP BY c.user_id, c.chain, c.wallet_address
+      ORDER BY netTokens DESC
+    `).all(launchId) as Array<{ userId: number; walletAddress: string | null; netTokens: number }>;
+  }
+
+  /** Persist factory lifecycle state. `result` carries the JSON plan or error info. */
+  beginLaunchFactoryExecution(launchId: number, expectedPlan: string, journal: string): boolean {
+    return this.db.prepare("UPDATE launches SET factory_status = 'executing', factory_result = ? WHERE id = ? AND factory_status = 'planned' AND factory_result = ? AND COALESCE(graduated_on_chain, 0) = 0")
+      .run(journal, launchId, expectedPlan).changes === 1;
+  }
+
+  setLaunchFactoryStatus(launchId: number, status: string, result?: string | null, mintAddress?: string | null): void {
+    if (status === "planned") {
+      const changed = this.db.prepare("UPDATE launches SET factory_status = 'planned', factory_result = ?, mint_address = ? WHERE id = ? AND (factory_status IS NULL OR factory_status = 'planned') AND COALESCE(graduated_on_chain, 0) = 0")
+        .run(result ?? null, mintAddress ?? null, launchId).changes;
+      if (changed !== 1) throw new Error("Graduation state changed; review the existing execution");
+      return;
+    }
+    this.db.prepare(
+      "UPDATE launches SET factory_status = ?, factory_result = COALESCE(?, factory_result), mint_address = COALESCE(?, mint_address) WHERE id = ?"
+    ).run(status, result ?? null, mintAddress ?? null, launchId);
+  }
+
+  /** Mark the launch as really graduated: real mint, real supply, real holders. */
+  markGraduatedOnChain(launchId: number, mintAddress: string, txSignature: string): void {
+    this.db.prepare(
+      "UPDATE launches SET graduated_on_chain = 1, graduation_simulated = 0, mint_address = ?, factory_status = 'completed', factory_result = ? WHERE id = ?"
+    ).run(mintAddress, JSON.stringify({ graduated: true, txSignature }), launchId);
+  }
+
+  /** All claims for a launch (operator snapshot helper). */
+  listLaunchClaims(launchId: number) {
+    return this.db.prepare(
+      "SELECT user_id, chain, wallet_address, created_at, updated_at FROM launch_claims WHERE launch_id = ? ORDER BY created_at ASC"
+    ).all(launchId) as any[];
+  }
+
+  // ── Launch AMM (post-graduation secondary market) ──
+  // Reserves are NEVER stored here: the chain is the source of truth. The DB
+  // keeps only the pool registry and swap history for display/audit.
+
+  /** Register a pool. One active pool per launch (registry only). */
+  createLaunchPool(launchId: number, mintA: string, mintB: string, vaultA: string, vaultB: string, poolAddress: string): number {
+    const info = this.db.prepare(
+      "INSERT INTO launch_pools (launch_id, mint_a, mint_b, vault_a, vault_b, pool_address, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)"
+    ).run(launchId, mintA, mintB, vaultA, vaultB, poolAddress, Math.floor(Date.now() / 1000));
+    return Number(info.lastInsertRowid);
+  }
+
+  /** The active pool for a launch, if any. */
+  getLaunchPoolByLaunch(launchId: number) {
+    return this.db.prepare(
+      "SELECT id, launch_id AS launchId, mint_a AS mintA, mint_b AS mintB, vault_a AS vaultA, vault_b AS vaultB, pool_address AS poolAddress, status, created_at AS createdAt FROM launch_pools WHERE launch_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1"
+    ).get(launchId) as any;
+  }
+
+  /** Record a confirmed swap (history + audit; amounts are the prepared floors). */
+  recordPoolSwap(poolId: number, userId: number, side: "buy" | "sell", amountIn: string, amountOut: string, minOut: string, signature: string, ts?: number): void {
+    this.db.prepare(
+      "INSERT INTO pool_swaps (pool_id, user_id, side, amount_in, amount_out, min_out, signature, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(poolId, userId, side, amountIn, amountOut, minOut, signature, ts ?? Math.floor(Date.now() / 1000));
+  }
+
+  /** Recent swaps on a pool (public activity, no user ids). */
+  listPoolSwaps(poolId: number, limit = 20) {
+    return this.db.prepare(
+      "SELECT id, side, amount_in AS amountIn, amount_out AS amountOut, signature, ts FROM pool_swaps WHERE pool_id = ? ORDER BY ts DESC, id DESC LIMIT ?"
+    ).all(poolId, limit) as any[];
   }
 
   // ── Profile methods ───────────────────────────────────────────────────
@@ -880,6 +1243,13 @@ export class AppDb {
     return this.db.prepare("SELECT * FROM execution_fills WHERE intent_id = ?").get(intentId) as any;
   }
 
+  /** Self-custody sessions opened by a user since the given epoch second. */
+  getSelfCustodySessionsSince(userId: number, sinceEpochSeconds: number): any[] {
+    return this.db.prepare(
+      "SELECT id, chain, request_json, status, created_at FROM self_custody_sessions WHERE user_id = ? AND created_at >= ?"
+    ).all(userId, sinceEpochSeconds) as any[];
+  }
+
   getExecutionTransactionContext(transactionId: number) {
     const transaction = this.db.prepare("SELECT * FROM execution_transactions WHERE id = ?").get(transactionId) as any;
     if (!transaction) return undefined;
@@ -890,6 +1260,52 @@ export class AppDb {
 
   getExecutionTransactionContexts() {
     return this.getPendingExecutionTransactions().map((tx: any) => this.getExecutionTransactionContext(tx.id)).filter(Boolean) as Array<{ transaction: any; intent: any; trade: any }>;
+  }
+
+  // ── App settings (durable kill switches) ──
+
+  getAppSetting(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setAppSetting(key: string, value: string): void {
+    this.db.prepare(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run(key, value, Math.floor(Date.now() / 1000));
+  }
+
+  // ── Self-custody sessions ──
+
+  createSelfCustodySession(input: { id: string; userId: number; chain: string; walletAddress: string; requestJson: string }): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare(
+      `INSERT INTO self_custody_sessions (id, user_id, chain, wallet_address, request_json, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'prepared', ?, ?)`
+    ).run(input.id, input.userId, input.chain, input.walletAddress, input.requestJson, now, now);
+  }
+
+  getSelfCustodySession(id: string): any {
+    return this.db.prepare("SELECT * FROM self_custody_sessions WHERE id = ?").get(id) as any;
+  }
+
+  /**
+   * Atomically consume a prepared session exactly once. Replays and foreign
+   * users are rejected without mutating state, so a duplicated submit can
+   * never register the same swap twice.
+   */
+  consumeSelfCustodySession(id: string, userId: number): { ok: true; session: any } | { ok: false; reason: "not_found" | "forbidden" | "already_submitted" | "invalid_state"; session?: any } {
+    const consume = this.db.transaction((): { ok: true; session: any } | { ok: false; reason: "not_found" | "forbidden" | "already_submitted" | "invalid_state"; session?: any } => {
+      const session = this.db.prepare("SELECT * FROM self_custody_sessions WHERE id = ?").get(id) as any;
+      if (!session) return { ok: false, reason: "not_found" };
+      if (session.user_id !== userId) return { ok: false, reason: "forbidden" };
+      if (session.status === "submitted") return { ok: false, reason: "already_submitted", session };
+      if (session.status !== "prepared") return { ok: false, reason: "invalid_state", session };
+      this.db.prepare("UPDATE self_custody_sessions SET status = 'submitted', updated_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000), id);
+      return { ok: true, session };
+    });
+    return consume();
   }
 
   getPendingExecutionTransactions(userId?: number, includeConfirmed = false) {

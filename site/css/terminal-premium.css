@@ -1,0 +1,68 @@
+:root {
+  --bg-canvas:#080e1b; --surface-base:#0b1322; --surface-elevated:#15243a;
+  --surface-glass:rgba(13,24,42,.9); --text-primary:#edf4fc; --text-secondary:#b0c1d6;
+  --text-tertiary:#91a4bb; --border-subtle:rgba(149,186,219,.16);
+}
+.launch-issuance { margin:16px 0; padding:16px; border:1px solid #365474; border-radius:12px; background:#102037; }
+.launch-issuance h3 { font-size:14px; margin-bottom:12px; color:#edf4fc; }
+.launch-issuance dl { display:grid; gap:10px; font-size:12px; }
+.launch-issuance dl>div { display:flex; justify-content:space-between; gap:14px; }
+.launch-issuance dt { color:#b0c1d6; }
+.launch-issuance dd { color:#eac184; text-align:right; margin:0; }
+.launch-issuance p { font-size:12px; line-height:1.6; color:#b0c1d6; margin:12px 0; }
+body { background:radial-gradient(ellipse at 80% 0%,#14274088,transparent 60%),var(--bg-canvas); }
+.terminal-atmosphere { position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; }
+.token-terminal { background:#0b1322; border:1px solid #43617d; border-radius:20px; box-shadow:0 35px 120px #000b,0 0 70px #65cce314; padding:22px; }
+.token-terminal::backdrop { background:#030812cf; backdrop-filter:blur(9px); }
+.terminal-navigation { padding-bottom:14px; border-bottom:1px solid var(--border-subtle); }
+.terminal-navigation button { background:#15243a; border-color:#3c5570; border-radius:9px; }
+.terminal-content { gap:18px; }
+.token-terminal .glass-panel { background:linear-gradient(145deg,#122139a6,#0c1525); border:1px solid #7dacc226; border-radius:14px; }
+#terminalSymbol { color:#edf4fc; }
+#terminalPrice { color:#eac184; font-variant-numeric:tabular-nums; }
+#chartTools select,#chartTools button,#chartTools input[type=number] { background:#14243a; color:#dce9f7; border-color:#3c5570; border-radius:7px; }
+#chartTools summary { color:#b0c1d6; }
+#chartTools input[type=checkbox] { accent-color:#87dded; }
+.pool-activity { border-top:1px solid #7dacc22c; padding-top:18px; margin-top:18px; }
+.pool-activity header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.pool-activity h3 { font-size:17px; font-weight:650; letter-spacing:-.025em; }
+.pool-activity header p { color:#b0c1d6; font-size:12px; margin-top:6px; }
+.pool-activity button,.pool-activity select { color:#dce9f7; background:#14243a; border:1px solid #3c5570; border-radius:7px; min-height:36px; padding:6px 10px; cursor:pointer; }
+.pool-activity button:disabled { opacity:.5; cursor:wait; }
+.activity-controls { display:flex; flex-wrap:wrap; align-items:center; gap:18px; margin:14px 0; font-size:12px; color:#b0c1d6; }
+.activity-controls label { display:flex; align-items:center; gap:8px; }
+.activity-controls input { accent-color:#87dded; }
+.activity-scroll { overflow:auto; max-height:270px; scrollbar-width:thin; }
+.pool-activity table { border-collapse:collapse; width:100%; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.pool-activity caption { text-align:left; color:#b0c1d6; padding:0 0 8px; }
+.pool-activity th { position:sticky; top:0; background:#0f1b2f; color:#b0c1d6; font-weight:500; text-align:left; z-index:1; }
+.pool-activity th,.pool-activity td { padding:9px 10px; border-bottom:1px solid #8faeca18; }
+.pool-activity tr:hover { background:#87dded08; }
+.pool-activity td button { padding:0; min-height:28px; background:none; border:0; color:#c5d7ee; font:inherit; }
+.pool-activity tr[data-side=buy] td:nth-child(3),.pool-activity a { color:#87dded; }
+.pool-activity tr[data-side=sell] td:nth-child(3) { color:#f38c9a; }
+.pool-activity .activity-note { font-size:11px; line-height:1.6; color:#91a4bb; margin:12px 0 2px; max-width:78ch; }
+.token-terminal :is(button,a,input,select):focus-visible { outline:2px solid #eac184; outline-offset:3px; }
+.catalog-column { background:linear-gradient(165deg,#1221399c,#0b1322); border-color:#8faeca26; }
+.catalog-column header { background:#14243a55; }
+.catalog-row:hover { background:#87dded08; }
+@media(max-width:700px) {
+  .token-terminal { border-radius:0; padding:12px; }
+  .terminal-navigation { background:#0b1322; }
+  .terminal-content { gap:12px; }
+  .pool-activity th,.pool-activity td { padding:8px; }
+  .pool-activity button,.pool-activity select { min-height:44px; }
+  .pool-activity td button { min-height:36px; }
+}
+@media(prefers-reduced-motion:reduce) { .terminal-atmosphere { display:none; } }
+:root { --raydium-violet: #a78bfa; }
+.raydium-create { width: min(520px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; margin: auto; padding: 28px; border: 1px solid #7363ae80; border-radius: 22px; background: radial-gradient(ellipse at top right, #38205a80, transparent 65%), #0b1221; color: #eef3ff; box-shadow: 0 30px 120px #000a; }
+.raydium-create::backdrop { background: #030714c9; backdrop-filter: blur(8px); }
+.raydium-eyebrow { color: #bda7ff; font: 10px monospace; letter-spacing: 2px; margin-bottom: 16px; }
+.raydium-create h2 { font-size: 30px; letter-spacing: -1px; margin-bottom: 12px; }
+.raydium-create p, .raydium-create small { color: #a6b3cd; line-height: 1.6; font-size: 12px; }
+.raydium-create label { display: block; margin: 18px 0 8px; font-size: 12px; }
+.raydium-create input { display: block; width: 100%; box-sizing: border-box; margin-top: 7px; padding: 12px; border: 1px solid #7184ae44; border-radius: 9px; background: #050b17; color: #f0f5ff; }
+.raydium-create input:focus { outline: 2px solid #9c80ff; outline-offset: 2px; }
+.raydium-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 22px; }
+#raydiumCreateError { color: #ffb6a7; overflow-wrap: anywhere; }
