@@ -37,6 +37,7 @@ export class MarketDataService {
   private readonly fetcher: Fetcher;
   private readonly now: () => number;
   private readonly limits: Record<Provider, number>;
+  private readonly coingeckoKey = process.env.COINGECKO_API_KEY || "";
   private readonly cooldown = new Map<Provider, number>();
   private readonly calls = new Map<Provider, number[]>();
   private readonly cache = new Map<string, { value: any; asOf: number; expires: number }>();
@@ -64,8 +65,11 @@ export class MarketDataService {
         if (recent.length >= this.limits[provider]) throw new Error("provider quota reached");
         recent.push(now);
         this.calls.set(provider, recent);
+        const headers: Record<string, string> = { Accept: "application/json" };
+        // The onchain API rejects datacenter IPs without a key (401) even on the demo plan.
+        if (provider === "coingecko" && this.coingeckoKey) headers["x-cg-demo-api-key"] = this.coingeckoKey;
         const response = await this.fetcher(HOSTS[provider] + path, {
-          headers: { Accept: "application/json" },
+          headers,
           signal: AbortSignal.timeout(8000),
         });
         if (response.status === 429 || response.status === 503) {

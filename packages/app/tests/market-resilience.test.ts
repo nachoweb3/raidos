@@ -17,6 +17,22 @@ describe("market provider resilience", () => {
     await expect(service.pools("base", "new")).rejects.toThrow();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+  it("sends the configured demo key only to the CoinGecko provider", async () => {
+    const prev = process.env.COINGECKO_API_KEY;
+    process.env.COINGECKO_API_KEY = "CG-testKey123";
+    try {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 429 }))
+        .mockResolvedValueOnce(Response.json({ data: [] }));
+      const service = new MarketDataService({ fetcher });
+      await service.pools("solana", "new");
+      const [, primaryInit] = fetcher.mock.calls[0]!;
+      expect(new Headers(primaryInit?.headers).get("x-cg-demo-api-key")).toBeNull();
+      const [, fallbackInit] = fetcher.mock.calls[1]!;
+      expect(fallbackInit?.headers).toMatchObject({ "x-cg-demo-api-key": "CG-testKey123" });
+    } finally { if (prev === undefined) delete process.env.COINGECKO_API_KEY; else process.env.COINGECKO_API_KEY = prev; }
+  });
+
   it("uses the same fallback for candles without inventing rows", async () => {
     const service = new MarketDataService({fetcher: async url => url.includes("geckoterminal") ? new Response("{}", {status: 503}) : Response.json({data: {attributes: {ohlcv_list: [[1, 2, 3, 1, 2, 4]]}}})});
     const result = await service.candles("solana", "A".repeat(32), "B".repeat(32));
