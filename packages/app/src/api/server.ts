@@ -9,6 +9,7 @@
  */
 
 import http from "node:http";
+import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -21,6 +22,7 @@ import { decrypt, verifyPassword, type EncryptedPayload } from "../wallets/crypt
 import { TradingEngine, type TradeParams } from "../trading/engine.js";
 import { TokenLaunchpad } from "../trading/launchpad.js";
 import { LaunchRaydium, LaunchLabError, sessionIdFor } from "../trading/launch-raydium.js";
+import { LaunchCpmm, CpmmError } from "../trading/launch-cpmm.js";
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import { FactoryError, LaunchFactory, planFromJson, planToJson } from "../trading/launch-factory.js";
 import { AmmError, LaunchAmm, quoteSwap } from "../trading/launch-amm.js";
@@ -115,6 +117,7 @@ export class ApiServer {
   private launchFactory!: LaunchFactory;
   private launchAmm!: LaunchAmm;
   private launchLab!: LaunchRaydium;
+  private launchCpmm!: LaunchCpmm;
   private readonly social: SocialTrading;
   private readonly revenue: RevenueEngine;
   private readonly rewards: RewardsEngine;
@@ -312,6 +315,7 @@ export class ApiServer {
   }
 
   private registerRoutes(): void {
+    registerTokenMetadataRoutes(this.router, this.db);
     registerMarketCatalogRoutes(this.router, this.db.marketCatalog, this.marketData);
     // Shared public market data; these endpoints never authorize trades.
     const marketReply = async (ctx: RequestContext, field: string, operation: () => Promise<import("../market/data.js").MarketSnapshot<any[]>>) => {
@@ -1650,6 +1654,162 @@ export class ApiServer {
       if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
       const limit = Math.min(Math.max(Number(ctx.query.get("limit") ?? 20), 1), 50);
       sendJson(ctx.res, 200, { activity: this.launchLab.listOwnActivity(mintA, limit, userId) });
+    });
+
+    // ── Raydium CPMM (REAL post-graduation market, self-custody) ──
+    // After LaunchLab migrates a curve, the real liquidity lives in the CPMM
+    // pool. Same honesty contract: read-only state, unsigned tx to the user,
+    // exactly-once sessions and byte-exact submit verification.
+    this.launchCpmm = new LaunchCpmm(this.solanaConnectionFactory(), this.db);
+    const cpmmErrorStatus = (code: CpmmError["code"]): number =>
+      code === "RPC_DISABLED" || code === "CONFIRMATION_FAILED" ? 503
+      : code === "POOL_NOT_FOUND" || code === "CONFIG_NOT_FOUND" ? 404
+      : code === "NOT_USER_SIGNED" ? 401
+      : code === "SHAPE_MISMATCH" || code === "POOL_DISABLED" ? 409
+      : 400;
+    const requireCpmmWallet = requireLaunchLabWallet;
+
+    // Live CPMM pool state for one mint (public, read-only).
+    this.router.publicRoute("GET", "/api/cpmm/:mintA/state", async (ctx) => {
+      const mintA = String(ctx.params.mintA ?? "");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
+      try {
+        sendJson(ctx.res, 200, { state: await this.launchCpmm.state(mintA) });
+      } catch (err) {
+        if (err instanceof CpmmError) throw new HttpError(cpmmErrorStatus(err.code), err.message);
+        throw err;
+      }
+    });
+
+    // Live CPMM quote (public, never mutates anything).
+    this.router.publicRoute("GET", "/api/cpmm/:mintA/quote", async (ctx) => {
+      const mintA = String(ctx.params.mintA ?? "");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
+      const side = ctx.query.get("side") === "sell" ? "sell" : "buy";
+      const raw = ctx.query.get("amount") ?? "";
+      if (!/^\d{1,20}$/.test(raw)) throw new HttpError(400, "invalid amount");
+      const slippageBps = Number(ctx.query.get("slippageBps") ?? 100);
+      if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 5000) throw new HttpError(400, "slippageBps must be 0..5000");
+      try {
+        sendJson(ctx.res, 200, { quote: await this.launchCpmm.quote(mintA, side, BigInt(raw), slippageBps), expiry: Date.now() + 10_000 });
+      } catch (err) {
+        if (err instanceof CpmmError) throw new HttpError(cpmmErrorStatus(err.code), err.message);
+        throw err;
+      }
+    });
+
+    // Prepare an unsigned CPMM swap (durable session, exactly-once).
+    this.router.route("POST", "/api/cpmm/:mintA/prepare", async (ctx) => {
+      if (process.env.CPMM_EXECUTION_ENABLED !== "1") throw new HttpError(503, "Direct CPMM execution is not available; use the token terminal for available routes");
+      const wallet = this.str(ctx, "wallet");
+      const userId = requireCpmmWallet(ctx, wallet);
+      if (this.appMode !== "live") throw new HttpError(503, "CPMM trading requires live mode");
+      this.requireExecutionEnabled();
+      const mintA = String(ctx.params.mintA ?? "");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
+      const side = ctx.body?.side === "sell" ? "sell" : ctx.body?.side === "buy" ? "buy" : "";
+      if (!side) throw new HttpError(400, "side must be 'buy' or 'sell'");
+      const amountStr = this.str(ctx, "amountIn");
+      if (!/^\d{1,20}$/.test(amountStr)) throw new HttpError(400, "amountIn must be a decimal string");
+      const slippageBps = Number(ctx.body?.slippageBps ?? 100);
+      if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 5000) throw new HttpError(400, "slippageBps must be 0..5000");
+      try {
+        const prepared = await this.launchCpmm.prepareSwap({ user: wallet, mintA, side, amountIn: BigInt(amountStr), slippageBps });
+        this.db.createSelfCustodySession({
+          id: prepared.sessionId,
+          userId,
+          chain: "solana",
+          walletAddress: wallet,
+          requestJson: JSON.stringify({
+            kind: "cpmm-swap", mintA, side, slippageBps,
+            amountIn: amountStr, minOut: prepared.quote.minOut, user: wallet,
+            unsignedSerialized: prepared.serialized,
+          }),
+        });
+        sendJson(ctx.res, 200, { ...prepared, side, wallet });
+      } catch (err) {
+        if (err instanceof CpmmError) throw new HttpError(cpmmErrorStatus(err.code), err.message);
+        throw err;
+      }
+    });
+
+    // Submit a user-signed CPMM swap: session consumed once, signed message
+    // must be EXACTLY the prepared one, shape re-checked on-chain, broadcast.
+    this.router.route("POST", "/api/cpmm/:mintA/submit", async (ctx) => {
+      if (process.env.CPMM_EXECUTION_ENABLED !== "1") throw new HttpError(503, "Direct CPMM execution is not available; use the token terminal for available routes");
+      const wallet = this.str(ctx, "wallet");
+      const userId = requireCpmmWallet(ctx, wallet);
+      if (this.appMode !== "live") throw new HttpError(503, "CPMM trading requires live mode");
+      this.requireExecutionEnabled();
+      const mintA = String(ctx.params.mintA ?? "");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
+      const signedTx = this.str(ctx, "signedTx");
+      const sessionId = this.str(ctx, "sessionId");
+      if (!signedTx || !sessionId) throw new HttpError(400, "sessionId and signedTx are required");
+      const consumed = this.db.consumeSelfCustodySession(sessionId, userId);
+      if (!consumed.ok) {
+        if (consumed.reason === "forbidden") throw new HttpError(403, "this session belongs to another account");
+        if (consumed.reason === "already_submitted") throw new HttpError(409, "session already submitted");
+        if (consumed.reason === "not_found") throw new HttpError(404, "unknown session (expired or never prepared)");
+        throw new HttpError(409, "session is not in a submittable state");
+      }
+      let payload: any;
+      try { payload = JSON.parse(consumed.session.request_json); } catch { throw new HttpError(500, "corrupted session payload"); }
+      if (payload.kind !== "cpmm-swap" || payload.mintA !== mintA) throw new HttpError(400, "session does not match this launch");
+      let unsigned: string;
+      try {
+        unsigned = Transaction.from(Buffer.from(signedTx, "base64")).serializeMessage().toString("base64");
+      } catch {
+        throw new HttpError(400, "signed transaction could not be parsed");
+      }
+      if (unsigned !== Transaction.from(Buffer.from(payload.unsignedSerialized, "base64")).serializeMessage().toString("base64")) throw new HttpError(400, "signed transaction does not match the prepared session");
+      try {
+        const result = await this.launchCpmm.submitSwap({
+          userId, user: wallet, mintA, side: payload.side,
+          amountIn: BigInt(payload.amountIn), minOut: BigInt(payload.minOut),
+          signedTxBase64: signedTx,
+          beforeBroadcast: signature => this.db.setAppSetting(`cpmm:${sessionId}`, JSON.stringify({ signature })),
+        });
+        sendJson(ctx.res, 200, result);
+      } catch (err) {
+        if (err instanceof CpmmError) throw new HttpError(cpmmErrorStatus(err.code), err.message);
+        throw err;
+      }
+    });
+
+    // Recovery after timeout/restart: only the durably journaled signature is
+    // checked on-chain — a crash between prepare and broadcast leaves the
+    // session "prepared" (nothing was sent), one between broadcast and record
+    // is resolved against the RPC (mirrors the LaunchLab recovery contract).
+    this.router.route("GET", "/api/cpmm/sessions/:id", async (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const session = this.db.getSelfCustodySession(ctx.params.id!);
+      if (!session || session.user_id !== userId) throw new HttpError(404, "session not found");
+      const payload = JSON.parse(session.request_json);
+      if (payload.kind !== "cpmm-swap") throw new HttpError(404, "not a CPMM session");
+      const journal = this.db.getAppSetting(`cpmm:${session.id}`);
+      if (!journal) return sendJson(ctx.res, 200, { status: session.status === "prepared" ? "prepared" : "not_broadcast" });
+      const { signature } = JSON.parse(journal);
+      const connection = this.solanaConnectionFactory();
+      if (!connection) throw new HttpError(503, "Solana RPC unavailable");
+      const receipt = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+      if (!receipt.value) return sendJson(ctx.res, 200, { status: "unknown", signature });
+      if (receipt.value.err) return sendJson(ctx.res, 200, { status: "failed", signature });
+      if (!["confirmed", "finalized"].includes(receipt.value.confirmationStatus || "")) return sendJson(ctx.res, 200, { status: "pending", signature });
+      this.db.recordLaunchLabTrade({
+        mintA: payload.mintA, quoteMint: "So11111111111111111111111111111111111111112",
+        userId, side: payload.side, amountIn: payload.amountIn, minOut: payload.minOut, signature,
+      });
+      sendJson(ctx.res, 200, { status: "confirmed", signature, mint: payload.mintA });
+    });
+
+    // The caller's own CPMM fills (auth; same launchlab_trades ledger).
+    this.router.route("GET", "/api/cpmm/:mintA/activity", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const mintA = String(ctx.params.mintA ?? "");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintA)) throw new HttpError(400, "invalid mint");
+      const limit = Math.min(Math.max(Number(ctx.query.get("limit") ?? 20), 1), 50);
+      sendJson(ctx.res, 200, { activity: this.launchCpmm.listOwnActivity(mintA, limit, userId) });
     });
 
     // ── On-chain graduation factory (operator-gated) ──

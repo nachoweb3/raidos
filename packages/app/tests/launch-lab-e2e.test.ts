@@ -40,7 +40,14 @@ import {
   getPdaCreatorVault,
   getPdaCpiEvent,
   LAUNCHPAD_PROGRAM,
+  CpmmPoolInfoLayout,
+  CpmmConfigInfoLayout,
+  getCpmmPdaAmmConfigId,
+  getCpmmPdaPoolId,
+  getPdaVault,
+  getPdaObservationId,
 } from "@raydium-io/raydium-sdk-v2";
+import { CPMM_PROGRAM } from "../src/trading/launch-cpmm.js";
 import BN from "bn.js";
 import bs58 from "bs58";
 
@@ -79,6 +86,28 @@ function encodeConfig(): Buffer {
     minSellRateA: new BN(200000), minMigrateRateA: new BN(150000), minFundRaisingB: new BN(24000000000),
     mintB: NATIVE_MINT, protocolFeeOwner: Keypair.generate().publicKey, migrateFeeOwner: Keypair.generate().publicKey,
     migrateToAmmWallet: Keypair.generate().publicKey, migrateToCpmmWallet: Keypair.generate().publicKey,
+  }, buf);
+  return buf;
+}
+
+/** Classic SPL token mint (82 bytes, no authorities). */
+function encodeClassicMint(decimals = 6): Buffer {
+  const data = Buffer.alloc(82);
+  data.writeUInt8(decimals, 44);
+  data.writeUInt8(1, 45);
+  return data;
+}
+
+/** Canonical CPMM ammConfig (index 0) matching the LaunchLab migration. */
+function encodeCpmmConfig(): Buffer {
+  const buf = Buffer.alloc(CpmmConfigInfoLayout.span);
+  CpmmConfigInfoLayout.encode({
+    bump: 254, disableCreatePool: false, index: 0,
+    tradeFeeRate: new BN(2500), protocolFeeRate: new BN(120000), fundFeeRate: new BN(0),
+    createPoolFee: new BN(0),
+    protocolOwner: Keypair.generate().publicKey, fundOwner: Keypair.generate().publicKey,
+    creatorFeeRate: new BN(0), creatorFeeShareRate: new BN(0),
+    __extra: Buffer.alloc(14 * 8),
   }, buf);
   return buf;
 }
@@ -323,5 +352,89 @@ describe("LaunchLab E2E over the real HTTP server", () => {
     });
     expect(foreignSubmitted.status).toBe(200); // stranger's OWN session is valid for the stranger
     expect(sent.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("CPMM: flag off → 503; flag on → prepare/sign/submit/record/recover exactly-once", async () => {
+    process.env.CPMM_EXECUTION_ENABLED = "1";
+    try {
+      // Seed a REAL-shape CPMM pool for a fresh launch token (WSOL on side A,
+      // the orientation verified against migrated LaunchLab pools).
+      const cpmmConfigId = getCpmmPdaAmmConfigId(CPMM_PROGRAM, 0).publicKey;
+      const tokenMint = Keypair.generate().publicKey;
+      const { publicKey: cpmmPoolId } = getCpmmPdaPoolId(CPMM_PROGRAM, cpmmConfigId, NATIVE_MINT, tokenMint);
+      const vaultA = getPdaVault(CPMM_PROGRAM, cpmmPoolId, NATIVE_MINT).publicKey;
+      const vaultB = getPdaVault(CPMM_PROGRAM, cpmmPoolId, tokenMint).publicKey;
+      const observationId = getPdaObservationId(CPMM_PROGRAM, cpmmPoolId).publicKey;
+      const buf = Buffer.alloc(CpmmPoolInfoLayout.span);
+      CpmmPoolInfoLayout.encode({
+        bump: 253, status: 0, configId: cpmmConfigId, poolCreator: Keypair.generate().publicKey,
+        vaultA, vaultB, mintLp: Keypair.generate().publicKey,
+        mintA: NATIVE_MINT, mintB: tokenMint,
+        mintProgramA: TOKEN_PROGRAM_ID, mintProgramB: TOKEN_PROGRAM_ID,
+        observationId, lpDecimals: 9, mintDecimalA: 9, mintDecimalB: 6,
+        lpAmount: new BN("1000000000000000"),
+        protocolFeesMintA: new BN(0), protocolFeesMintB: new BN(0),
+        fundFeesMintA: new BN(0), fundFeesMintB: new BN(0),
+        openTime: new BN(0), epoch: new BN(0), feeOn: 2, enableCreatorFee: false,
+        creatorFeesMintA: new BN(0), creatorFeesMintB: new BN(0),
+      }, buf);
+      accounts.set(cpmmPoolId.toBase58(), { owner: CPMM_PROGRAM, lamports: 1_000_000, data: buf });
+      accounts.set(cpmmConfigId.toBase58(), { owner: CPMM_PROGRAM, lamports: 1_000_000, data: encodeCpmmConfig() });
+      accounts.set(tokenMint.toBase58(), { owner: TOKEN_PROGRAM_ID, lamports: 1_000_000, data: encodeClassicMint(6) });
+      const tokenAcc = (amount: bigint, mint: PublicKey) => {
+        const d = Buffer.alloc(165);
+        d.writeBigUInt64LE(amount, 64);
+        mint.toBuffer().copy(d, 0);
+        cpmmPoolId.toBuffer().copy(d, 32);
+        return { owner: TOKEN_PROGRAM_ID, lamports: 1_000_000, data: d };
+      };
+      accounts.set(vaultA.toBase58(), tokenAcc(85_000_000_000n, NATIVE_MINT));
+      accounts.set(vaultB.toBase58(), tokenAcc(500_000_000_000n, tokenMint));
+      const mintA = tokenMint.toBase58();
+
+      // Own identity for the CPMM flow (previous tests left a different key).
+      const cpmmUser = Keypair.generate();
+      const ch = await api("POST", "/api/auth/challenge", { chain: "solana" });
+      const wl = await api("POST", "/api/auth/wallet", {
+        chain: "solana", address: cpmmUser.publicKey.toBase58(),
+        nonce: ch.json.nonce, message: ch.json.message, signature: signMessageBytes(cpmmUser, ch.json.message),
+      });
+      expect(wl.status).toBe(200);
+      apiKey = wl.json.apiKey;
+
+      // Flag OFF first: prepare must stay disabled.
+      delete process.env.CPMM_EXECUTION_ENABLED;
+      const off = await api("POST", `/api/cpmm/${mintA}/prepare`, { wallet: cpmmUser.publicKey.toBase58(), side: "buy", amountIn: "50000000", slippageBps: 100 });
+      expect(off.status).toBe(503);
+      process.env.CPMM_EXECUTION_ENABLED = "1";
+
+      const prepared = await api("POST", `/api/cpmm/${mintA}/prepare`, { wallet: cpmmUser.publicKey.toBase58(), side: "buy", amountIn: "50000000", slippageBps: 100 });
+      expect(prepared.status).toBe(200);
+      const sessionId = prepared.json.sessionId;
+
+      const signed = signTxLikeBrowser(prepared.json.serialized, cpmmUser);
+      const submitted = await api("POST", `/api/cpmm/${mintA}/submit`, { wallet: cpmmUser.publicKey.toBase58(), sessionId, signedTx: signed });
+      expect(submitted.status).toBe(200);
+      expect(submitted.json.signature).toBeTruthy();
+
+      const act = await api("GET", `/api/cpmm/${mintA}/activity`);
+      expect(act.status).toBe(200);
+      expect(act.json.activity.length).toBe(1);
+      expect(act.json.activity[0].side).toBe("buy");
+
+      // Recovery endpoint: confirmed with the journaled signature, idempotent.
+      const recovered = await api("GET", `/api/cpmm/sessions/${sessionId}`);
+      expect(recovered.status).toBe(200);
+      expect(recovered.json.status).toBe("confirmed");
+      expect(recovered.json.signature).toBe(submitted.json.signature);
+      expect((await api("GET", `/api/cpmm/sessions/${sessionId}`)).json.status).toBe("confirmed");
+      expect((await api("GET", `/api/cpmm/${mintA}/activity`)).json.activity.length).toBe(1);
+
+      // Replay of the same session must be rejected (exactly-once).
+      const replay = await api("POST", `/api/cpmm/${mintA}/submit`, { wallet: cpmmUser.publicKey.toBase58(), sessionId, signedTx: signed });
+      expect(replay.status).toBe(409);
+    } finally {
+      delete process.env.CPMM_EXECUTION_ENABLED;
+    }
   });
 });

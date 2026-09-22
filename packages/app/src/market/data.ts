@@ -37,6 +37,7 @@ export class MarketDataService {
   private readonly fetcher: Fetcher;
   private readonly now: () => number;
   private readonly limits: Record<Provider, number>;
+  private readonly cooldown = new Map<Provider, number>();
   private readonly calls = new Map<Provider, number[]>();
   private readonly cache = new Map<string, { value: any; asOf: number; expires: number }>();
   private readonly inflight = new Map<string, Promise<MarketSnapshot<any>>>();
@@ -58,6 +59,7 @@ export class MarketDataService {
     if (running) return running;
     const promise = (async () => {
       try {
+        if (now < (this.cooldown.get(provider) ?? 0)) throw new Error("provider cooling down");
         const recent = (this.calls.get(provider) ?? []).filter((at) => now - at < 60000);
         if (recent.length >= this.limits[provider]) throw new Error("provider quota reached");
         recent.push(now);
@@ -66,6 +68,12 @@ export class MarketDataService {
           headers: { Accept: "application/json" },
           signal: AbortSignal.timeout(8000),
         });
+        if (response.status === 429 || response.status === 503) {
+          const retry = response.headers.get("Retry-After");
+          const seconds = retry && /^\d+$/.test(retry) ? Number(retry) : 0;
+          const until = seconds ? now + seconds * 1000 : retry ? Date.parse(retry) : NaN;
+          this.cooldown.set(provider, Math.max(now + 60000, Number.isFinite(until) ? until : 0));
+        }
         if (!response.ok) throw new Error("upstream HTTP " + response.status);
         const value = await response.json();
         if (value == null || typeof value !== "object" || ("error" in value && value.error) || ("errors" in value && value.errors)) throw new Error("invalid upstream response");
@@ -80,6 +88,17 @@ export class MarketDataService {
     })();
     this.inflight.set(key, promise);
     try { return await promise; } finally { this.inflight.delete(key); }
+  }
+
+  private async onchain(path: string, ttl = 30000): Promise<MarketSnapshot<any>> {
+    let stale: MarketSnapshot<any> | undefined;
+    try {
+      const primary = await this.json("geckoterminal", path, ttl);
+      if (primary.status === "LIVE") return primary;
+      stale = primary;
+    } catch { /* Try the official onchain API with its own cache and quota. */ }
+    try { return await this.json("coingecko", "/onchain" + path, ttl); }
+    catch { if (stale) return stale; throw new Error("Onchain market data unavailable"); }
   }
 
   private geckoPairs(body: any, chainHint?: string): any[] {
@@ -109,7 +128,7 @@ export class MarketDataService {
         volume: attributes.volume_usd ?? {}, priceChange: attributes.price_change_percentage ?? {},
         txns: attributes.transactions ?? {},
         pairCreatedAt: attributes.pool_created_at ? Date.parse(attributes.pool_created_at) : null,
-        info: { imageUrl: base.image_url ?? null }, source: "geckoterminal",
+        info: { imageUrl: base.image_url ?? null },
       }];
     });
   }
@@ -148,7 +167,7 @@ export class MarketDataService {
     } catch { /* Independent indexed-pool fallback. */ }
     {
       const network = chain && chain !== "all" ? "&network=" + encodeURIComponent(NETWORKS[chain] ?? chain) : "";
-      const result = await this.json("geckoterminal", "/search/pools?query=" + encodeURIComponent(query) + network + "&include=base_token,quote_token,dex");
+      const result = await this.onchain("/search/pools?query=" + encodeURIComponent(query) + network + "&include=base_token,quote_token,dex");
       return { ...result, data: filter(this.geckoPairs(result.data)) };
     }
   }
@@ -171,7 +190,7 @@ export class MarketDataService {
     const found = new Set(available.flatMap((r) => r.data.map((p) => addressKey(chain, p.baseToken.address))));
     const missing = addresses.filter((address) => !found.has(address));
     const backups = await Promise.allSettled(missing.map(async (address) => {
-      const result = await this.json("geckoterminal", "/networks/" + (NETWORKS[chain] ?? chain) +
+      const result = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) +
         "/tokens/" + encodeURIComponent(address) + "/pools?include=base_token,quote_token,dex", 60000);
       return decorate({ ...result, data: this.matchingAssets(this.geckoPairs(result.data, chain), new Set([address]), chain) });
     }));
@@ -193,13 +212,13 @@ export class MarketDataService {
     validChain(chain);
     if (!["new", "trending"].includes(kind) || !Number.isInteger(page) || page < 1 || page > 10) throw new Error("invalid pool query");
     const network = chain === "all" ? "" : "/" + (NETWORKS[chain] ?? chain);
-    const result = await this.json("geckoterminal", "/networks" + network + "/" + kind + "_pools?include=base_token,quote_token,dex&page=" + page, 60000);
+    const result = await this.onchain("/networks" + network + "/" + kind + "_pools?include=base_token,quote_token,dex&page=" + page, 60000);
     return { ...result, data: this.geckoPairs(result.data, chain === "all" ? undefined : chain) };
   }
 
   async trades(chain: string, pool: string, token: string): Promise<MarketSnapshot<any[]>> {
     validChain(chain); validAddress(pool); validAddress(token);
-    const result = await this.json("geckoterminal", "/networks/" + (NETWORKS[chain] ?? chain) +
+    const result = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) +
       "/pools/" + encodeURIComponent(pool) + "/trades", 30000);
     if (!Array.isArray(result.data?.data)) throw new Error("GeckoTerminal trades unavailable");
     const seen = new Set<string>();
@@ -228,7 +247,7 @@ export class MarketDataService {
   async candles(chain: string, pool: string, token: string, aggregate = 5): Promise<MarketSnapshot<any[]>> {
     validChain(chain); validAddress(pool); validAddress(token);
     if (![1, 5, 15].includes(aggregate)) throw new Error("invalid candle interval");
-    const result = await this.json("geckoterminal", "/networks/" + (NETWORKS[chain] ?? chain) + "/pools/" + encodeURIComponent(pool) +
+    const result = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) + "/pools/" + encodeURIComponent(pool) +
       "/ohlcv/minute?aggregate=" + aggregate + "&limit=100&currency=usd&token=" + encodeURIComponent(token), 60000);
     const rows = result.data?.data?.attributes?.ohlcv_list;
     if (!Array.isArray(rows)) throw new Error("OHLCV data unavailable");

@@ -27,6 +27,11 @@ export class AppDb {
 
   private migrate(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS token_metadata (
+        id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, json TEXT NOT NULL,
+        image BLOB NOT NULL, mime TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS token_metadata_user ON token_metadata(user_id,created_at);
       -- Users (API-key auth; keys stored hashed, never plaintext)
       CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -1263,6 +1268,21 @@ export class AppDb {
   }
 
   // ── App settings (durable kill switches) ──
+
+  saveTokenMetadata(id: string, userId: number, json: string, image: Buffer, mime: string): boolean {
+    return this.db.transaction(() => {
+      if (this.db.prepare("SELECT id FROM token_metadata WHERE id = ?").get(id)) return true;
+      const now = Math.floor(Date.now() / 1000);
+      const counts = this.db.prepare("SELECT COUNT(*) AS total, SUM(created_at >= ?) AS today FROM token_metadata WHERE user_id = ?").get(now - 86400,userId) as {total:number;today:number};
+      if (counts.total >= 200 || counts.today >= 20) return false;
+      this.db.prepare("INSERT INTO token_metadata(id,user_id,json,image,mime,created_at) VALUES(?,?,?,?,?,?)").run(id,userId,json,image,mime,now);
+      return true;
+    })();
+  }
+
+  getTokenMetadata(id: string): {json:string;image:Buffer;mime:string} | undefined {
+    return this.db.prepare("SELECT json,image,mime FROM token_metadata WHERE id = ?").get(id) as {json:string;image:Buffer;mime:string} | undefined;
+  }
 
   getAppSetting(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;

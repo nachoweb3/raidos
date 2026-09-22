@@ -66,3 +66,9 @@ body { background:radial-gradient(ellipse at 80% 0%,#14274088,transparent 60%),v
 .raydium-create input:focus { outline: 2px solid #9c80ff; outline-offset: 2px; }
 .raydium-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 22px; }
 #raydiumCreateError { color: #ffb6a7; overflow-wrap: anywhere; }
+
+.raydium-create textarea { width:100%;box-sizing:border-box;margin-top:7px;padding:12px;border:1px solid #7184ae44;border-radius:9px;background:#050b17;color:#f0f5ff;resize:vertical;font:inherit; }
+.token-socials { border:1px solid #7184ae44;border-radius:12px;padding:12px;margin-top:20px; }
+.token-socials legend { padding:0 6px;font-size:12px; }
+.raydium-create h3 { margin-top:20px; }
+@media(max-width:600px){.raydium-create{padding:20px}.raydium-create input,.raydium-create textarea{font-size:16px}[data-install-app]{white-space:nowrap}}

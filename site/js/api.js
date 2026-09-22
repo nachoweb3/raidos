@@ -449,6 +449,38 @@ export const ApiClient = {
     return this.request(`/api/launchlab/${encodeURIComponent(mintA)}/activity?limit=${limit}`);
   },
 
+  // ── Raydium CPMM (real post-graduation pool, self-custody) ──
+  async getCpmmState(mintA) {
+    return this.request(`/api/cpmm/${encodeURIComponent(mintA)}/state`);
+  },
+
+  async quoteCpmm(mintA, { side, amount, slippageBps = 100 }) {
+    const qs = new URLSearchParams({ side, amount, slippageBps: String(slippageBps) });
+    return this.request(`/api/cpmm/${encodeURIComponent(mintA)}/quote?${qs}`);
+  },
+
+  async prepareCpmmSwap(mintA, payload) {
+    return this.request(`/api/cpmm/${encodeURIComponent(mintA)}/prepare`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async submitCpmmSwap(mintA, payload) {
+    return this.request(`/api/cpmm/${encodeURIComponent(mintA)}/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getCpmmSession(sessionId) {
+    return this.request(`/api/cpmm/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
+  async getCpmmActivity(mintA, limit = 20) {
+    return this.request(`/api/cpmm/${encodeURIComponent(mintA)}/activity?limit=${limit}`);
+  },
+
   // ── Copy-trade settings ──
   async getCopySettings() {
     return this.request("/api/copy-settings");

@@ -258,6 +258,7 @@ export const MarketsEngine = {
       this._lastLaunch = detail.launch;
       this.renderLaunchDetail(detail.launch, pos?.position || null, detail.curveSimulated !== false);
     } catch (err) {
+      if (this._labMint !== mintA || !document.getElementById("launchDetailModal").classList.contains("open")) return;
       document.getElementById("launchDetailBody").innerHTML =
         `<p style="color:var(--text-secondary); font-size:12.5px">No se pudo cargar la ficha</p>`;
     }
@@ -655,13 +656,16 @@ export const MarketsEngine = {
           ? ApiClient.getLaunchLabActivity(mintA, 10).catch(() => ({ activity: [] }))
           : Promise.resolve({ activity: [] }),
       ]);
-      if (this._labMint !== mintA) return;
-      this._labState = { ...data.state, ...(this._launchlabList || []).find(l => l.mintA === mintA) };
+      if (this._labMint !== mintA || !document.getElementById("launchDetailModal").classList.contains("open")) return;
+      const curveChanged = this._labState?.curveOpen !== data.state.curveOpen;
+      this._labState = { ...(this._launchlabList || []).find(l => l.mintA === mintA), ...data.state };
       this._labActivity = activity.activity || [];
-      if (!this._labBusy && document.activeElement?.id !== "labAmount") this.renderLaunchLabDetail();
+      if (!this._labBusy && (curveChanged || document.activeElement?.id !== "labAmount")) this.renderLaunchLabDetail();
+      if (data.state.curveOpen === false) this.refreshCpmmPanel();
       if (this._labTimer) clearInterval(this._labTimer);
       this._labTimer = setInterval(() => this.refreshLaunchLab(), 8000);
     } catch (err) {
+      if (this._labMint !== mintA || !document.getElementById("launchDetailModal").classList.contains("open")) return;
       document.getElementById("launchDetailBody").innerHTML =
         `<p style="color:var(--accent-red, #ff5a5f); font-size:12px">❌ ${escapeHtml(String(err?.message || err))}</p>`;
     }
@@ -693,7 +697,8 @@ export const MarketsEngine = {
       <div style="height:5px; background:var(--bg-canvas); border-radius:3px; overflow:hidden; margin-bottom:6px">
         <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, var(--accent-green), var(--accent-teal, var(--accent-green)))"></div>
       </div>
-      <p style="font-size:9.5px; color:var(--text-tertiary); margin-bottom:14px">Vendidos ${sold.toLocaleString("en-US", { maximumFractionDigits: 0 })} de ${Number(s.totalSellBase || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} · al completar, Raydium migra el pool a ${escapeHtml(s.migrateType || "cpmm").toUpperCase()} automáticamente.</p>
+      <p style="font-size:9.5px; color:var(--text-tertiary); margin-bottom:14px">Vendidos ${sold.toLocaleString("en-US", { maximumFractionDigits: 0 })} de ${(Number(s.totalSellBase || 0) / Math.pow(10, s.mintDecimalsA ?? 6)).toLocaleString("en-US", { maximumFractionDigits: 0 })} · al completar, Raydium migra el pool a ${escapeHtml(s.migrateType || "cpmm").toUpperCase()} automáticamente.</p>
+      ${!open && s.statusRaw === 2 ? `<div id="cpmmSection"></div>` : ""}
       ${open ? `
       <div style="display:flex; gap:8px; margin-bottom:10px">
         <button class="pill-tab ${this._labSide !== "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setLabSide('buy')">Comprar (${escapeHtml(s.quoteSymbol || "SOL")})</button>
@@ -707,10 +712,150 @@ export const MarketsEngine = {
       <p id="labQuoteLine" style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:10px">Introduce un monto para ver la estimación de la curva real.</p>
       <p style="font-size:10px; color:var(--accent-green); background:var(--bg-canvas); border-radius:6px; padding:6px 10px; margin-bottom:4px">🔐 Self-custody: la tx se construye aquí, la firma TU wallet en Phantom y se envía directo a Solana. El servidor nunca custodia fondos ni claves.</p>`
       : `<p style="font-size:11.5px; color:var(--text-tertiary)">La curva ya no acepta operaciones (estado: ${escapeHtml(s.status || "?")}).${s.migrateType ? " El mercado secundario vive en el pool " + escapeHtml(s.migrateType.toUpperCase()) + " de Raydium." : ""}</p>`}
+      ${!open ? '<button class="btn btn-primary btn-sm" style="margin:12px 0" onclick="window.MarketsEngine.openLaunchLabMarket()">Ver mercado y rutas disponibles</button><p style="font-size:10px;color:var(--text-tertiary)">La migraci?n puede tardar. El terminal comprueba los pools y las rutas disponibles para este contrato.</p>' : ""}
       ${this.renderLabActivity()}
       <p style="font-size:9.5px; color:var(--text-tertiary); opacity:0.7">Estado leído del programa LaunchLab (${shortAddr(s.programId)}) vía RPC · se actualiza cada 8s.</p>`;
     this._labSide = this._labSide || "buy";
     this.setLabSide(this._labSide);
+  },
+
+  openLaunchLabMarket() {
+    const mint = this._labMint;
+    if (!mint || this._labState?.curveOpen !== false) return;
+    const symbol = this._labState?.symbol || "Token";
+    closeLaunchModals();
+    window.TerminalView?.open(symbol, "solana", 0, mint);
+  },
+
+  /* ══════════ CPMM (mercado real post-graduación, self-custody) ══════════ */
+
+  async refreshCpmmPanel() {
+    const mintA = this._labMint;
+    const section = document.getElementById("cpmmSection");
+    if (!mintA || !section) return;
+    try {
+      const { state } = await ApiClient.getCpmmState(mintA);
+      if (this._labMint !== mintA) return;
+      this._cpmmState = state;
+      section.innerHTML = this.renderCpmmPanel(state);
+      const line = document.getElementById("cpmmQuoteLine");
+      if (line && (this._cpmmAmount || "").trim()) this.debouncedCpmmQuote();
+    } catch {
+      // No CPMM pool for this mint (not migrated): the honest answer is silence
+      // in the pool panel; the curve view already explains the status.
+      section.innerHTML = "";
+    }
+  },
+
+  renderCpmmPanel(state) {
+    const tok = (v, decimals = 6) => (Number(v || 0) / Math.pow(10, decimals)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+    const sol = (v) => (Number(v || 0) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 3 });
+    const decimals = state.mintDecimalsA ?? 6;
+    const price = Number(state.priceBaseInQuote || 0);
+    return `
+      <div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:12px 14px; margin:10px 0">
+        <p style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:6px">🏊 Pool CPMM de Raydium — mercado real</p>
+        <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-bottom:10px; flex-wrap:wrap">
+          <span>💰 ${price > 0 ? price.toPrecision(4) : "—"} SOL/token</span>
+          <span>🪙 ${tok(state.baseReserve, decimals)} tokens</span>
+          <span>💧 ${sol(state.quoteReserve)} SOL</span>
+          <a href="https://solscan.io/account/${encodeURIComponent(state.poolId)}" target="_blank" rel="noopener noreferrer" style="font-family:monospace">pool ${shortAddr(state.poolId)}</a>
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:8px">
+          <button class="pill-tab ${this._cpmmSide !== "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setCpmmSide('buy')">Comprar con SOL</button>
+          <button class="pill-tab ${this._cpmmSide === "sell" ? "active" : ""}" style="flex:1" onclick="window.MarketsEngine.setCpmmSide('sell')">Vender tokens</button>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+          <input id="cpmmAmount" type="text" inputmode="decimal" placeholder="${this._cpmmSide === "sell" ? "Cantidad de tokens" : "Monto en SOL"}" value="${this._cpmmAmount || ""}" style="flex:1; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:9px 12px; color:var(--text-primary); font-size:13px" oninput="window.MarketsEngine._cpmmAmount=this.value; window.MarketsEngine.debouncedCpmmQuote()">
+          <button class="btn btn-primary btn-sm" id="cpmmSubmit" onclick="window.MarketsEngine.submitCpmmTrade()">${this._cpmmSide === "sell" ? "Vender" : "Comprar"}</button>
+        </div>
+        <p id="cpmmQuoteLine" style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:10px">Introduce un monto para ver la cotización de la pool real.</p>
+        <p style="font-size:10px; color:var(--accent-green); background:var(--bg-canvas); border-radius:6px; padding:6px 10px; margin-bottom:4px">🔐 Self-custody: la tx se construye aquí, la firma TU wallet en Phantom y se envía directo a Solana. El servidor nunca custodia fondos ni claves.</p>
+      </div>`;
+  },
+
+  setCpmmSide(side) {
+    this._cpmmSide = side;
+    if (this._cpmmState) {
+      const section = document.getElementById("cpmmSection");
+      if (section) { section.innerHTML = this.renderCpmmPanel(this._cpmmState); }
+    }
+  },
+
+  debouncedCpmmQuote() {
+    clearTimeout(this._cpmmQuoteTimer);
+    this._cpmmQuoteTimer = setTimeout(() => this.fetchCpmmQuote(), 350);
+  },
+
+  async fetchCpmmQuote() {
+    const mintA = this._labMint;
+    const input = document.getElementById("cpmmAmount");
+    const line = document.getElementById("cpmmQuoteLine");
+    if (!mintA || !input || !line) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    if (!raw || !(Number(raw) > 0)) {
+      line.textContent = "Introduce un monto para ver la cotización de la pool real.";
+      return;
+    }
+    const tok = (v, decimals = 6) => (Number(v || 0) / Math.pow(10, decimals)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+    try {
+      const decimals = this._cpmmState?.mintDecimalsA ?? 6;
+      const amountIn = parseLabUnits(raw, this._cpmmSide === "buy" ? 9 : decimals);
+      const { quote } = await ApiClient.quoteCpmm(mintA, { side: this._cpmmSide, amount: amountIn.toString(), slippageBps: this._cpmmSlippageBps || 100 });
+      const out = this._cpmmSide === "buy"
+        ? `${tok(quote.amountOut, decimals)} tokens`
+        : `${(Number(quote.amountOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} SOL`;
+      const min = this._cpmmSide === "buy"
+        ? `${tok(quote.minOut, decimals)} tokens`
+        : `${(Number(quote.minOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} SOL`;
+      line.innerHTML = `≈ Recibes <b style="color:var(--text-primary)">${out}</b> · mínimo garantizado ${min} (slippage ${(this._cpmmSlippageBps || 100) / 100}%) · fee pool 0,25%`;
+    } catch (err) {
+      line.textContent = "Sin estimación: " + String(err?.message || err);
+    }
+  },
+
+  /** Prepare → sign in Phantom → submit → recovery endpoint on error. */
+  async submitCpmmTrade() {
+    const mintA = this._labMint;
+    const input = document.getElementById("cpmmAmount");
+    if (!mintA || !input) return;
+    const raw = (input.value || "").replace(/[,_]/g, "").trim();
+    if (!raw || !(Number(raw) > 0)) { alert("Introduce un monto válido"); return; }
+    if (!ApiClient.isAuthenticated()) { alert("Inicia sesión antes de operar en la pool."); return; }
+    const side = this._cpmmSide === "sell" ? "sell" : "buy";
+    const btn = document.getElementById("cpmmSubmit");
+    btn.disabled = true;
+    this._labBusy = true;
+    try {
+      const wallet = await connectPhantomWallet();
+      const decimals = this._cpmmState?.mintDecimalsA ?? 6;
+      const amountIn = parseLabUnits(raw, side === "buy" ? 9 : decimals).toString();
+      const tok = (v, d = 6) => (Number(v || 0) / Math.pow(10, d)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+      const prepared = await ApiClient.prepareCpmmSwap(mintA, { wallet, side, amountIn, slippageBps: this._cpmmSlippageBps || 100 });
+      const q = prepared.quote;
+      const fmtOut = side === "buy" ? `${tok(q.amountOut, decimals)} tokens` : `${(Number(q.amountOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} SOL`;
+      const fmtMin = side === "buy" ? `${tok(q.minOut, decimals)} tokens` : `${(Number(q.minOut) / 1e9).toLocaleString("en-US", { maximumFractionDigits: 4 })} SOL`;
+      const ok = confirm(`${side === "buy" ? "Comprar" : "Vender"} en la pool CPMM de Raydium\n→ Recibes ≈ ${fmtOut}\nMínimo garantizado: ${fmtMin}\n\nSe abrirá Phantom para firmar. ¿Continuar?`);
+      if (!ok) return;
+      const signedTx = await signTxWithPhantom(prepared.serialized);
+      localStorage.setItem("inusaur.cpmm.pending", prepared.sessionId);
+      let result;
+      try {
+        result = await ApiClient.submitCpmmSwap(mintA, { wallet, sessionId: prepared.sessionId, signedTx });
+      } catch (submitErr) {
+        // Timeout/connection after signing? The durable session can be recovered.
+        try { const s = await ApiClient.getCpmmSession(prepared.sessionId); alert(`Estado de la operación: ${s.status}${s.signature ? "\nhttps://solscan.io/tx/" + s.signature : ""}`); return; }
+        catch { throw submitErr; }
+      }
+      localStorage.removeItem("inusaur.cpmm.pending");
+      alert(`✅ Confirmado on-chain:\n${result.signature}`);
+      await this.refreshCpmmPanel();
+    } catch (err) {
+      alert("❌ " + String(err?.message || err));
+    } finally {
+      this._labBusy = false;
+      if (btn) btn.disabled = false;
+    }
   },
 
   /** The signed-in user's own LaunchLab fills on this mint (server ledger, on-chain is truth). */
@@ -852,8 +997,16 @@ export const MarketsEngine = {
       <p>Token con oferta fija de 1.000 millones. Curva en SOL y migración a Raydium CPMM al alcanzar 85 SOL.</p>
       <label>Nombre<input name="name" maxlength="32" required placeholder="Nombre del proyecto"></label>
       <label>Símbolo<input name="symbol" maxlength="10" pattern="[A-Za-z0-9]{1,10}" required placeholder="TOKEN"></label>
-      <label>URL de metadatos<input name="uri" type="url" maxlength="200" pattern="https://.*" required placeholder="https://…/metadata.json"></label>
-      <small>JSON público con name, symbol e image. La imagen debe estar alojada antes de crear el token.</small>
+      <label>Foto del token<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required onchange="window.MarketsEngine.selectLaunchPhoto(this)"></label>
+      <img data-photo-preview hidden alt="Vista previa del token" width="96" height="96" style="border-radius:16px;object-fit:contain">
+      <small>Elige una foto de tu galeria. JPG, PNG o WebP, hasta 12 MB. La optimizamos y alojamos por ti.</small>
+      <label>Descripcion<textarea name="description" maxlength="1000" rows="3" placeholder="Cuenta de que trata tu proyecto"></textarea></label>
+      <fieldset class="token-socials"><legend>Redes sociales <small>Hasta 4, opcionales</small></legend>
+        <label>Enlace 1<input name="social1" type="url" maxlength="300" pattern="https://.*" placeholder="https://x.com/tu_proyecto"></label>
+        <label>Enlace 2<input name="social2" type="url" maxlength="300" pattern="https://.*" placeholder="https://t.me/tu_comunidad"></label>
+        <label>Enlace 3<input name="social3" type="url" maxlength="300" pattern="https://.*" placeholder="https://discord.gg/tu_servidor"></label>
+        <label>Enlace 4<input name="social4" type="url" maxlength="300" pattern="https://.*" placeholder="https://instagram.com/tu_proyecto"></label>
+      </fieldset>
       <label>Compra inicial en SOL<input name="buy" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,9})?" value="0" required></label>
       <small>0 para crear sin comprar. Mínimo de compra: 0,01 SOL. Slippage inicial: 1%. Phantom mostrará la transacción y los costes de red.</small>
       <p id="raydiumCreateError" role="status"></p>
@@ -864,6 +1017,45 @@ export const MarketsEngine = {
     dialog.showModal();
   },
 
+  async selectLaunchPhoto(input) {
+    const file = input.files?.[0], form = input.form;
+    if (!file || !form) return;
+    const request = form._photoRequest = (form._photoRequest || 0) + 1;
+    form._photoData = null;
+    const preview = form.querySelector("[data-photo-preview]");
+    preview.hidden = true;
+    const error = form.querySelector("#raydiumCreateError");
+    error.textContent = "";
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    let objectUrl;
+    try {
+      if (file.size > 12 * 1024 * 1024 || !["image/jpeg","image/png","image/webp"].includes(file.type)) throw Error("Elige una foto JPG, PNG o WebP de hasta 12 MB.");
+      objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.src = objectUrl;
+      await image.decode();
+      if (image.naturalWidth > 8192 || image.naturalHeight > 8192) throw Error("La foto es demasiado grande. Elige una de hasta 8192 px.");
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 512;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#0b1221"; context.fillRect(0,0,512,512);
+      const scale = Math.min(512 / image.naturalWidth, 512 / image.naturalHeight);
+      const w = image.naturalWidth * scale, h = image.naturalHeight * scale;
+      context.drawImage(image,(512-w)/2,(512-h)/2,w,h);
+      const data = canvas.toDataURL("image/jpeg",0.88);
+      if (data.length > 512 * 1024) throw Error("No se pudo optimizar la foto. Elige otra imagen.");
+      if (form._photoRequest !== request) return;
+      form._photoData = data;
+      preview.src = data; preview.hidden = false;
+    } catch (err) {
+      if (form._photoRequest === request) { error.textContent = String(err.message || err); input.value = ""; }
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (form._photoRequest === request) button.disabled = false;
+    }
+  },
+
   async submitLaunchLabCreate(form) {
     if (!ApiClient.isAuthenticated()) {
       document.getElementById("raydiumCreateError").textContent = "Inicia sesión con tu wallet antes de crear el token.";
@@ -872,11 +1064,12 @@ export const MarketsEngine = {
     const values = new FormData(form);
     const name = String(values.get("name"));
     const symbol = String(values.get("symbol"));
-    const uri = String(values.get("uri"));
+    const socials = [1,2,3,4].map(i => String(values.get("social" + i) || "").trim()).filter(Boolean);
     const buySol = String(values.get("buy"));
     const button = form.querySelector('[type="submit"]');
     button.disabled = true;
     try {
+      if (!form._photoData) throw Error("Selecciona una foto y espera a ver su vista previa.");
       const buyAmountLamports = parseLabUnits(buySol, 9).toString();
       const wallet = await connectPhantomWallet();
       // Mint keypair is generated in the browser via a throwaway web3 import:
@@ -884,6 +1077,10 @@ export const MarketsEngine = {
       const { Keypair, Transaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
       const { ed25519 } = await import("https://esm.sh/@noble/curves@1.9.7/ed25519");
       const mintKeypair = Keypair.generate();
+      const { uri } = await ApiClient.request("/api/launchlab/metadata", {
+        method: "POST", body: JSON.stringify({name:name.trim(),symbol:symbol.trim().toUpperCase(),
+          description:String(values.get("description") || ""),socials,image:form._photoData})
+      });
       const prepared = await ApiClient.prepareLaunchLabCreate({
         wallet, mintPubkey: mintKeypair.publicKey.toString(), name: name.trim(), symbol: symbol.trim().toUpperCase(), uri: uri.trim(), buyAmountLamports,
       });
@@ -1137,6 +1334,11 @@ if (typeof window !== "undefined") {
 
 /** Close every launchpad modal and stop its detail refresh timer. */
 function closeLaunchModals() {
+  MarketsEngine._labMint = null;
+  MarketsEngine._cpmmState = null;
+  MarketsEngine._cpmmAmount = "";
+  clearTimeout(MarketsEngine._labQuoteTimer);
+  clearTimeout(MarketsEngine._cpmmQuoteTimer);
   document.getElementById("launchDetailModal")?.classList.remove("open");
   document.getElementById("launchCreateModal")?.classList.remove("open");
   if (MarketsEngine._detailTimer) {

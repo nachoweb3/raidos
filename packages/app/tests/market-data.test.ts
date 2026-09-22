@@ -137,7 +137,7 @@ describe("shared market data", () => {
   });
   it("caps provider calls even when requests use distinct queries", async () => {
     const fetcher = vi.fn(async () => response(gecko));
-    const service = new MarketDataService({ fetcher, limits: { geckoterminal: 1 } });
+    const service = new MarketDataService({ fetcher, limits: { geckoterminal: 1, coingecko: 0 } });
     await service.pools("solana", "new", 1);
     await expect(service.pools("solana", "new", 2)).rejects.toThrow(/unavailable/i);
     expect(fetcher).toHaveBeenCalledTimes(1);

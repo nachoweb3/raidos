@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>TRENCHES — The Social Network for Markets</title>
   <meta name="description" content="TRENCHES es la red social para los mercados. Descubre qué está moviendo el mercado, conecta con traders reales, analiza y opera en tiempo real desde un único ecosistema.">
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content="#0b1221">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="TRENCHES">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="assets/icon-64.png">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="stylesheet" href="css/design-system.css">
-  <link rel="stylesheet" href="css/terminal-premium.css?v=20260920-1">
+  <link rel="stylesheet" href="css/terminal-premium.css?v=20260922-2">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
 
   <style>
@@ -675,6 +677,7 @@
 
     <!-- Waitlist Capture Form -->
     <div class="hero-actions">
+      <button class="btn btn-primary" data-install-app type="button">Instalar en Android / iPhone</button>
       <a class="btn btn-primary" href="app.html?v=20260920-1" style="min-height:52px;padding:16px 28px">Entrar al nuevo terminal</a>
       <form class="waitlist-form" id="waitlistForm" onsubmit="handleWaitlistSubmit(event)">
         <input type="email" id="waitlistEmail" class="waitlist-input" placeholder="Introduce tu email para solicitar acceso..." required>
@@ -1210,5 +1213,6 @@
       }
     }
   </script>
+  <script type="module" src="js/install.js?v=20260922-2"></script>
 </body>
 </html>

@@ -1,25 +1,32 @@
 {
-  "name": "TRENCHES — The Social Network for Markets",
+  "name": "TRENCHES \u2014 The Social Network for Markets",
   "short_name": "TRENCHES",
   "description": "Discover people. Discover markets. Discover opportunities. Trade. Share. Build reputation.",
   "start_url": "/app.html",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
-  "orientation": "portrait",
+  "background_color": "#0b1221",
+  "theme_color": "#0b1221",
   "icons": [
     {
       "src": "assets/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "assets/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
-  "categories": ["finance", "social", "trading"]
+  "categories": [
+    "finance",
+    "social",
+    "trading"
+  ],
+  "id": "/app.html",
+  "scope": "/",
+  "lang": "es",
+  "prefer_related_applications": false
 }
