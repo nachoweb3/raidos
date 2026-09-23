@@ -838,5 +838,24 @@ describe("static & misc", () => {
     const invalidCode = await api("POST", "/api/auth/access-code", { code: "WRONGCODE" });
     expect(invalidCode.status).toBe(401);
   });
+
+  it("open registration accepts any access code and is flippable per request", async () => {
+    process.env.OPEN_REGISTRATION = "1";
+    try {
+      const anyCode = await api("POST", "/api/auth/access-code", { code: "whatever-typ" });
+      expect(anyCode.status).toBe(200);
+      expect(anyCode.json.valid).toBe(true);
+      expect(anyCode.json.access).toBe("open");
+
+      // Input validation still applies in open mode (UI requires non-empty).
+      const emptyCode = await api("POST", "/api/auth/access-code", { code: "" });
+      expect(emptyCode.status).toBe(400);
+    } finally {
+      delete process.env.OPEN_REGISTRATION;
+    }
+    // Kill-switch off again → the closed-beta list applies once more.
+    const gateBack = await api("POST", "/api/auth/access-code", { code: "WRONGCODE" });
+    expect(gateBack.status).toBe(401);
+  });
 });
 

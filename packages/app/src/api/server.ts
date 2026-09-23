@@ -614,15 +614,23 @@ export class ApiServer {
       });
     });
 
-    // ── Closed Beta Access Code Verification ──
+    // ── Access code verification (closed beta gate) ──
+    // OPEN_REGISTRATION=1 opens the doors to everyone: any code verifies and
+    // the UI treats the app as public (wallet/Google/X signup was always
+    // self-serve; this only switches the copy/gate back on if removed).
+    // Kill-switch is re-read per request — flippable in Fly without redeploy.
     this.router.publicRoute("POST", "/api/auth/access-code", (ctx) => {
       const code = (this.str(ctx, "code") ?? "").trim().toUpperCase();
+      if (process.env.OPEN_REGISTRATION === "1") {
+        sendJson(ctx.res, 200, { valid: true, access: "open", message: "TRENCHES is in public launch — welcome aboard" });
+        return;
+      }
       const validCodes = new Set(
         (process.env.ACCESS_CODES ? process.env.ACCESS_CODES.split(",") : ["ALPHA2027", "TRENCHES", "EARLYACCESS", "FOUNDER"])
           .map((c) => c.trim().toUpperCase())
       );
       if (validCodes.has(code)) {
-        sendJson(ctx.res, 200, { valid: true, message: "Welcome to TRENCHES Closed Beta" });
+        sendJson(ctx.res, 200, { valid: true, access: "beta", message: "Welcome to TRENCHES Closed Beta" });
       } else {
         throw new HttpError(401, "Invalid access code. Request an invitation below.");
       }
