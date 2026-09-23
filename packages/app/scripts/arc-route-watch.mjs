@@ -41,14 +41,18 @@ const j = async (url, opts = {}) => {
   return { status: res.status, body, text: text.slice(0, 400) };
 };
 
-/** Top Arc pools from GeckoTerminal → pick a real non-USDC token with liquidity. */
+/** Top Arc pools from GeckoTerminal → pick a real non-USDC token with liquidity.
+ * Primary: CoinGecko onchain API (same GT data, own quota via COINGECKO_API_KEY).
+ * Fallback: GeckoTerminal public (shared quota, prone to 429 from datacenter IPs). */
 async function pickRealPair() {
-  const gt = await j(
-    `https://api.geckoterminal.com/api/v2/networks/${GT_NETWORK}/pools?sort=h24_volume_usd_desc&pool_creation_hour_threshold=6`
-  );
-  if (gt.status === 429) { console.error("⚠️  GeckoTerminal 429 (cuota IP) — reintenta más tarde."); return null; }
+  const CG_KEY = process.env.COINGECKO_API_KEY || "";
+  const gt = CG_KEY
+    ? await j(`https://api.coingecko.com/api/v3/onchain/networks/${GT_NETWORK}/pools?sort=h24_volume_usd_desc`, { headers: { "x-cg-demo-api-key": CG_KEY } })
+    : await j(`https://api.geckoterminal.com/api/v2/networks/${GT_NETWORK}/pools?sort=h24_volume_usd_desc&pool_creation_hour_threshold=6`);
+  if (gt.status === 429) { console.error("⚠️  Cuota 429 (¿falta COINGECKO_API_KEY?) — reintenta más tarde."); return null; }
+  if (gt.status === 401) { console.error("⚠️  CoinGecko 401 — key inválida o sin acceso a /onchain."); return null; }
   if (gt.status !== 200 || !Array.isArray(gt.body?.data) || gt.body.data.length === 0) {
-    console.error(`⚠️  GeckoTerminal ${gt.status} sin pools para arc — ¿sigue indexando la red?`);
+    console.error(`⚠️  Pools ${gt.status} para arc — ¿sigue indexando la red?`);
     return null;
   }
   for (const pool of gt.body.data) {
@@ -56,8 +60,9 @@ async function pickRealPair() {
     const vol = Number(attrs.volume_usd?.h24 ?? 0);
     const addr = attrs.address ?? "";
     if (vol <= 0 || !addr) continue;
-    // relation[0] = pool tokens; take the first non-native, non-USDC token
-    const tokens = pool.relationships?.base_token?.data ?? [];
+    // relationship = pool tokens (array en GT, objeto en CG onchain); primer token no nativo, no USDC
+    const rel = pool.relationships?.base_token?.data;
+    const tokens = Array.isArray(rel) ? rel : rel ? [rel] : [];
     for (const t of tokens) {
       const tokenAddr = t.id.split("_")[1] ?? "";
       const native = attrs.address && tokenAddr.toLowerCase() === addr.toLowerCase();
@@ -85,18 +90,25 @@ async function probe0x(token) {
   }
   if (r.status === 404) return { ok: false, detail: "404 no route (0x no tiene liquidez en Arc)" };
   if (r.status === 400) return { ok: false, detail: `400 ${r.body?.reason ?? r.body?.validationErrors?.[0]?.reason ?? "bad request"} (chain soportada, sin ruta)` };
-  if (r.status === 401 || r.status === 403) return { ok: false, detail: `${r.status} auth — revisa ZERO_X_API_KEY` };
+  if (r.status === 401 || r.status === 403) return { ok: false, detail: `${r.status} auth — exporta ZERO_X_API_KEY localmente (fly secrets no muestra valores)` };
   return { ok: false, detail: `${r.status} ${r.text.slice(0, 120)}` };
 }
 
 /** Li.Fi public chain list — binary check: is Arc routable at all? */
-async function probeLiFi() {
+async function probeLiFi(token) {
   const r = await j("https://li.quest/v1/chains");
-  if (r.status !== 200 || !Array.isArray(r.body)) return { ok: false, detail: `${r.status} — no pude listar cadenas` };
-  const arc = r.body.find((c) => c.id === ARC_CHAIN_ID || String(c.key ?? "").toLowerCase() === "arc" || c.metamask?.chainId === `0x${ARC_CHAIN_ID.toString(16)}`);
-  return arc
-    ? { ok: true, detail: `Li.Fi la lista como "${arc.name}" (chainId ${arc.id})` }
-    : { ok: false, detail: "no listada en Li.Fi" };
+  const chains = Array.isArray(r.body) ? r.body : Array.isArray(r.body?.chains) ? r.body.chains : null;
+  if (r.status !== 200 || !chains) return { ok: false, detail: `${r.status} — no pude listar cadenas` };
+  const arc = chains.find((c) => c.id === ARC_CHAIN_ID || String(c.key ?? "").toLowerCase() === "arc" || c.metamask?.chainId === `0x${ARC_CHAIN_ID.toString(16)}`);
+  if (!arc) return { ok: false, detail: "no listada en Li.Fi" };
+  // Listada — la señal REAL es una quote intra-Arc ejecutable (con transactionRequest).
+  const q = await j(`https://li.quest/v1/quote?fromChain=${ARC_CHAIN_ID}&toChain=${ARC_CHAIN_ID}&fromToken=0x3600000000000000000000000000000000000000&toToken=${token}&fromAmount=1000000&fromAddress=0x000000000000000000000000000000000000dead`);
+  if (q.status === 200 && q.body?.transactionRequest) {
+    const fee = q.body.estimate?.feeCosts?.[0];
+    return { ok: true, detail: `RUTA REAL (tool=${q.body.tool}, fee=${fee ? fee.percentage : "?"}, txRequest ✓)` };
+  }
+  if (q.status === 500 || q.status === 404) return { ok: false, detail: `listada pero sin ruta ejecutable (quote ${q.status})` };
+  return { ok: false, detail: `listada; quote ${q.status} ${String(q.text).slice(0, 80)}` };
 }
 
 async function probe() {
@@ -111,16 +123,18 @@ async function probe() {
 
   const zx = await probe0x(pair.token);
   console.log(`   0x    : ${zx.ok ? "✅ RUTA" : "—"} ${zx.detail}`);
-  const lifi = await probeLiFi();
-  console.log(`   Li.Fi : ${lifi.ok ? "✅ LISTADA" : "—"} ${lifi.detail}`);
+  const lifi = await probeLiFi(pair.token);
+  console.log(`   Li.Fi : ${lifi.ok ? "✅ RUTA" : "—"} ${lifi.detail}`);
 
-  if (zx.ok) {
-    console.log("\n🟢 ¡0x tiene rutas en Arc! TOCA EL FLIP:");
+  if (zx.ok || lifi.ok) {
+    const who = [zx.ok && "0x", lifi.ok && "Li.Fi"].filter(Boolean).join(" + ");
+    console.log(`\n🟢 ¡${who} tiene rutas reales en Arc! TOCA EL FLIP:`);
     console.log('   1. Añade "arc" a SELF_CUSTODY_CHAINS en packages/app/src/api/server.ts');
-    console.log("   2. pnpm test && deploy en Fly");
+    console.log("   2. Integrar ejecutor Li.Fi (quote devuelta con transactionRequest lista para firmar)");
+    console.log("   3. pnpm test && deploy en Fly");
     return 0;
   }
-  console.log("\n⚪ Sin rutas aún (0x). Datos de mercado de Arc siguen vivos; swaps siguen honestamente OFF.");
+  console.log("\n⚪ Sin rutas ejecutables aún. Datos de mercado de Arc siguen vivos; swaps siguen honestamente OFF.");
   return 1;
 }
 
