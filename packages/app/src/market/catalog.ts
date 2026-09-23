@@ -4,7 +4,7 @@ import bs58 from "bs58";
 import type { MarketSnapshot } from "./data.js";
 
 /** Market coverage is independent of the trading chain registry. */
-export const MARKET_CHAINS = ["solana", "ethereum", "base", "bsc"];
+export const MARKET_CHAINS = ["solana", "ethereum", "base", "bsc", "arc"];
 export function assetAddress(chain: string, address: string): string {
   if (!MARKET_CHAINS.includes(chain)) throw new Error("invalid market chain");
   if (typeof address !== "string") throw new Error("invalid contract address");

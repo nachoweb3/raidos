@@ -196,14 +196,21 @@ const MONAD: ChainConfig = {
 // Circle's stablecoin L1 (testnet — mainnet addresses not yet published).
 // USDC is the native gas token: the native balance uses 18 decimals while the
 // ERC-20 USDC interface (0x3600…0000) uses 6. There is no wrapped-USDC
-// contract — the native token already satisfies IERC20 directly.
+// contract — the native token already satisfies IERC20 directly.// ── ARC (Circle L1) ─────────────────────────────────────────────────────
+// Mainnet LIVE since 2026-09-16. Verified on-chain 2026-09-23:
+//   eth_chainId → 0x13b2 (5042); block explorer https://explorer.arc.io
+//   Native gas IS USDC at 0x3600…0000 with 6 decimals (GT pool data + docs;
+//   docs describe 18-decimal display quirks, the token contract is 6).
+//   No EVM aggregator routes Arc yet (0x quote probe 404 on 2026-09-23);
+//   market DATA is live via GeckoTerminal network "arc". Swap execution
+//   stays disabled (no verified route) until an aggregator ships support.
 const ARC: ChainConfig = {
   id: "arc",
   name: "Arc",
-  chainId: 5042002,
+  chainId: 5042,
   nativeCurrency: "USDC",
-  rpcUrl: "https://rpc.testnet.arc.io",
-  explorerUrl: "https://testnet.arcscan.app",
+  rpcUrl: "https://rpc.mainnet.arc.io",
+  explorerUrl: "https://explorer.arc.io",
   evm: true,
   usdcAddress: "0x3600000000000000000000000000000000000000",
   usdcDecimals: 6,
@@ -211,7 +218,7 @@ const ARC: ChainConfig = {
   dexAggregator: "0x",
   dexApiUrl: "https://api.0x.org",
   bridgeProvider: "cctp",
-  supportsLaunches: true,
+  supportsLaunches: false,
 };
 
 // ── REGISTRY ────────────────────────────────────────────────────────────

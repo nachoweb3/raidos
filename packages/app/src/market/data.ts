@@ -18,7 +18,7 @@ const HOSTS: Record<Provider, string> = {
   goplus: "https://api.gopluslabs.io",
 };
 const NETWORKS: Record<string, string> = {
-  solana: "solana", ethereum: "eth", base: "base", bsc: "bsc",
+  solana: "solana", ethereum: "eth", base: "base", bsc: "bsc", arc: "arc",
 };
 const reverseNetwork = (network: string) => Object.keys(NETWORKS).find((chain) => NETWORKS[chain] === network) ?? network;
 const addressKey = (chain: string, address: string) => /^0x/i.test(address) ? address.toLowerCase() : address;

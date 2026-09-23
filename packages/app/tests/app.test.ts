@@ -81,15 +81,16 @@ describe("chain configs", () => {
     expect(rh.nativeCurrency).toBe("ETH");
   });
 
-  it("arc chain is configured", () => {
+  it("arc chain is configured for VERIFIED mainnet (chainId probed on-chain 2026-09-23)", () => {
     const arc = getChain("arc")!;
-    expect(arc.chainId).toBe(5042002);
-    expect(arc.rpcUrl).toBe("https://rpc.testnet.arc.io");
-    expect(arc.explorerUrl).toBe("https://testnet.arcscan.app");
+    expect(arc.chainId).toBe(5042); // eth_chainId → 0x13b2 via rpc.mainnet.arc.io
+    expect(arc.rpcUrl).toBe("https://rpc.mainnet.arc.io");
+    expect(arc.explorerUrl).toBe("https://explorer.arc.io");
     expect(arc.nativeCurrency).toBe("USDC");
     expect(arc.evm).toBe(true);
     expect(arc.usdcAddress).toBe("0x3600000000000000000000000000000000000000");
-    expect(getChain(5042002)?.name).toBe("Arc");
+    expect(arc.usdcDecimals).toBe(6); // native USDC contract decimals
+    expect(getChain(5042)?.name).toBe("Arc");
   });
 
   it("getChain resolves by id and name", () => {
