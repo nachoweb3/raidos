@@ -11,6 +11,7 @@ import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
 import { TrenchesEngine } from "./trenches.js";
 import { RewardsEngine } from "./rewards.js";
+import { CopyEngine } from "./copy.js";
 import { PremiumEngine } from "./premium.js";
 import { DexFeed } from "./dexfeed.js";
 import { MarketsEngine } from "./markets.js";
@@ -201,6 +202,8 @@ export const App = {
       PortfolioEngine.load();
     } else if (viewName === "rewards") {
       RewardsEngine.load();
+    } else if (viewName === "copy") {
+      CopyEngine.load();
     } else if (viewName === "markets") {
       MarketsEngine.render();
     }
@@ -622,6 +625,7 @@ window.PortfolioEngine = PortfolioEngine;
 window.MarketsEngine = MarketsEngine;
 window.TrenchesEngine = TrenchesEngine;
 window.RewardsEngine = RewardsEngine;
+window.CopyEngine = CopyEngine;
 
 document.addEventListener("DOMContentLoaded", () => {
   App.init();

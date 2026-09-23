@@ -12,6 +12,8 @@ import http from "node:http";
 import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
+import { SocialEngine } from "../social/engine.js";
+import { RATING_FORMULA_VERSION, RATING_WEIGHTS, MIN_TRADES_FOR_SCORE } from "../social/rating.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,8 +134,10 @@ export class ApiServer {
   private server: http.Server | null = null;
   private readonly port: number;
   private reconcileTimer: NodeJS.Timeout | null = null;
+  private socialTimer: NodeJS.Timeout | null = null;
   /** Solana connection factory (LaunchLab/factory/AMM); returns null without RPC. */
   private readonly solanaConnectionFactory: () => Connection | null;
+  private socialEngine!: SocialEngine;
   constructor(options: ServerOptions) {
     this.appMode = options.appMode ?? ((process.env.APP_MODE as "live" | "mock") ?? "mock");
     if (this.appMode !== "live" && this.appMode !== "mock") throw new Error("APP_MODE must be live or mock");
@@ -163,6 +167,7 @@ export class ApiServer {
     this.revenue = new RevenueEngine(this.db);
     this.rewards = new RewardsEngine(this.db);
     this.history = new TradeHistory(this.db);
+    this.socialEngine = new SocialEngine(this.db, this.db.marketCatalog, this.marketData);
 
     this.registerRoutes();
   }
@@ -189,6 +194,14 @@ export class ApiServer {
       }, 15_000);
       this.reconcileTimer.unref?.();
     }
+    // Social pipeline (harvest + ratings + CT calls): bounded pass every 60 s,
+    // in every mode — it is read-only observation, never execution.
+    this.socialTimer = setInterval(() => {
+      void this.socialEngine.runPass().catch((err) => {
+        console.warn("[api] social pass failed:", err instanceof Error ? err.message : "unknown error");
+      });
+    }, 60_000);
+    this.socialTimer.unref?.();
     return this.portNumber;
   }
 
@@ -196,6 +209,10 @@ export class ApiServer {
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
+    }
+    if (this.socialTimer) {
+      clearInterval(this.socialTimer);
+      this.socialTimer = null;
     }
     if (this.server) {
       await new Promise<void>((resolvePromise) => this.server!.close(() => resolvePromise()));
@@ -2276,6 +2293,118 @@ export class ApiServer {
         };
       });
       sendJson(ctx.res, 200, { pnl, holdings, positions, mode: this.appMode });
+    });
+
+    // ── Copy trading (signal + 1-tap; never auto-execution) ──
+
+    // Public leaderboard: self-observed wallets with transparent rating.
+    this.router.publicRoute("GET", "/api/copy/leaderboard", (ctx) => {
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 30) || 30, 100);
+      sendJson(ctx.res, 200, {
+        formula: RATING_FORMULA_VERSION,
+        weights: RATING_WEIGHTS,
+        minTradesForScore: MIN_TRADES_FOR_SCORE,
+        coverage: "self-observed trades from indexed pools",
+        wallets: this.socialEngine.leaderboard(limit),
+        mode: this.appMode,
+      });
+    });
+
+    // Public: rating detail of one wallet.
+    this.router.publicRoute("GET", "/api/copy/rating/:chain/:wallet", (ctx) => {
+      const chain = (ctx.params.chain ?? "").toLowerCase();
+      const wallet = ctx.params.wallet ?? "";
+      if (!getChain(chain)) throw new HttpError(400, "unknown chain");
+      if (chain === "solana" ? !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet) : !/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+        throw new HttpError(400, "malformed wallet");
+      }
+      const rating = this.socialEngine.rateWallet(chain, wallet);
+      sendJson(ctx.res, 200, {
+        chain, wallet, rating,
+        formula: RATING_FORMULA_VERSION,
+        note: rating?.score === null || !rating
+          ? "Sin puntuación: la evidencia observada no alcanza el mínimo (muestra y posiciones cerradas)."
+          : undefined,
+      });
+    });
+
+    // Public: CT calls feed (tweet calls with observed price tracking).
+    this.router.publicRoute("GET", "/api/copy/ct-calls", (ctx) => {
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 100);
+      sendJson(ctx.res, 200, {
+        calls: this.db.listCtCalls(limit).map((c: any) => ({
+          handle: c.handle, tweetId: c.tweet_id, tweetUrl: c.tweet_url,
+          postedAt: c.posted_at, chain: c.chain, token: c.token,
+          symbol: c.token_symbol, excerpt: c.excerpt,
+          priceAtCall: c.price_at_call, priceNow: c.price_now,
+          performancePct: c.price_at_call && c.price_now ? (c.price_now - c.price_at_call) / c.price_at_call : null,
+        })),
+        note: "Señales de evidencia — no consejo financiero. Solo tweets con dirección on-chain resoluble en nuestro catálogo.",
+      });
+    });
+
+    // Auth: my copy subscriptions.
+    this.router.route("GET", "/api/copy/subscriptions", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      sendJson(ctx.res, 200, { subscriptions: this.db.listCopySubscriptions(userId) });
+    });
+
+    this.router.route("POST", "/api/copy/subscriptions", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const chain = this.str(ctx, "chain").toLowerCase();
+      const wallet = this.str(ctx, "wallet");
+      const maxUsdc = this.str(ctx, "maxPerTradeUsdc", false) || "10000000"; // 10 USDC default
+      if (!/^\d{1,15}$/.test(maxUsdc) || BigInt(maxUsdc) <= 0n || BigInt(maxUsdc) > 10n ** 12n) {
+        throw new HttpError(400, "maxPerTradeUsdc must be micro-USDC integer in a sane range");
+      }
+      if (chain === "ct") {
+        // CT channel subscription: wallet = @handle (1-15 word chars).
+        if (!/^@[A-Za-z0-9_]{1,15}$/.test(wallet)) throw new HttpError(400, "CT subscription needs wallet=@handle");
+      } else {
+        if (!getChain(chain)) throw new HttpError(400, "unknown chain");
+        if (chain === "solana" ? !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet) : !/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+          throw new HttpError(400, "malformed wallet");
+        }
+      }
+      const sub = this.db.createCopySubscription(userId, chain, wallet, maxUsdc, ctx.body.mirrorSells !== false);
+      sendJson(ctx.res, 201, { subscription: sub });
+    });
+
+    this.router.route("PATCH", "/api/copy/subscriptions/:id", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const id = Number(ctx.params.id);
+      if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "invalid id");
+      const existing = this.db.listCopySubscriptions(userId).find((s: any) => s.id === id);
+      if (!existing) throw new HttpError(404, "subscription not found");
+      const patch: { maxPerTradeUsdc?: string; mirrorSells?: boolean; enabled?: boolean } = {};
+      if (typeof ctx.body.maxPerTradeUsdc === "string") {
+        if (!/^\d{1,15}$/.test(ctx.body.maxPerTradeUsdc) || BigInt(ctx.body.maxPerTradeUsdc) <= 0n) throw new HttpError(400, "invalid maxPerTradeUsdc");
+        patch.maxPerTradeUsdc = ctx.body.maxPerTradeUsdc;
+      }
+      if (typeof ctx.body.mirrorSells === "boolean") patch.mirrorSells = ctx.body.mirrorSells;
+      if (typeof ctx.body.enabled === "boolean") patch.enabled = ctx.body.enabled;
+      this.db.updateCopySubscription(userId, id, patch);
+      sendJson(ctx.res, 200, { ok: true });
+    });
+
+    this.router.route("DELETE", "/api/copy/subscriptions/:id", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const id = Number(ctx.params.id);
+      if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "invalid id");
+      this.db.deleteCopySubscription(userId, id);
+      sendJson(ctx.res, 200, { ok: true });
+    });
+
+    // Auth: my delivered copy signals (the 1-tap queue).
+    this.router.route("GET", "/api/copy/signals", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 200);
+      const signals = this.db.listCopySignals(userId, limit).map((s: any) => ({
+        id: s.id, source: s.source, chain: s.chain, wallet: s.wallet, handle: s.handle,
+        token: s.token, symbol: s.token_symbol, side: s.side,
+        refPriceUsd: s.ref_price_usd, maxPerTradeUsdc: s.max_per_trade_usdc, ts: s.ts,
+      }));
+      sendJson(ctx.res, 200, { signals, mode: this.appMode });
     });
 
     // ── Rewards (fee-funded trading + referral program) ──

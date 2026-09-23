@@ -526,6 +526,79 @@ export class AppDb {
         reason TEXT NOT NULL DEFAULT '',
         updated_at INTEGER NOT NULL
       );
+
+      -- ── SOCIAL / COPY TRADING ─────────────────────────────────────────
+      -- Self-observed on-chain trades (harvested from pools we index).
+      -- UNIQUE(id) makes the harvest idempotent — replays never double-count.
+      CREATE TABLE IF NOT EXISTS observed_trades (
+        id TEXT PRIMARY KEY,                 -- 'chain:gt-trade-id'
+        chain TEXT NOT NULL,
+        pool TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_symbol TEXT NOT NULL DEFAULT '',
+        wallet TEXT NOT NULL,
+        side TEXT NOT NULL,                  -- buy | sell
+        price_usd REAL NOT NULL,
+        volume_usd REAL NOT NULL,
+        amount TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        tx_hash TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_observed_wallet ON observed_trades(chain,wallet,ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_observed_ts ON observed_trades(ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_observed_token ON observed_trades(chain,token,ts DESC);
+
+      -- CT tweet call signals. UNIQUE(tweet_id,chain,token) = idempotent.
+      CREATE TABLE IF NOT EXISTS ct_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        handle TEXT NOT NULL,
+        tweet_id TEXT NOT NULL,
+        tweet_url TEXT NOT NULL,
+        posted_at INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_symbol TEXT NOT NULL DEFAULT '',
+        excerpt TEXT NOT NULL DEFAULT '',
+        price_at_call REAL,                 -- observed USD price when signal stored
+        price_now REAL,                     -- refreshed by worker
+        last_checked INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(tweet_id,chain,token)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ct_calls_posted ON ct_calls(posted_at DESC);
+
+      -- Copy subscriptions: user follows a tracked wallet (signal + 1-tap).
+      -- No custody here: subscription only routes SIGNALS to the user feed.
+      CREATE TABLE IF NOT EXISTS copy_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        chain TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        max_per_trade_usdc TEXT NOT NULL,   -- micro-USDC cap per mirrored trade
+        mirror_sells INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        UNIQUE(user_id,chain,wallet)
+      );
+      CREATE INDEX IF NOT EXISTS idx_copy_subs_wallet ON copy_subscriptions(chain,wallet,enabled);
+
+      -- Delivered copy signals (fan-out of observed trades to subscribers).
+      CREATE TABLE IF NOT EXISTS copy_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id INTEGER NOT NULL REFERENCES copy_subscriptions(id),
+        user_id INTEGER NOT NULL,
+        source TEXT NOT NULL,                -- wallet | ct
+        chain TEXT NOT NULL,
+        wallet TEXT NOT NULL DEFAULT '',
+        handle TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL,
+        token_symbol TEXT NOT NULL DEFAULT '',
+        side TEXT NOT NULL,                  -- buy | sell
+        ref_price_usd REAL NOT NULL,         -- source trade price (wallet) or price_at_call (ct)
+        max_per_trade_usdc TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        UNIQUE(subscription_id,source,chain,token,side,ts)
+      );
+      CREATE INDEX IF NOT EXISTS idx_copy_signals_user ON copy_signals(user_id,ts DESC);
     `);
   }
 
@@ -1667,5 +1740,188 @@ export class AppDb {
 
   close(): void {
     this.db.close();
+  }
+
+  // ── Social / copy trading ───────────────────────────────────────────
+
+  /** Idempotent harvest insert. Returns how many rows were actually new. */
+  insertObservedTrades(rows: {
+    id: string; chain: string; pool: string; token: string; token_symbol: string;
+    wallet: string; side: string; price_usd: number; volume_usd: number;
+    amount: string; ts: number; tx_hash: string;
+  }[]): number {
+    if (!rows.length) return 0;
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO observed_trades(id,chain,pool,token,token_symbol,wallet,side,price_usd,volume_usd,amount,ts,tx_hash)
+       VALUES(@id,@chain,@pool,@token,@token_symbol,@wallet,@side,@price_usd,@volume_usd,@amount,@ts,@tx_hash)`);
+    let inserted = 0;
+    this.db.transaction(() => {
+      for (const r of rows) inserted += stmt.run(r).changes;
+    })();
+    return inserted;
+  }
+
+  getObservedTrades(chain: string, wallet: string, limit = 500) {
+    return this.db.prepare(
+      "SELECT * FROM observed_trades WHERE chain=? AND wallet=? ORDER BY ts DESC LIMIT ?"
+    ).all(chain, wallet, limit) as any[];
+  }
+
+  /** Most recent observed token for a wallet (harvest routing). */
+  lastObservedTokenFor(chain: string, wallet: string): { token: string } | undefined {
+    return this.db.prepare(
+      "SELECT token FROM observed_trades WHERE chain=? AND wallet=? ORDER BY ts DESC LIMIT 1"
+    ).get(chain, wallet) as { token: string } | undefined;
+  }
+
+  /** Wallets with observed activity in the window, by volume (rating refresh). */
+  activeTrackedWallets(windowSeconds: number, limit: number) {
+    return this.db.prepare(
+      `SELECT chain, wallet FROM observed_trades WHERE ts>=? GROUP BY chain, wallet ORDER BY SUM(volume_usd) DESC LIMIT ?`
+    ).all(Math.floor(Date.now() / 1000) - windowSeconds, limit) as { chain: string; wallet: string }[];
+  }
+
+  /** Tracked wallets ranked by observed activity in the window (leaderboard). */
+  trackedWallets(windowSeconds = 45 * 86400, limit = 50) {
+    return this.db.prepare(
+      `SELECT chain, wallet, COUNT(*) AS trades, SUM(volume_usd) AS volume_usd,
+              MIN(ts) AS first_ts, MAX(ts) AS last_ts
+       FROM observed_trades WHERE ts>=? GROUP BY chain,wallet
+       ORDER BY volume_usd DESC LIMIT ?`
+    ).all(Math.floor(Date.now() / 1000) - windowSeconds, limit) as any[];
+  }
+
+  /** Whether any user subscribes to this wallet (harvest prioritization). */
+  hasCopySubscribers(chain: string, wallet: string): boolean {
+    return !!this.db.prepare(
+      "SELECT 1 FROM copy_subscriptions WHERE chain=? AND wallet=? AND enabled=1 LIMIT 1"
+    ).get(chain, wallet);
+  }
+
+  createCopySubscription(userId: number, chain: string, wallet: string, maxPerTradeUsdc: string, mirrorSells: boolean) {
+    this.db.prepare(
+      `INSERT INTO copy_subscriptions(user_id,chain,wallet,max_per_trade_usdc,mirror_sells,enabled,created_at)
+       VALUES(?,?,?,?,?,1,?)
+       ON CONFLICT(user_id,chain,wallet) DO UPDATE SET
+         max_per_trade_usdc=excluded.max_per_trade_usdc,
+         mirror_sells=excluded.mirror_sells,
+         enabled=1`
+    ).run(userId, chain, wallet, maxPerTradeUsdc, mirrorSells ? 1 : 0, Math.floor(Date.now() / 1000));
+    return this.db.prepare(
+      "SELECT * FROM copy_subscriptions WHERE user_id=? AND chain=? AND wallet=?"
+    ).get(userId, chain, wallet);
+  }
+
+  getCopySubscription(userId: number, chain: string, wallet: string) {
+    return this.db.prepare(
+      "SELECT * FROM copy_subscriptions WHERE user_id=? AND chain=? AND wallet=?"
+    ).get(userId, chain, wallet) as any;
+  }
+
+  listCopySubscriptions(userId: number) {
+    return this.db.prepare(
+      "SELECT * FROM copy_subscriptions WHERE user_id=? ORDER BY created_at DESC"
+    ).all(userId) as any[];
+  }
+
+  updateCopySubscription(userId: number, id: number, patch: { maxPerTradeUsdc?: string; mirrorSells?: boolean; enabled?: boolean }) {
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (patch.maxPerTradeUsdc !== undefined) { sets.push("max_per_trade_usdc=?"); values.push(patch.maxPerTradeUsdc); }
+    if (patch.mirrorSells !== undefined) { sets.push("mirror_sells=?"); values.push(patch.mirrorSells ? 1 : 0); }
+    if (patch.enabled !== undefined) { sets.push("enabled=?"); values.push(patch.enabled ? 1 : 0); }
+    if (!sets.length) return;
+    values.push(userId, id);
+    this.db.prepare(`UPDATE copy_subscriptions SET ${sets.join(",")} WHERE user_id=? AND id=?`).run(...values);
+  }
+
+  deleteCopySubscription(userId: number, id: number) {
+    this.db.prepare("DELETE FROM copy_subscriptions WHERE user_id=? AND id=?").run(userId, id);
+  }
+
+  /** Subscriptions to fan out a trade for (wallet matches, enabled). */
+  copySubscribersFor(chain: string, wallet: string) {
+    return this.db.prepare(
+      "SELECT * FROM copy_subscriptions WHERE chain=? AND wallet=? AND enabled=1"
+    ).all(chain, wallet) as any[];
+  }
+
+  insertCopySignals(rows: {
+    subscription_id: number; user_id: number; source: string; chain: string;
+    wallet: string; handle: string; token: string; token_symbol: string;
+    side: string; ref_price_usd: number; max_per_trade_usdc: string; ts: number;
+  }[]): number {
+    if (!rows.length) return 0;
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO copy_signals(subscription_id,user_id,source,chain,wallet,handle,token,token_symbol,side,ref_price_usd,max_per_trade_usdc,ts)
+       VALUES(@subscription_id,@user_id,@source,@chain,@wallet,@handle,@token,@token_symbol,@side,@ref_price_usd,@max_per_trade_usdc,@ts)`);
+    let inserted = 0;
+    this.db.transaction(() => {
+      for (const r of rows) inserted += stmt.run(r).changes;
+    })();
+    return inserted;
+  }
+
+  listCopySignals(userId: number, limit = 50) {
+    return this.db.prepare(
+      "SELECT * FROM copy_signals WHERE user_id=? ORDER BY ts DESC LIMIT ?"
+    ).all(userId, limit) as any[];
+  }
+
+  /** Upsert a CT call signal (idempotent per tweet+token). */
+  upsertCtCall(call: {
+    handle: string; tweet_id: string; tweet_url: string; posted_at: number;
+    chain: string; token: string; token_symbol: string; excerpt: string; price_at_call: number | null;
+  }): boolean {
+    const result = this.db.prepare(
+      `INSERT INTO ct_calls(handle,tweet_id,tweet_url,posted_at,chain,token,token_symbol,excerpt,price_at_call,last_checked)
+       VALUES(@handle,@tweet_id,@tweet_url,@posted_at,@chain,@token,@token_symbol,@excerpt,@price_at_call,0)
+       ON CONFLICT(tweet_id,chain,token) DO NOTHING`
+    ).run(call);
+    return result.changes > 0;
+  }
+
+  listCtCalls(limit = 50) {
+    return this.db.prepare(
+      "SELECT * FROM ct_calls ORDER BY posted_at DESC LIMIT ?"
+    ).all(limit) as any[];
+  }
+
+  updateCtCallPrice(tweetId: string, chain: string, token: string, priceNow: number | null) {
+    this.db.prepare(
+      "UPDATE ct_calls SET price_now=?, last_checked=? WHERE tweet_id=? AND chain=? AND token=?"
+    ).run(priceNow, Math.floor(Date.now() / 1000), tweetId, chain, token);
+  }
+
+  /** Subscriptions to a CT handle (wallet column = handle, chain='ct'). */
+  ctSubscribersFor(handle: string) {
+    return this.db.prepare(
+      "SELECT * FROM copy_subscriptions WHERE chain='ct' AND wallet=? AND enabled=1"
+    ).all(handle) as any[];
+  }
+
+  /** Subscribed wallets for harvest prioritization (deduped). */
+  subscribedWallets(limit = 12) {
+    return this.db.prepare(
+      "SELECT chain, wallet FROM copy_subscriptions WHERE enabled=1 AND chain != 'ct' GROUP BY chain, wallet LIMIT ?"
+    ).all(limit) as { chain: string; wallet: string }[];
+  }
+
+  /** CT calls needing a price refresh (stale > 15 min). */
+  staleCtCalls(maxAgeSeconds: number, limit = 30) {
+    return this.db.prepare(
+      "SELECT * FROM ct_calls WHERE last_checked < ? ORDER BY posted_at DESC LIMIT ?"
+    ).all(Math.floor(Date.now() / 1000) - maxAgeSeconds, limit) as any[];
+  }
+
+  /** Pool price for a catalog asset (best pool), or null when unavailable. */
+  poolPriceFor(chain: string, token: string): number | null {
+    const asset = this.marketCatalog.findAsset(chain, token);
+    if (!asset) return null;
+    const row = this.db.prepare(
+      "SELECT price FROM market_pools WHERE asset_id=? AND price IS NOT NULL AND price>0 ORDER BY as_of DESC LIMIT 1"
+    ).get(asset.id) as { price: number } | undefined;
+    const price = Number(row?.price);
+    return Number.isFinite(price) && price > 0 ? price : null;
   }
 }

@@ -181,6 +181,29 @@ export class MarketCatalog {
       source: "catalog", coverage: "Observed provider pools; not an exhaustive blockchain index", order: sort };
   }
 
+  /** Resolve a catalog asset by chain+address (for social signal ingestion). */
+  findAsset(chain: string, address: string) {
+    return this.db.prepare("SELECT id,chain,address,name,symbol,decimals FROM market_assets WHERE chain=? AND address=?")
+      .get(chain, address) as { id: number; chain: string; address: string; name: string; symbol: string; decimals: number | null } | undefined;
+  }
+
+  /** Most liquid pool row for an asset (address + freshness info). */
+  bestPool(assetId: number) {
+    return this.db.prepare("SELECT address,liquidity,as_of,status FROM market_pools WHERE asset_id=? ORDER BY (as_of>=?) DESC,liquidity DESC,as_of DESC LIMIT 1")
+      .get(assetId, this.now() - 300000) as { address: string; liquidity: number | null; as_of: number; status: string } | undefined;
+  }
+
+  /** Active tracked assets for harvest: observed recently with real liquidity. */
+  trackedAssets(limit = 40) {
+    return this.db.prepare(`SELECT a.id,a.chain,a.address,a.symbol,p.address AS pool FROM market_assets a
+      JOIN market_pools p ON p.asset_id=a.id AND p.address=(
+        SELECT b.address FROM market_pools b WHERE b.asset_id=a.id
+        ORDER BY (b.as_of>=?) DESC,b.liquidity DESC,b.as_of DESC,b.address LIMIT 1)
+      WHERE p.liquidity>10000 AND p.as_of>=? AND a.chain IN ('solana','ethereum','base','bsc','arc')
+      ORDER BY p.liquidity DESC LIMIT ?`).all(this.now() - 300000, this.now() - 3600000, limit) as
+      { id: number; chain: string; address: string; symbol: string; pool: string }[];
+  }
+
   stats() {
     return { ...(this.db.prepare(`SELECT (SELECT COUNT(*) FROM market_assets) AS assets,
       (SELECT COUNT(*) FROM market_pools) AS pools,(SELECT COUNT(*) FROM market_jobs) AS jobs,
