@@ -30,7 +30,7 @@
   <script type="importmap">
     { "imports": {
       "./js/api.js": "./js/api.js?v=20260923-1",
-      "./js/app.js": "./js/app.js?v=20260923-1",
+      "./js/app.js": "./js/app.js?v=20260923-4",
       "./js/catalog-board.js": "./js/catalog-board.js?v=20260923-3",
       "./js/dexfeed.js": "./js/dexfeed.js?v=20260923-1",
       "./js/discover.js": "./js/discover.js?v=20260923-1",
@@ -381,7 +381,7 @@
             style="width:230px; padding:6px 10px; font-size:11.5px; border-radius:var(--radius-sm); border:1px solid var(--border-subtle); background:var(--bg-elevated); color:#fff; outline:none">
           <div id="universalSearchResults" style="display:none; position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); box-shadow:0 12px 32px rgba(0,0,0,0.5); z-index:1000; max-height:340px; overflow-y:auto"></div>
         </div>
-        <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TrenchesEngine.setChain(this.value);" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
+        <select id="globalChainSelect" onchange="window.DiscoverEngine.setChain(this.value); window.TrenchesEngine.setChain(this.value); window.App.chainNotice(this.value);" style="padding:5px 8px; font-size:11.5px; border-radius:var(--radius-sm)">
           <option value="all">◎ Todas las cadenas</option>
           <option value="solana">Solana</option>
           <option value="base">Base</option>
@@ -399,6 +399,9 @@
         </button>
       </div>
     </header>
+
+    <!-- Honest chain notice: shown when a data-only chain (e.g. Arc) is selected -->
+    <div id="chainNotice" role="status" aria-live="polite" style="display:none; margin:10px 14px 0; padding:10px 14px; border:1px solid rgba(57,255,20,0.35); background:rgba(57,255,20,0.08); border-radius:var(--radius-md); font-size:12px; color:#b8ffcf"></div>
 
     <!-- ── MAIN BODY VIEWS ── -->
     <main class="app-body">
@@ -1013,7 +1016,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260923-1"></script>
+  <script type="module" src="js/app.js?v=20260923-4"></script>
 
   <script>
     // Launchpad modal helpers

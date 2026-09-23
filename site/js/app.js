@@ -248,6 +248,19 @@ export const App = {
     }
   },
 
+  /** Honest banner for chains whose market data is live but swaps aren't (e.g. Arc). */
+  chainNotice(chain) {
+    const bar = document.getElementById("chainNotice");
+    if (!bar) return;
+    const notices = {
+      arc: "🟢 Arc (Circle L1): precios y pools EN VIVO. Los swaps llegan cuando un agregador (0x/Li.Fi) tenga rutas verificadas — no abrimos trading sin liquidez real.",
+    };
+    const text = notices[String(chain || "").toLowerCase()];
+    if (!text) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+    bar.innerHTML = text;
+    bar.style.display = "block";
+  },
+
   universalSearchEnter() {
     const box = document.getElementById("universalSearchResults");
     const first = box?.querySelector("[data-market-result]");
