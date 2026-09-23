@@ -1,6 +1,6 @@
 // Read-only public provider fallback when the shared server exhausts its quota.
 // No application credentials are sent to the provider. Respect 429 cooldowns.
-const networks = { solana: "solana", ethereum: "eth", base: "base", bsc: "bsc" };
+const networks = { solana: "solana", ethereum: "eth", base: "base", bsc: "bsc", arc: "arc" };
 const cache = new Map(), pending = new Map();
 let retryAfter = 0;
 const keyFor = (chain, address) => chain === "solana" ? address : address.toLowerCase();

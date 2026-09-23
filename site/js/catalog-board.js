@@ -11,7 +11,7 @@ const fields = [["minPrice", "Precio mínimo"], ["maxPrice", "Precio máximo"], 
   ["maxMarketCap", "Market cap máximo"], ["minLiquidity", "Liquidez mínima"], ["maxLiquidity", "Liquidez máxima"],
   ["minVolume", "Volumen 24h mínimo"], ["maxVolume", "Volumen 24h máximo"], ["maxAgeHours", "Edad máxima (horas)"]];
 const sorts = { newest: "Más recientes", liquidity: "Mayor liquidez", volume: "Mayor volumen 24h", marketCap: "Mayor market cap", marketCapAsc: "Menor market cap", indexed: "Orden del catálogo" };
-const chains = ["all", "solana", "ethereum", "base", "bsc"];
+const chains = ["all", "solana", "ethereum", "base", "bsc", "arc"];
 function cleanFilters(input = {}) {
   const out = {};
   if (chains.includes(input.chain)) out.chain = input.chain;
