@@ -920,6 +920,13 @@ export class AppDb {
     ).all(poolId, limit) as any[];
   }
 
+  /** Idempotency for pool swap recovery: one ledger row per signature. */
+  getPoolSwapBySignature(signature: string) {
+    return this.db.prepare(
+      "SELECT id, pool_id AS poolId, user_id AS userId, side, amount_in AS amountIn, amount_out AS amountOut, min_out AS minOut, signature, ts FROM pool_swaps WHERE signature = ? LIMIT 1"
+    ).get(signature) as any;
+  }
+
   // ── Profile methods ───────────────────────────────────────────────────
 
   getProfile(userId: number) {
@@ -1294,6 +1301,11 @@ export class AppDb {
       `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
     ).run(key, value, Math.floor(Date.now() / 1000));
+  }
+
+  /** Remove an app setting (used by tests and journal rollbacks). */
+  deleteAppSetting(key: string): void {
+    this.db.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
   }
 
   // ── Self-custody sessions ──

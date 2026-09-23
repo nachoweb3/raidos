@@ -78,12 +78,27 @@ export const RewardsEngine = {
     if (this.claiming) return;
     const bal = this.data?.balance;
     if (!bal || Number(bal.availableUsdc) <= 0) return;
-    if (!confirm(`Reclamar ${fmtUsdMicro(bal.availableUsdc)} en rewards?`)) return;
+    // Live payouts are a REAL USDC transfer to a linked Solana wallet; ask for
+    // the destination and warn the user before signing nothing (server-side tx).
+    const onChain = this.data?.mode === "live";
+    let destination = "";
+    if (onChain) {
+      destination = prompt("Wallet Solana (vinculada a tu cuenta) para recibir el pago en USDC:", window.solana?.publicKey?.toString() || "");
+      if (!destination) return;
+    }
+    const msg = onChain
+      ? `Reclamar ${fmtUsdMicro(bal.availableUsdc)} en rewards?\n\nPago REAL en USDC (Solana) a:\n${destination}\n\nLa tesorería de la plataforma envía la transferencia on-chain.`
+      : `Reclamar ${fmtUsdMicro(bal.availableUsdc)} en rewards?`;
+    if (!confirm(msg)) return;
     this.claiming = true;
     this.render();
     try {
-      const res = await ApiClient.request("/api/rewards/claim", { method: "POST", body: JSON.stringify({}) });
-      alert(`✅ Rewards reclamadas: ${fmtUsdMicro(res.claimedUsdc)}\nRef: ${res.txRef}`);
+      const res = await ApiClient.request("/api/rewards/claim", { method: "POST", body: JSON.stringify(onChain ? { destination } : {}) });
+      if (res.onChain) {
+        alert(`✅ Pago on-chain enviado: ${fmtUsdMicro(res.amountUsdc)} USDC\nTx: https://solscan.io/tx/${res.signature}`);
+      } else {
+        alert(`✅ Rewards reclamadas: ${fmtUsdMicro(res.claimedUsdc)}\nRef: ${res.txRef}`);
+      }
     } catch (err) {
       alert("❌ " + String(err?.message || err));
     } finally {
@@ -185,8 +200,9 @@ export const RewardsEngine = {
               <div style="font-size:10px; color:var(--text-tertiary); letter-spacing:1px">DISPONIBLE</div>
             </div>
             <button class="btn btn-primary btn-lg" id="claimRewardsBtn" ${canClaim ? "" : "disabled style=opacity:0.45"} onclick="window.RewardsEngine.claim()">
-              ${this.claiming ? "Reclamando…" : "CLAIM REWARDS"}
+              ${this.claiming ? "Reclamando…" : this.data?.mode === "live" ? "CLAIM ON-CHAIN (USDC)" : "CLAIM REWARDS"}
             </button>
+            ${this.data?.mode === "live" ? `<p style="font-size:10px; color:var(--text-tertiary); margin-top:8px">🔓 Pago real en USDC por Solana desde la tesorería. Necesitas una wallet vinculada a tu cuenta.</p>` : ""}
           </div>
         </div>
 

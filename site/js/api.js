@@ -403,6 +403,11 @@ export const ApiClient = {
     });
   },
 
+  /** Recovery: resolve a prepared/submitted pool swap session against the RPC. */
+  async getPoolSwapSession(launchId, sessionId) {
+    return this.request(`/api/launches/${launchId}/pool/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
   // ── Raydium LaunchLab (real on-chain curve, self-custody) ──
   async listLaunchLabLaunches(limit = 50) {
     return this.request(`/api/launchlab/list?limit=${limit}`);

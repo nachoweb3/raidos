@@ -373,6 +373,7 @@ export const MarketsEngine = {
     const price = Number(pool.priceTokenInUsdc || 0);
     const rToken = Number(pool.reserveToken || 0);
     const rUsdc = Number(pool.reserveUsdc || 0) / 1e6;
+    const live = pool.executionAvailable === true;
     return `
     <div style="background:var(--bg-canvas); border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px; font-size:11px; color:var(--text-secondary)">
       <p style="font-weight:700; color:var(--text-primary); margin-bottom:4px">🔄 Mercado (pool on-chain real)</p>
@@ -380,9 +381,13 @@ export const MarketsEngine = {
         <span>Precio: <b style="color:var(--accent-green)">$${price > 0 ? price.toPrecision(3) : "0"}</b></span>
         <span>Lado token: <b>${rToken.toLocaleString("en-US")}</b></span>
         <span>Lado USDC: <b>${fmtUsd(rUsdc)}</b></span>
+        ${pool.feeBps ? `<span>Fee: <b>${(pool.feeBps / 100).toFixed(2)}%</b></span>` : ""}
       </div>
-      <p style="color:var(--text-tertiary); font-size:11px; margin-bottom:8px">Reservas bajo control del operador. Ejecución de esta pool pendiente de validación; el trading spot está disponible en el terminal.</p>
-      <button class="btn btn-sm" disabled>Pool en preparación</button>
+      ${live
+        ? `<p style="color:var(--text-tertiary); font-size:11px; margin-bottom:8px">🔐 Self-custody: firmas la tx en tu wallet, la pool co-firma su lado solo si todo coincide (reservas verificadas al vuelo, mínimo garantizado on-chain).</p>
+           <button class="btn btn-sm btn-primary" onclick="window.MarketsEngine.openPoolSwap()">Operar en la pool</button>`
+        : `<p style="color:var(--text-tertiary); font-size:11px; margin-bottom:8px">La ejecución de esta pool no está activada en este servidor; el trading spot está disponible en el terminal.</p>
+           <button class="btn btn-sm" disabled>Pool en preparación</button>`}
     </div>`;
   },
 
@@ -413,7 +418,7 @@ export const MarketsEngine = {
         : "$" + (Number(q.amountOut) / 1e6).toFixed(2);
       const inHuman = side === "buy" ? "$" + (Number(q.amountIn) / 1e6).toFixed(2) : Number(q.amountIn).toLocaleString("en-US") + " tokens";
       const impact = Number(q.priceImpactPct || 0).toFixed(2);
-      const ok = confirm(`${side === "buy" ? "Comprar" : "Vender"} por ${inHuman}\n→ Recibes ≈ ${outHuman}\nMínimo garantizado: ${side === "buy" ? Number(q.minOut).toLocaleString("en-US") + " tokens" : "$" + (Number(q.minOut) / 1e6).toFixed(2)}\nImpacto: ${impact}%\nFee: 0.3%\n\n¿Preparar la transacción?`);
+      const ok = confirm(`${side === "buy" ? "Comprar" : "Vender"} por ${inHuman}\n→ Recibes ≈ ${outHuman}\nMínimo garantizado: ${side === "buy" ? Number(q.minOut).toLocaleString("en-US") + " tokens" : "$" + (Number(q.minOut) / 1e6).toFixed(2)}\nImpacto: ${impact}%\nFee: 0.3%\n\nSe abrirá Phantom para firmar. ¿Continuar?`);
       if (!ok) return;
       await this.executePoolSwap(l.id, { side, amountIn: q.amountIn, minOut: q.minOut });
     } catch (err) {
@@ -426,18 +431,23 @@ export const MarketsEngine = {
     const wallet = this._poolWallet;
     if (!wallet) throw new Error("Wallet no conectada");
     const prepared = await ApiClient.prepareLaunchSwap(launchId, { side, amountIn, minOut, wallet });
-    const { VersionedTransaction } = await import("https://esm.sh/@solana/web3.js@1.98.4");
     // The server sends a legacy unsigned tx with only the pool slot empty;
     // the user is fee payer and first signer.
-    const raw = Uint8Array.from(atob(prepared.serialized), (c) => c.charCodeAt(0));
-    const tx = VersionedTransaction.deserialize(raw);
-    const signed = await window.solana.signTransaction(tx);
-    const bytes = signed.serialize();
-    let binary = "";
-    for (const b of bytes) binary += String.fromCharCode(b);
-    const serialized = btoa(binary);
-    const result = await ApiClient.submitLaunchSwap(launchId, { side, amountIn, minOut, wallet, signedTx: serialized });
-    alert(`✅ Swap confirmado:\n${result.signature}`);
+    const signedTx = await signTxWithPhantom(prepared.serialized);
+    localStorage.setItem("inusaur.pool.pending", JSON.stringify({ launchId, sessionId: prepared.sessionId }));
+    let result;
+    try {
+      result = await ApiClient.submitLaunchSwap(launchId, { sessionId: prepared.sessionId, wallet, signedTx });
+    } catch (submitErr) {
+      // Timeout/connection after signing? The durable session can be recovered.
+      try {
+        const s = await ApiClient.getPoolSwapSession(launchId, prepared.sessionId);
+        alert(`Estado de la operación: ${s.status}${s.signature ? "\nhttps://solscan.io/tx/" + s.signature : ""}`);
+        return;
+      } catch { throw submitErr; }
+    }
+    localStorage.removeItem("inusaur.pool.pending");
+    alert(`✅ Swap confirmado:\nhttps://solscan.io/tx/${result.signature}`);
     this.refreshLaunchDetail();
   },
 

@@ -25,7 +25,8 @@ import { LaunchRaydium, LaunchLabError, sessionIdFor } from "../trading/launch-r
 import { LaunchCpmm, CpmmError } from "../trading/launch-cpmm.js";
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import { FactoryError, LaunchFactory, planFromJson, planToJson } from "../trading/launch-factory.js";
-import { AmmError, LaunchAmm, quoteSwap } from "../trading/launch-amm.js";
+import { AmmError, LaunchAmm, quoteSwap, poolExecutionEnabled, SWAP_FEE_BPS } from "../trading/launch-amm.js";
+import { RewardsPayout, PayoutError, rewardsPayoutFromEnv } from "../trading/rewards-payout.js";
 import { SocialTrading } from "../profiles/social.js";
 import { RevenueEngine } from "../trading/revenue.js";
 import { TradeHistory } from "../trading/history.js";
@@ -1895,10 +1896,12 @@ export class ApiServer {
       process.env.LAUNCH_POOL_KEYPAIR_BASE64 ? Keypair.fromSecretKey(Buffer.from(process.env.LAUNCH_POOL_KEYPAIR_BASE64, "base64")) : null,
     );
 
-    // The operator pool is not an audited on-chain AMM. No environment toggle
-    // can bypass this gate until durable sessions/reserve enforcement are implemented.
-    const requireAuditedPoolExecution = (): void => {
-      throw new HttpError(503, "Launch pool execution is unavailable pending durable swap sessions and on-chain reserve enforcement. Spot self-custody trading remains available.");
+    // Pool execution is real now: durable exactly-once sessions (same
+    // self_custody_sessions table), byte-exact shape verification, reserve
+    // re-check at submit and a pre-broadcast signature journal. Armed by
+    // POOL_EXECUTION_ENABLED=1 (+ live mode + global kill switch).
+    const requirePoolExecutionEnabled = (): void => {
+      if (!poolExecutionEnabled()) throw new HttpError(503, "Pool execution is not enabled on this server (POOL_EXECUTION_ENABLED must be 1). Spot self-custody trading remains available.");
     };
     // Pool snapshot for a launch: live reserves + price (chain truth).
     this.router.publicRoute("GET", "/api/launches/:id/pool", async (ctx) => {
@@ -1907,7 +1910,7 @@ export class ApiServer {
       const pool = this.db.getLaunchPoolByLaunch(id);
       if (!pool) throw new HttpError(404, "no pool for this launch");
       const snapshot = await this.launchAmm.snapshot(pool);
-      sendJson(ctx.res, 200, { pool: { ...snapshot, reserveToken: snapshot.reserveToken.toString(), reserveUsdc: snapshot.reserveUsdc.toString(), executionAvailable: false, custody: "operator" } });
+      sendJson(ctx.res, 200, { pool: { ...snapshot, reserveToken: snapshot.reserveToken.toString(), reserveUsdc: snapshot.reserveUsdc.toString(), executionAvailable: poolExecutionEnabled() && this.appMode === "live" && this.executionEnabled(), custody: "operator", feeBps: SWAP_FEE_BPS } });
     });
 
     // Quote a swap against live reserves (read-only, no state change).
@@ -1939,8 +1942,9 @@ export class ApiServer {
     });
 
     // Prepare an unsigned swap tx (user signs first; pool slot stays empty).
+    // Durable session = hash of the exact unsigned message, like LaunchLab/CPMM.
     this.router.route("POST", "/api/launches/:id/pool/swap/prepare", async (ctx) => {
-      requireAuditedPoolExecution();
+      requirePoolExecutionEnabled();
       const userId = this.requireUserId(ctx);
       if (this.appMode !== "live") throw new HttpError(503, "pool swaps require live mode");
       this.requireExecutionEnabled();
@@ -1960,6 +1964,20 @@ export class ApiServer {
       if (!identity || identity.user_id !== userId) throw new HttpError(403, "connect this wallet to your account first (sign-in challenge), then retry");
       try {
         const prepared = await this.launchAmm.buildSwapTx({ pool, side, user: wallet, amountIn: BigInt(amountStr), minOut: BigInt(minOutStr) });
+        // Quote reserves at prepare time — submit re-checks them (STALE_QUOTE).
+        const reserves = await this.launchAmm.getReserves(pool);
+        this.db.createSelfCustodySession({
+          id: prepared.sessionId,
+          userId,
+          chain: "solana",
+          walletAddress: wallet,
+          requestJson: JSON.stringify({
+            kind: "pool-swap", poolId: pool.id, launchId: id, side,
+            amountIn: amountStr, minOut: minOutStr, user: wallet,
+            quoteReserves: { reserveToken: reserves.reserveToken.toString(), reserveUsdc: reserves.reserveUsdc.toString() },
+            unsignedSerialized: prepared.serialized,
+          }),
+        });
         sendJson(ctx.res, 200, { ...prepared, poolAddress: pool.poolAddress, side });
       } catch (err) {
         if (err instanceof AmmError) {
@@ -1970,9 +1988,11 @@ export class ApiServer {
       }
     });
 
-    // Submit a user-signed swap: verify shape + signature, pool co-signs, broadcast.
+    // Submit a user-signed swap: session consumed exactly once, the signed
+    // message must be EXACTLY the prepared one, reserves re-checked, pool
+    // co-signs after journaling the signature, broadcast + confirm + record.
     this.router.route("POST", "/api/launches/:id/pool/swap/submit", async (ctx) => {
-      requireAuditedPoolExecution();
+      requirePoolExecutionEnabled();
       const userId = this.requireUserId(ctx);
       if (this.appMode !== "live") throw new HttpError(503, "pool swaps require live mode");
       this.requireExecutionEnabled();
@@ -1980,27 +2000,76 @@ export class ApiServer {
       if (!Number.isFinite(id)) throw new HttpError(400, "invalid launch id");
       const pool = this.db.getLaunchPoolByLaunch(id);
       if (!pool) throw new HttpError(404, "no pool for this launch");
-      const side = ctx.body?.side === "sell" ? "sell" : ctx.body?.side === "buy" ? "buy" : "";
-      if (!side) throw new HttpError(400, "side must be 'buy' or 'sell'");
       const signedTx = this.str(ctx, "signedTx");
-      if (!signedTx) throw new HttpError(400, "signedTx is required");
+      const sessionId = this.str(ctx, "sessionId");
+      if (!signedTx || !sessionId) throw new HttpError(400, "sessionId and signedTx are required");
       const wallet = this.str(ctx, "wallet");
-      if (!/^[1-9A-HJ-Na-km-z]{32,44}$/.test(wallet)) throw new HttpError(400, "wallet is missing or malformed");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) throw new HttpError(400, "wallet is missing or malformed");
       const identity = this.db.getUserByIdentity("solana", wallet);
       if (!identity || identity.user_id !== userId) throw new HttpError(403, "connect this wallet to your account first (sign-in challenge), then retry");
-      const amountIn = this.str(ctx, "amountIn");
-      const minOut = this.str(ctx, "minOut");
-      if (!/^\d{1,30}$/.test(amountIn) || !/^\d{1,30}$/.test(minOut)) throw new HttpError(400, "amountIn/minOut must be decimal strings");
+
+      // Exactly-once: a replayed or foreign submission cannot swap again.
+      const consumed = this.db.consumeSelfCustodySession(sessionId, userId);
+      if (!consumed.ok) {
+        if (consumed.reason === "forbidden") throw new HttpError(403, "this session belongs to another account");
+        if (consumed.reason === "already_submitted") throw new HttpError(409, "session already submitted; use the recovery endpoint for its status");
+        if (consumed.reason === "not_found") throw new HttpError(404, "unknown session (expired or never prepared)");
+        throw new HttpError(409, "session is not in a submittable state");
+      }
+      let payload: any;
+      try { payload = JSON.parse(consumed.session.request_json); } catch { throw new HttpError(500, "corrupted session payload"); }
+      if (payload.kind !== "pool-swap" || payload.poolId !== pool.id) throw new HttpError(400, "session does not match this pool");
+      // The signed message must be EXACTLY the prepared one.
+      let unsigned: string;
       try {
-        const result = await this.launchAmm.submitSwap({ pool, side, userId, user: wallet, amountIn: BigInt(amountIn), minOut: BigInt(minOut), signedTxBase64: signedTx });
+        unsigned = Transaction.from(Buffer.from(signedTx, "base64")).serializeMessage().toString("base64");
+      } catch {
+        throw new HttpError(400, "signed transaction could not be parsed");
+      }
+      if (unsigned !== Transaction.from(Buffer.from(payload.unsignedSerialized, "base64")).serializeMessage().toString("base64")) throw new HttpError(400, "signed transaction does not match the prepared session");
+      try {
+        const result = await this.launchAmm.submitSwap({
+          pool, side: payload.side, userId, user: wallet,
+          amountIn: BigInt(payload.amountIn), minOut: BigInt(payload.minOut),
+          signedTxBase64: signedTx,
+          quoteReserves: {
+            reserveToken: BigInt(payload.quoteReserves.reserveToken),
+            reserveUsdc: BigInt(payload.quoteReserves.reserveUsdc),
+          },
+          beforeBroadcast: signature => this.db.setAppSetting(`pool:${sessionId}`, JSON.stringify({ signature })),
+        });
         sendJson(ctx.res, 200, { ...result, amountOut: result.amountOut.toString() });
       } catch (err) {
         if (err instanceof AmmError) {
-          const status = err.code === "RPC_DISABLED" || err.code === "NO_KEYPAIR" ? 503 : 400;
+          const status = err.code === "RPC_DISABLED" || err.code === "NO_KEYPAIR" ? 503 : err.code === "STALE_QUOTE" ? 409 : 400;
           throw new HttpError(status, err.message);
         }
         throw err;
       }
+    });
+
+    // Recovery after timeout/restart: the pre-broadcast journal signature is
+    // checked on-chain (mirrors the LaunchLab/CPMM recovery contract).
+    this.router.route("GET", "/api/launches/:id/pool/sessions/:sessionId", async (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const session = this.db.getSelfCustodySession(ctx.params.sessionId!);
+      if (!session || session.user_id !== userId) throw new HttpError(404, "session not found");
+      const payload = JSON.parse(session.request_json);
+      if (payload.kind !== "pool-swap") throw new HttpError(404, "not a pool swap session");
+      const journal = this.db.getAppSetting(`pool:${session.id}`);
+      if (!journal) return sendJson(ctx.res, 200, { status: session.status === "prepared" ? "prepared" : "not_broadcast" });
+      const { signature } = JSON.parse(journal);
+      const connection = this.solanaConnectionFactory();
+      if (!connection) throw new HttpError(503, "Solana RPC unavailable");
+      const receipt = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+      if (!receipt.value) return sendJson(ctx.res, 200, { status: "unknown", signature });
+      if (receipt.value.err) return sendJson(ctx.res, 200, { status: "failed", signature });
+      if (!["confirmed", "finalized"].includes(receipt.value.confirmationStatus || "")) return sendJson(ctx.res, 200, { status: "pending", signature });
+      // Confirmed: record the history row exactly once.
+      if (!this.db.getPoolSwapBySignature(signature)) {
+        this.db.recordPoolSwap(payload.poolId, userId, payload.side, payload.amountIn, payload.minOut, payload.minOut, signature);
+      }
+      sendJson(ctx.res, 200, { status: "confirmed", signature });
     });
 
     // Operator: register a pool for a graduated launch (never moves funds;
@@ -2237,14 +2306,59 @@ export class ApiServer {
       sendJson(ctx.res, 200, { entries });
     });
 
-    this.router.route("POST", "/api/rewards/claim", (ctx) => {
+    // Claim rewards — REAL on-chain USDC payout when the operator treasury is
+    // configured (live mode); internal-ledger claim (labeled) otherwise.
+    this.router.route("POST", "/api/rewards/claim", async (ctx) => {
       const userId = this.requireUserId(ctx);
-      if (this.appMode === "live") throw new HttpError(503, "This operation has no verified on-chain execution yet");
+      // Payout destination: a Solana wallet linked to THIS account (required
+      // in live mode — we refuse to pay an unverified address).
+      const destination = typeof ctx.body?.destination === "string" ? ctx.body.destination.trim() : "";
+      if (this.appMode === "live") {
+        this.requireExecutionEnabled();
+        if (!destination) {
+          throw new HttpError(400, "destination (your linked Solana wallet) is required for the on-chain payout");
+        }
+        const identity = this.db.getUserByIdentity("solana", destination);
+        if (!identity || identity.user_id !== userId) throw new HttpError(403, "destination wallet must be linked to your account first (sign-in challenge)");
+        const connection = this.solanaConnectionFactory();
+        if (!connection) throw new HttpError(503, "Solana RPC unavailable for rewards payout");
+        try {
+          const payout = rewardsPayoutFromEnv(this.db, connection);
+          const result = await payout.claim({ userId, destinationAddress: destination });
+          console.warn(`[rewards] on-chain payout user ${userId}: ${result.amountUsdc} micro-USDC → ${result.destination} (${result.signature})`);
+          sendJson(ctx.res, 200, { ...result, onChain: true, status: "CLAIMED", mode: this.appMode });
+        } catch (err) {
+          if (err instanceof PayoutError) {
+            const status = err.code === "NO_TREASURY" || err.code === "RPC_DISABLED" || err.code === "CONFIRMATION_FAILED" ? 503 : err.code === "ALREADY_CLAIMED" ? 409 : err.code === "BAD_ADDRESS" ? 400 : 400;
+            throw new HttpError(status, err.message);
+          }
+          throw err;
+        }
+        return;
+      }
       try {
         const result = this.rewards.claim(userId);
-        sendJson(ctx.res, 200, { ...result, status: "CLAIMED", mode: this.appMode });
+        sendJson(ctx.res, 200, { ...result, onChain: false, status: "CLAIMED", mode: this.appMode });
       } catch (err) {
         throw new HttpError(400, err instanceof Error ? err.message : "claim failed");
+      }
+    });
+
+    // Payout recovery: resolve a journaled claim against the RPC (never re-send).
+    this.router.route("GET", "/api/rewards/claim/:sessionId", async (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const sessionId = String(ctx.params.sessionId ?? "");
+      if (!/^[a-f0-9]{32}$/.test(sessionId)) throw new HttpError(400, "invalid session id");
+      const connection = this.solanaConnectionFactory();
+      if (!connection) throw new HttpError(503, "Solana RPC unavailable");
+      const payout = rewardsPayoutFromEnv(this.db, connection);
+      try {
+        const status = await payout.status(sessionId);
+        void userId;
+        sendJson(ctx.res, 200, { ...status, mode: this.appMode });
+      } catch (err) {
+        if (err instanceof PayoutError) throw new HttpError(503, err.message);
+        throw err;
       }
     });
 

@@ -59,7 +59,7 @@ describe("observed pool activity", () => {
       for (const endpoint of ["prepare", "submit"]) {
         const response = await fetch(base + "/api/launches/1/pool/swap/" + endpoint, { method: "POST", headers: { Authorization: "Bearer " + apiKey }, body: "{}" });
         expect(response.status).toBe(503);
-        expect((await response.json()).error).toContain("durable swap sessions");
+        expect((await response.json()).error).toContain("POOL_EXECUTION_ENABLED");
       }
     } finally { await app.stop(); }
   });

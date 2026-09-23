@@ -36,6 +36,17 @@ import {
 export const SWAP_FEE_BPS = 30;
 /** Slippage defaults for quotes (the UI can override per swap). */
 export const DEFAULT_SLIPPAGE_BPS = 100;
+/**
+ * Pool kill switch. Value is read from env at request time so the operator
+ * can flip POOL_EXECUTION_ENABLED=1 without redeploying. Kept separate from
+ * the global execution switch so the graduation/pool path can be armed first.
+ */
+export function poolExecutionEnabled(): boolean {
+  return process.env.POOL_EXECUTION_ENABLED === "1";
+}
+/** Max acceptable drift (fraction, 0..1) between the prepare-time quote and
+ *  the reserves observed at submit. 0.02 = the price may move at most 2%. */
+export const POOL_MAX_PRICE_DRIFT = 0.02;
 
 /** Same minimal Solana port used by the graduation factory. */
 export interface SolanaLike {
@@ -68,7 +79,7 @@ export interface AmmDb {
 
 export class AmmError extends Error {
   constructor(
-    public readonly code: "NO_POOL" | "BAD_AMOUNT" | "NO_KEYPAIR" | "BAD_TX" | "NOT_USER_SIGNED" | "WRONG_POOL" | "MIN_OUT_VIOLATED" | "RPC_DISABLED",
+    public readonly code: "NO_POOL" | "BAD_AMOUNT" | "NO_KEYPAIR" | "BAD_TX" | "NOT_USER_SIGNED" | "WRONG_POOL" | "MIN_OUT_VIOLATED" | "RPC_DISABLED" | "STALE_QUOTE",
     message: string,
   ) {
     super(message);
@@ -231,6 +242,8 @@ export class LaunchAmm {
   /**
    * Build the UNSIGNED swap tx. The user is fee payer and first signer;
    * the pool signature slot stays empty until the server co-signs at submit.
+   * sessionId = hash of the exact unsigned message, so it binds prepare→submit
+   * and doubles as the durable self_custody_sessions id (like LaunchLab/CPMM).
    */
   async buildSwapTx(params: {
     pool: PoolRow;
@@ -288,6 +301,14 @@ export class LaunchAmm {
     amountIn: bigint;
     minOut: bigint;
     signedTxBase64: string;
+    /** Journal callback fired with the calculated signature BEFORE broadcast,
+     *  so a crash between send and record can be recovered against the RPC. */
+    beforeBroadcast?: (signature: string) => void;
+    /** Re-check the CURRENT reserves against the prepared quote before the
+     *  pool co-signs. Mandatory when quoteReserves is provided. */
+    quoteReserves?: { reserveToken: bigint; reserveUsdc: bigint };
+    /** Max drift allowed between quote and current reserves (default 2%). */
+    maxPriceDrift?: number;
   }): Promise<{ signature: string; amountOut: bigint }> {
     if (!this.poolKeypair) throw new AmmError("NO_KEYPAIR", "pool operator keypair is not configured");
     const solana = this.requireSolana();
@@ -344,12 +365,34 @@ export class LaunchAmm {
     verifyLeg(transfers[0]!, userAtaIn, vaultIn, user, params.amountIn, inDecimals);
     verifyLeg(transfers[1]!, vaultOut, userAtaOut, pool, params.minOut, outDecimals);
 
+    // Reserves moved between quote and submit? Refuse to co-sign: the pool
+    // only pays minOut on-chain, but honoring a deeply stale quote could
+    // drain the pool against the operator's intent. The 2% ceiling matches
+    // the default UI slippage band.
+    if (params.quoteReserves) {
+      const current = await this.getReserves(params.pool);
+      const drift = priceDrift(params.quoteReserves, current);
+      const limit = params.maxPriceDrift ?? POOL_MAX_PRICE_DRIFT;
+      if (drift > limit) {
+        throw new AmmError("STALE_QUOTE", `pool reserves moved ${(drift * 100).toFixed(2)}% since the quote (limit ${(limit * 100).toFixed(0)}%); request a fresh quote`);
+      }
+    }
+
     // Pool co-signs the exact verified message and broadcasts. partialSign
     // ADDS the pool signature without wiping the user's (sign() would reset
     // the whole signatures array).
     tx.partialSign(this.poolKeypair);
     const raw = tx.serialize({ requireAllSignatures: true, verifySignatures: false });
-    const signature = await solana.sendRawTransaction(raw);
+    const signature = computeSignatureFor(raw);
+    // Durable journal BEFORE the broadcast (same honesty contract as
+    // LaunchLab/CPMM): a crash after sendRawTransaction is recoverable.
+    try {
+      params.beforeBroadcast?.(signature);
+    } catch {
+      // Journal failure must not broadcast a swap nobody could recover.
+      throw new AmmError("RPC_DISABLED", "could not journal the swap before broadcast; refusing to send");
+    }
+    await solana.sendRawTransaction(raw);
     await solana.confirmTransaction(signature, "confirmed");
 
     // History (amountOut is the realized floor; the true out is on-chain).
@@ -364,8 +407,54 @@ export class LaunchAmm {
 }
 
 import { createHash } from "node:crypto";
+import bs58 from "bs58";
 
 /** Deterministic session id for a prepared swap (binds prepare→submit). */
 export function sessionIdFor(serializedBase64: string): string {
   return createHash("sha256").update(serializedBase64).digest("hex").slice(0, 32);
+}
+
+/**
+ * Deterministic tx signature WITHOUT contacting the RPC: ed25519 signatures
+ * never change for the same message + keypair, so after the pool co-signs we
+ * can read the signature bytes straight out of the serialized tx. The wire
+ * format starts with a compact-u16 signature count; the FIRST 64-byte block
+ * belongs to the first required signer — the user (fee payer) — which is the
+ * tx signature explorers index. This is what the journal stores BEFORE the
+ * broadcast.
+ */
+export function computeSignatureFor(raw: Uint8Array): string {
+  const { value: sigCount, bytesUsed } = decodeCompactU16(raw, 0);
+  if (sigCount < 1) throw new AmmError("BAD_TX", "serialized tx has no signatures");
+  const sig = raw.slice(bytesUsed, bytesUsed + 64);
+  if (sig.length < 64) throw new AmmError("BAD_TX", "serialized tx signature truncated");
+  return bs58.encode(sig);
+}
+
+/** Solana compact-u16 (sleb128-style little-endian 7-bit groups). */
+function decodeCompactU16(raw: Uint8Array, offset: number): { value: number; bytesUsed: number } {
+  let value = 0;
+  let shift = 0;
+  let bytesUsed = 0;
+  for (let i = offset; i < raw.length && i < offset + 3; i++) {
+    value |= (raw[i]! & 0x7f) << shift;
+    bytesUsed++;
+    if ((raw[i]! & 0x80) === 0) break;
+    shift += 7;
+  }
+  return { value, bytesUsed };
+}
+
+/**
+ * Relative drift between the quote-time and submit-time reserves (0..∞).
+ * Uses the larger reserve side so either a token or USDC sweep is detected.
+ */
+export function priceDrift(quote: { reserveToken: bigint; reserveUsdc: bigint }, current: { reserveToken: bigint; reserveUsdc: bigint }): number {
+  const rel = (a: bigint, b: bigint): number => {
+    if (a <= 0n && b <= 0n) return 0;
+    const big = a >= b ? a : b;
+    const small = a >= b ? b : a;
+    return big === small ? 0 : Number(big - small) / Number(big);
+  };
+  return Math.max(rel(quote.reserveToken, current.reserveToken), rel(quote.reserveUsdc, current.reserveUsdc));
 }

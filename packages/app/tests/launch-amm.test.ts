@@ -9,22 +9,32 @@
 
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import bs58 from "bs58";
 import { describe, expect, it } from "vitest";
 import {
   LaunchAmm,
   applyFee,
+  computeSignatureFor,
   deriveVaults,
   getAmountOut,
   minOutFor,
   parseSplAccount,
+  poolExecutionEnabled,
+  priceDrift,
   quoteSwap,
+  sessionIdFor,
   SWAP_FEE_BPS,
   type AmmDb,
   type PoolRow,
   type SolanaLike,
 } from "../src/trading/launch-amm.js";
 
-// ── Pure math ────────────────────────────────────────────────────────────
+// ── Pure math ───────────────────────────────────────────────────────
+
+/** web3.js returns signature bytes as Buffer; base58-encode like the RPC. */
+function bs58Encode(bytes: Uint8Array): string {
+  return bs58.encode(bytes);
+}
 
 describe("amm math", () => {
   it("applies the fee on the input", () => {
@@ -184,15 +194,16 @@ describe("launch amm engine", () => {
     const signedBase64 = Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
 
     const result = await amm.submitSwap({ pool, side: "sell", userId: 42, user: USER.publicKey.toBase58(), amountIn: 1_000n, minOut: 400_000n, signedTxBase64: signedBase64 });
-    expect(result.signature).toBe("sig-1");
     expect(swaps).toHaveLength(1);
 
-    // The broadcast tx carries BOTH signatures: user's + pool's.
+    // The broadcast tx carries BOTH signatures: user's + pool's. The tx
+    // signature (what explorers index) is the fee payer's (user) signature.
     const broadcast = Transaction.from(raw[0]!);
     const userSig = broadcast.signatures.find((s) => s.publicKey.equals(USER.publicKey));
     const poolSig = broadcast.signatures.find((s) => s.publicKey.equals(POOL.publicKey));
     expect(userSig!.signature).not.toBeNull();
     expect(poolSig!.signature).not.toBeNull();
+    expect(result.signature).toBe(bs58Encode(userSig!.signature!));
   });
 
   it("refuses to co-sign when the user has not signed (NOT_USER_SIGNED)", async () => {
@@ -258,5 +269,89 @@ describe("launch amm engine", () => {
     const signedBase64 = Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
     await expect(amm.submitSwap({ pool, side: "buy", userId: 1, user: USER.publicKey.toBase58(), amountIn: 5_000_000n, minOut: 900n, signedTxBase64: signedBase64 }))
       .rejects.toThrow("keypair is not configured");
+  });
+
+  it("fires beforeBroadcast with the exact final signature before the RPC send", async () => {
+    const { db } = makeAmmDb();
+    const { stub, raw } = makeSolanaStub();
+    const amm = new LaunchAmm(db, stub, POOL);
+    const pool = poolRow();
+    const { serialized } = await amm.buildSwapTx({ pool, side: "buy", user: USER.publicKey.toBase58(), amountIn: 5_000_000n, minOut: 900n });
+    const tx = Transaction.from(Buffer.from(serialized, "base64"));
+    tx.sign(USER);
+    const signedBase64 = Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
+    let journaled: string | null = null;
+    const broadcastOrder: string[] = [];
+    const sending = stub.sendRawTransaction.bind(stub);
+    stub.sendRawTransaction = async (bytes) => {
+      broadcastOrder.push("send");
+      return sending(bytes);
+    };
+    const result = await amm.submitSwap({
+      pool, side: "buy", userId: 1, user: USER.publicKey.toBase58(),
+      amountIn: 5_000_000n, minOut: 900n, signedTxBase64: signedBase64,
+      beforeBroadcast: (sig) => {
+        broadcastOrder.push("journal");
+        journaled = sig;
+      },
+    });
+    expect(broadcastOrder[0]).toBe("journal"); // journal BEFORE broadcast
+    expect(journaled!).toBe(result.signature);
+    // The journaled signature IS the tx signature (fee payer = user slot).
+    const broadcast = Transaction.from(raw[0]!);
+    expect(bs58Encode(broadcast.signatures.find((s) => s.publicKey.equals(USER.publicKey))!.signature!)).toBe(journaled);
+  });
+
+  it("rejects a stale quote when reserves moved beyond the drift limit (STALE_QUOTE)", async () => {
+    const { db } = makeAmmDb();
+    const { stub } = makeSolanaStub();
+    const amm = new LaunchAmm(db, stub, POOL);
+    const pool = poolRow();
+    const { serialized } = await amm.buildSwapTx({ pool, side: "buy", user: USER.publicKey.toBase58(), amountIn: 5_000_000n, minOut: 900n });
+    const tx = Transaction.from(Buffer.from(serialized, "base64"));
+    tx.sign(USER);
+    const signedBase64 = Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
+    await expect(amm.submitSwap({
+      pool, side: "buy", userId: 1, user: USER.publicKey.toBase58(),
+      amountIn: 5_000_000n, minOut: 900n, signedTxBase64: signedBase64,
+      quoteReserves: { reserveToken: 1_000_000n, reserveUsdc: 5_000_000_000n },
+    })).rejects.toMatchObject({ code: "STALE_QUOTE" }); // stub vaults are empty → 100% drift
+    // Same swap with the real current reserves passes the re-check.
+    const result = await amm.submitSwap({
+      pool, side: "buy", userId: 1, user: USER.publicKey.toBase58(),
+      amountIn: 5_000_000n, minOut: 900n, signedTxBase64: signedBase64,
+    });
+    expect(result.signature).toBeTruthy();
+  });
+
+  it("session id binds prepare→submit (hash of the exact unsigned message)", async () => {
+    const { db } = makeAmmDb();
+    const { stub } = makeSolanaStub();
+    const amm = new LaunchAmm(db, stub, POOL);
+    const pool = poolRow();
+    const { serialized, sessionId } = await amm.buildSwapTx({ pool, side: "buy", user: USER.publicKey.toBase58(), amountIn: 5_000_000n, minOut: 900n });
+    expect(sessionId).toBe(sessionIdFor(serialized));
+  });
+
+  it("priceDrift detects token and USDC sweeps from either side", () => {
+    const base = { reserveToken: 1_000_000n, reserveUsdc: 5_000_000_000n };
+    expect(priceDrift(base, base)).toBe(0);
+    expect(priceDrift(base, { reserveToken: 900_000n, reserveUsdc: 5_000_000_000n })).toBeCloseTo(0.1);
+    expect(priceDrift(base, { reserveToken: 1_000_000n, reserveUsdc: 2_500_000_000n })).toBeCloseTo(0.5);
+  });
+
+  it("poolExecutionEnabled reads env at request time (kill switch arable without redeploy)", () => {
+    const previous = process.env.POOL_EXECUTION_ENABLED;
+    try {
+      delete process.env.POOL_EXECUTION_ENABLED;
+      expect(poolExecutionEnabled()).toBe(false);
+      process.env.POOL_EXECUTION_ENABLED = "1";
+      expect(poolExecutionEnabled()).toBe(true);
+      process.env.POOL_EXECUTION_ENABLED = "0";
+      expect(poolExecutionEnabled()).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.POOL_EXECUTION_ENABLED;
+      else process.env.POOL_EXECUTION_ENABLED = previous;
+    }
   });
 });

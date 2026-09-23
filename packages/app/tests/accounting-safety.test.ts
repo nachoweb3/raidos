@@ -212,10 +212,19 @@ describe("settlement follow-through", () => {
     expect(app.db.getTopTraders("solana")[0].total_pnl_usdc).toBe("8999000");
     expect(app.db.getTopTraders("base")).toEqual([]);
   });
-  it.each(["/api/launches/1/buy", "/api/launches/1/sell", "/api/rewards/claim"])("blocks simulated financial mutations in live mode: %s", async (path) => {
+  it.each(["/api/launches/1/buy", "/api/launches/1/sell"])("blocks simulated financial mutations in live mode: %s", async (path) => {
     const { call } = await httpApp();
     const response = await call(path, { usdcAmount: "100", tokenAmount: "100" });
     expect(response.status).toBe(503);
+  });
+  it("rewards claim in live mode requires a linked destination wallet (no blind payout)", async () => {
+    const { call } = await httpApp();
+    // No destination → 400 honest error (never a simulated ledger mutation).
+    const noDestination = await call("/api/rewards/claim", {});
+    expect(noDestination.status).toBe(400);
+    // An unlinked address can never receive the treasury payout.
+    const unlinked = await call("/api/rewards/claim", { destination: "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7D4xWLs4gDB4T" });
+    expect(unlinked.status).toBe(403);
   });
 });
 
