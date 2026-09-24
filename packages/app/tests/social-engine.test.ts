@@ -243,3 +243,37 @@ describe("copy signal lifecycle", () => {
     } finally { await s.stop(); }
   });
 });
+
+describe("copy signal migration", () => {
+  // Regression: the status index was once created BEFORE the ALTER TABLE that
+  // adds the columns — production (table predates the migration) crashed on
+  // boot with "no such column: status". Boot must migrate in place instead.
+  it("boots on a pre-migration copy_signals table and migrates in place", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const Database = (await import("better-sqlite3")).default;
+    const dir = mkdtempSync(join(tmpdir(), "copy-mig-"));
+    const old = new Database(join(dir, "old.db"));
+    old.exec(`
+      CREATE TABLE copy_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+        source TEXT NOT NULL, chain TEXT NOT NULL, wallet TEXT NOT NULL DEFAULT '',
+        handle TEXT NOT NULL DEFAULT '', token TEXT NOT NULL, token_symbol TEXT NOT NULL DEFAULT '',
+        side TEXT NOT NULL, ref_price_usd REAL NOT NULL, max_per_trade_usdc TEXT NOT NULL, ts INTEGER NOT NULL,
+        UNIQUE(subscription_id,source,chain,token,side,ts)
+      );
+      CREATE INDEX idx_copy_signals_user ON copy_signals(user_id,ts DESC);
+    `);
+    old.close();
+    const { AppDb } = await import("../src/database/app-db.js");
+    const db = new AppDb(join(dir, "old.db")); // must not throw
+    db.insertCopySignals([{ subscription_id: 1, user_id: 9, source: "wallet", chain: "solana", wallet: WALLET_A, handle: "", token: TRADE_A.token, token_symbol: "AAA", side: "buy", ref_price_usd: 1, max_per_trade_usdc: "1", ts: 1 }]);
+    expect(db.listCopySignals(9)).toHaveLength(1); // pending queue
+    expect(db.markCopySignal(9, 1, "done")).toBe(1);
+    expect(db.markCopySignal(9, 1, "done")).toBe(0); // terminal
+    expect(db.listCopySignals(9, 50, "all")[0].status).toBe("done");
+    try { (await import("node:fs")).rmSync(dir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
+  });
+});

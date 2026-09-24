@@ -606,10 +606,11 @@ export class AppDb {
         UNIQUE(subscription_id,source,chain,token,side,ts)
       );
       CREATE INDEX IF NOT EXISTS idx_copy_signals_user ON copy_signals(user_id,ts DESC);
-      CREATE INDEX IF NOT EXISTS idx_copy_signals_user_status ON copy_signals(user_id,status,ts DESC);
     `);
     // Copy signal lifecycle (v2): existing databases get the columns added in
-    // place; fresh schemas already created them above.
+    // place; fresh schemas already created them above. The status index is
+    // created only AFTER the columns exist (an index on a missing column would
+    // crash boot on databases where the table predates this migration).
     for (const [col, decl] of [
       ["status", "TEXT NOT NULL DEFAULT 'pending'"],
       ["resolved_at", "INTEGER"],
@@ -617,6 +618,7 @@ export class AppDb {
       const has = this.db.prepare("SELECT 1 FROM pragma_table_info('copy_signals') WHERE name = ?").get(col);
       if (!has) this.db.exec(`ALTER TABLE copy_signals ADD COLUMN ${col} ${decl}`);
     }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_copy_signals_user_status ON copy_signals(user_id,status,ts DESC);");
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
