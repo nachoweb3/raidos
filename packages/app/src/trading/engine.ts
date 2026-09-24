@@ -420,6 +420,11 @@ export class TradingEngine {
     url.searchParams.set("fromToken", sellToken);
     url.searchParams.set("toToken", buyToken);
     url.searchParams.set("fromAmount", params.amount);
+    // Li.Fi requires fromAddress even for price-only quotes (verified 400
+    // "required property 'fromAddress'" without it). Use the taker when the
+    // caller knows the wallet; the placeholder mirrors the 0x DEFAULT_TAKER
+    // pattern for anonymous quotes.
+    url.searchParams.set("fromAddress", params.taker || TradingEngine.DEFAULT_TAKER);
     // Li.Fi expects a fraction (0.005 = 0.5%); our params carry bps (50).
     url.searchParams.set("slippage", String((params.slippageBps ?? 100) / 10_000));
     const integrator = process.env.LIFI_INTEGRATOR;

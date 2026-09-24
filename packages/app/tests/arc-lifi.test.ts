@@ -113,6 +113,13 @@ describe("Li.Fi arc quote + prepare", () => {
     expect(urls[0]!.searchParams.get("fromChain")).toBe("5042");
     expect(urls[0]!.searchParams.get("fromToken")).toBe(ARC_USDC.toLowerCase());
     expect(urls[0]!.searchParams.get("slippage")).toBe("0.005");
+    // Li.Fi 400s without fromAddress even on price-only quotes (verified live).
+    expect(urls[0]!.searchParams.get("fromAddress")).toMatch(/^0x[0-9a-f]{40}$/);
+  });
+  it("uses the real taker as fromAddress when provided", async () => {
+    const { urls } = stubLiFi(lifiQuoteBody());
+    await new TradingEngine().getQuote({ ...tradeParams, taker: WALLET });
+    expect(urls[0]!.searchParams.get("fromAddress")).toBe(WALLET);
   });
   it("propagates integrator and fee params when configured", async () => {
     vi.stubEnv("LIFI_INTEGRATOR", "trenches");
