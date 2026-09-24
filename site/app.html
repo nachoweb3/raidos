@@ -25,33 +25,33 @@
   <link rel="stylesheet" href="css/design-system.css">
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
   <link rel="stylesheet" href="css/catalog.css?v=20260919-4">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260924-2">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260924-3">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260924-2",
-      "./js/app.js": "./js/app.js?v=20260924-2",
-      "./js/copy.js": "./js/copy.js?v=20260924-2",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260924-2",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260924-2",
-      "./js/discover.js": "./js/discover.js?v=20260924-2",
-      "./js/feed.js": "./js/feed.js?v=20260924-2",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260924-2",
-      "./js/markets.js": "./js/markets.js?v=20260924-2",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260924-2",
-      "./js/premium.js": "./js/premium.js?v=20260924-2",
-      "./js/rewards.js": "./js/rewards.js?v=20260924-2",
-      "./js/social.js": "./js/social.js?v=20260924-2",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260924-2",
-      "./js/tokens.js": "./js/tokens.js?v=20260924-2",
-      "./js/trading.js": "./js/trading.js?v=20260924-2",
-      "./js/trenches.js": "./js/trenches.js?v=20260924-2",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260924-2",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260924-2",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260924-2",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260924-2",
-      "./js/install.js": "./js/install.js?v=20260924-2",
-      "./js/public-market.js": "./js/public-market.js?v=20260924-2"
+      "./js/api.js": "./js/api.js?v=20260924-3",
+      "./js/app.js": "./js/app.js?v=20260924-3",
+      "./js/copy.js": "./js/copy.js?v=20260924-3",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260924-3",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260924-3",
+      "./js/discover.js": "./js/discover.js?v=20260924-3",
+      "./js/feed.js": "./js/feed.js?v=20260924-3",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260924-3",
+      "./js/markets.js": "./js/markets.js?v=20260924-3",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260924-3",
+      "./js/premium.js": "./js/premium.js?v=20260924-3",
+      "./js/rewards.js": "./js/rewards.js?v=20260924-3",
+      "./js/social.js": "./js/social.js?v=20260924-3",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260924-3",
+      "./js/tokens.js": "./js/tokens.js?v=20260924-3",
+      "./js/trading.js": "./js/trading.js?v=20260924-3",
+      "./js/trenches.js": "./js/trenches.js?v=20260924-3",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260924-3",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260924-3",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260924-3",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260924-3",
+      "./js/install.js": "./js/install.js?v=20260924-3",
+      "./js/public-market.js": "./js/public-market.js?v=20260924-3"
     } }
   </script>
 
@@ -335,14 +335,34 @@
       .trenches-layout { grid-template-columns: minmax(0, 1fr) !important; }
     }
     @media (max-width: 768px) {
-      .app-header { height: 100px; padding: 8px 12px 48px; gap: 8px; }
-      .app-header-actions { gap: 6px !important; }
-      #globalChainSelect { max-width: 130px; }
-      .universal-search { display: block !important; position: absolute !important; left: 12px; right: 12px; bottom: 8px; }
-      #universalSearchInput { width: 100% !important; font-size: 16px !important; }
-      .feed-grid { grid-template-columns: minmax(0, 1fr) !important; }
+      /* Two rows: brand on top, actions+search below (needs wrap or the page
+         overflows sideways). height:auto so the second row is not clipped. */
+      .app-header { flex-wrap: wrap; height: auto; min-height: 100px; padding: 8px 12px 48px; gap: 8px; }
+      .app-header-actions { flex: 1 1 100%; order: 10; }
+      /* Desktop tab bar hides via .desktop-only; the actions row must wrap or
+         overflow pushes the WHOLE page sideways (scrollWidth 464 > 390). */
+      .app-header-actions { gap: 6px !important; flex-wrap: wrap; }
+      /* Search drops to its own full-width row: 230px inline does not fit 390px
+         with the other actions. 16px font stops iOS zoom-on-focus. */
+      .universal-search { display: block !important; position: static !important; flex: 1 1 100%; order: 10; margin-top: 2px; }
+      #universalSearchInput { width: 100% !important; font-size: 16px !important; padding: 9px 12px !important; }
+      #universalSearchResults { left: 0 !important; right: 0 !important; }
+      #globalChainSelect { max-width: 150px; min-height: 36px; font-size: 13px !important; }
+      /* Touch targets ≥36px (Apple HIG): the tiny controls live in the header. */
+      .app-header .btn { min-height: 36px; padding-block: 6px; }
+      .app-header-actions .btn[data-install-app], .app-header-actions button[title] { display: none; }
+      .btn-sm { min-height: 36px; min-width: 36px; }
+      a.brand-logo { min-height: 36px; padding-block: 4px; }
+      /* Feed action row (like/repost/share): 12px spans are un-tappable. */
+      .mobile-nav-item { min-height: 40px; }
+      .mobile-nav-bar { height: calc(62px + var(--safe-bottom)); padding-bottom: var(--safe-bottom); }
+      .pill-tab { padding: 9px 15px; min-height: 36px; }
+      .btn-sm { min-height: 36px; }
+      .feed-actions { gap: 0 !important; }
+      .feed-actions > span { flex: 1; justify-content: center; min-height: 36px; display: inline-flex; align-items: center; }
       .app-body { padding: 12px 12px 76px; }
-      .pill-tabs-bar { max-width: 100%; }
+      .feed-grid { grid-template-columns: minmax(0, 1fr) !important; }
+      .pill-tabs-bar { max-width: 100%; -webkit-overflow-scrolling: touch; }
       .token-row { gap: 10px; flex-wrap: wrap; padding: 12px !important; }
       .token-row > div { gap: 10px !important; min-width: 0; }
       .token-row > div:last-child { width: 100%; justify-content: flex-end; }
@@ -553,7 +573,7 @@
             <span class="brand-badge" id="trenchesLiveBadge" style="font-size:9px; background:rgba(34,197,94,0.12); color:var(--delta-green); border:1px solid rgba(34,197,94,0.3)">LIVE</span>
           </h2>
           <input type="text" id="trenchesSearch" placeholder="Filtrar por nombre o símbolo…" oninput="window.TrenchesEngine.setSearch(this.value)" style="flex:1; min-width:160px; max-width:300px; padding:7px 10px; font-size:12px">
-          <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMarket(true)" title="Recargar catálogo">↻</button>
+          <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMarket(true)" title="Recargar catálogo" style="min-width:40px">↻</button>
           <span id="trenchesCount" style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)"></span>
         </div>
 
@@ -853,7 +873,7 @@
       </form>
 
       <div style="margin-top:16px">
-        <a href="index.html" style="font-size:12px; color:var(--text-tertiary)">← Volver a la landing</a>
+        <a href="index.html" style="font-size:12px; color:var(--text-tertiary); display:inline-flex; align-items:center; min-height:36px; padding:8px 4px">← Volver a la landing</a>
       </div>
     </div>
   </div>
@@ -1023,7 +1043,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260924-2"></script>
+  <script type="module" src="js/app.js?v=20260924-3"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1289,6 +1309,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260924-2"></script>
+  <script type="module" src="js/install.js?v=20260924-3"></script>
 </body>
 </html>

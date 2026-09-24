@@ -322,15 +322,15 @@ export const FeedEngine = {
           ${parsedText}
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--text-tertiary); font-family:var(--font-mono); padding-top:10px; border-top:1px solid var(--border-ultra-subtle)">
-          <div style="display:flex; gap:20px">
-            <span style="cursor:pointer; display:inline-flex; align-items:center; gap:5px" onclick="this.querySelector('.n').textContent = Number(this.querySelector('.n').textContent)+1">
+        <div class="feed-actions" style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--text-tertiary); font-family:var(--font-mono); padding-top:10px; border-top:1px solid var(--border-ultra-subtle)">
+          <div style="display:flex; gap:20px; flex:1">
+            <span style="cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:36px; min-width:44px; flex:1" onclick="this.querySelector('.n').textContent = Number(this.querySelector('.n').textContent)+1">
               🤍 <span class="n">${p.likes}</span>
             </span>
-            <span style="cursor:pointer; display:inline-flex; align-items:center; gap:5px" onclick="this.querySelector('.n').textContent = Number(this.querySelector('.n').textContent)+1">
+            <span style="cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:36px; min-width:44px; flex:1" onclick="this.querySelector('.n').textContent = Number(this.querySelector('.n').textContent)+1">
               🔄 <span class="n">${p.reposts}</span>
             </span>
-            <span style="cursor:pointer" onclick="if(window.App.sharePost) window.App.sharePost('${esc(p.id)}'); else if(navigator.share){ navigator.share({ text: '${esc(p.content).slice(0, 180)}' }).catch(()=>{}); } else { navigator.clipboard && navigator.clipboard.writeText('${esc(p.content).slice(0, 180)}'); }">
+            <span style="cursor:pointer; display:inline-flex; align-items:center; justify-content:center; min-height:36px; min-width:44px; flex:1" onclick="if(window.App.sharePost) window.App.sharePost('${esc(p.id)}'); else if(navigator.share){ navigator.share({ text: '${esc(p.content).slice(0, 180)}' }).catch(()=>{}); } else { navigator.clipboard && navigator.clipboard.writeText('${esc(p.content).slice(0, 180)}'); }">
               ↗ Share
             </span>
           </div>
