@@ -13,6 +13,7 @@ const fmtUsd = (n) => "$" + Number(n ?? 0).toLocaleString("en-US", { maximumFrac
 
 export const CopyEngine = {
   tab: "leaders", // leaders | signals | following | ct
+  signalsHistory: false, // signals tab: false = pending queue, true = all with status chips
   leaderboard: null,
   ratingCache: new Map(),
 
@@ -159,28 +160,68 @@ export const CopyEngine = {
   },
 
   async renderSignals() {
+    const qs = this.signalsHistory ? "?status=all" : "";
     let data;
-    try { data = await ApiClient.request("/api/copy/signals"); } catch { data = { signals: [] }; }
+    try { data = await ApiClient.request("/api/copy/signals" + qs); } catch { data = { signals: [] }; }
     const signals = data.signals ?? [];
+    const toggle = `<div style="display:flex; justify-content:flex-end; padding:6px 10px">
+      <button class="btn btn-ghost btn-sm" onclick="window.CopyEngine.toggleSignalsHistory()">${this.signalsHistory ? "⏳ Ver pendientes" : "🗂 Ver historial"}</button>
+    </div>`;
     if (!signals.length) {
-      return '<div style="padding:20px;color:var(--text-secondary)">Sin señales aún. Sigue wallets en 🏆 Traders y aparecerán aquí con el trade pre-armado.</div>';
+      const empty = this.signalsHistory
+        ? "Sin señales todavía — ni pendientes ni resueltas."
+        : "Sin señales pendientes. Sigue wallets en 🏆 Traders y aparecerán aquí con el trade pre-armado. Las que ejecutes o descartes pasan al historial.";
+      return toggle + `<div style="padding:20px;color:var(--text-secondary)">${empty}</div>`;
     }
-    return signals.map((s) => {
+    return toggle + signals.map((s) => {
       const who = s.source === "ct" ? `📣 @${esc(s.handle)}` : `👛 ${esc(shortAddr(s.wallet))}`;
       const side = s.side === "buy"
         ? '<span style="color:#39ff14; font-weight:700">COMPRA</span>'
         : '<span style="color:#ff7a7a; font-weight:700">VENTA</span>';
       const maxUsdc = Number(s.maxPerTradeUsdc) / 1e6;
-      return `<div style="padding:12px 14px; border-bottom:1px solid var(--border-subtle); display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+      const pending = s.status === "pending";
+      const chip = this.signalsHistory
+        ? (s.status === "done"
+            ? '<span style="font-size:10.5px; color:#39ff14">✅ ejecutada</span>'
+            : s.status === "dismissed"
+              ? '<span style="font-size:10.5px; opacity:0.55">✕ descartada</span>'
+              : '<span style="font-size:10.5px; color:#ffd75e">⏳ pendiente</span>')
+        : "";
+      const actions = !pending ? chip : `
+        ${s.side === "buy" ? `<button class="btn btn-primary btn-sm" onclick="window.CopyEngine.openSignal(${Number(s.id)},'${esc(s.symbol || shortAddr(s.token))}','${esc(s.chain)}',${Number(s.refPriceUsd)},'${esc(s.token)}')">⚡ 1-TAP</button>` : ""}
+        <button class="btn btn-ghost btn-sm" title="Descartar señal" onclick="window.CopyEngine.resolveSignal(${Number(s.id)},'dismissed')">✕</button>`;
+      return `<div style="padding:12px 14px; border-bottom:1px solid var(--border-subtle); display:flex; gap:12px; align-items:center; flex-wrap:wrap; ${pending ? "" : "opacity:0.65"}">
         <div style="flex:1; min-width:220px">
           <div>${who} ${side} <b>${esc(s.symbol || shortAddr(s.token))}</b> <span style="opacity:0.5">· ${esc(s.chain)}</span></div>
           <div style="font-size:11px; color:var(--text-secondary)">
             ref $${Number(s.refPriceUsd).toPrecision(4)} · tu tope ${maxUsdc} USDC/trade · ${new Date(s.ts * 1000).toLocaleTimeString()}
           </div>
         </div>
-        ${s.side === "buy" ? `<button class="btn btn-primary btn-sm" onclick="window.App.openTradeForToken('${esc(s.symbol || shortAddr(s.token))}','${esc(s.chain)}',${Number(s.refPriceUsd)},'${esc(s.token)}')">⚡ 1-TAP</button>` : ""}
+        ${actions}
       </div>`;
     }).join("");
+  },
+
+  toggleSignalsHistory() { this.signalsHistory = !this.signalsHistory; this.render(); },
+
+  /** Resolve a pending signal server-side (done | dismissed); queue stays truthful. */
+  async resolveSignal(id, status) {
+    try {
+      await ApiClient.request(`/api/copy/signals/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    } catch (e) {
+      // 409 = ya resuelta (p. ej. doble click) — la cola ya está en su estado real.
+      if (!String(e?.message ?? "").includes("not pending")) alert("No se pudo actualizar la señal: " + (e?.message ?? "error"));
+    }
+    this.render();
+  },
+
+  /** 1-TAP: mark the signal done FIRST (never resurrects), then open the terminal. */
+  async openSignal(id, symbol, chain, price, token) {
+    try {
+      await ApiClient.request(`/api/copy/signals/${id}`, { method: "PATCH", body: JSON.stringify({ status: "done" }) });
+    } catch { /* already resolved or offline — still open the terminal */ }
+    window.App?.openTradeForToken(symbol, chain, price, token);
+    this.render();
   },
 
   async renderFollowing() {

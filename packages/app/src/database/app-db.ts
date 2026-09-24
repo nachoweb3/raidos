@@ -11,6 +11,9 @@ import { generateApiKey } from "../api/auth.js";
 import { summarizeSettledTrades } from "../trading/pnl.js";
 import { MarketCatalog } from "../market/catalog.js";
 
+/** Lifecycle states of a delivered copy signal. `all` is a query-only filter. */
+export type CopySignalStatus = "pending" | "done" | "dismissed";
+
 export class AppDb {
   private db: Database.Database;
   readonly marketCatalog: MarketCatalog;
@@ -596,10 +599,24 @@ export class AppDb {
         ref_price_usd REAL NOT NULL,         -- source trade price (wallet) or price_at_call (ct)
         max_per_trade_usdc TEXT NOT NULL,
         ts INTEGER NOT NULL,
+        -- Lifecycle: pending → done (user acted) | dismissed (user rejected).
+        -- Terminal states; resolved signals leave the actionable queue.
+        status TEXT NOT NULL DEFAULT 'pending',
+        resolved_at INTEGER,
         UNIQUE(subscription_id,source,chain,token,side,ts)
       );
       CREATE INDEX IF NOT EXISTS idx_copy_signals_user ON copy_signals(user_id,ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_copy_signals_user_status ON copy_signals(user_id,status,ts DESC);
     `);
+    // Copy signal lifecycle (v2): existing databases get the columns added in
+    // place; fresh schemas already created them above.
+    for (const [col, decl] of [
+      ["status", "TEXT NOT NULL DEFAULT 'pending'"],
+      ["resolved_at", "INTEGER"],
+    ] as const) {
+      const has = this.db.prepare("SELECT 1 FROM pragma_table_info('copy_signals') WHERE name = ?").get(col);
+      if (!has) this.db.exec(`ALTER TABLE copy_signals ADD COLUMN ${col} ${decl}`);
+    }
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
@@ -1862,10 +1879,25 @@ export class AppDb {
     return inserted;
   }
 
-  listCopySignals(userId: number, limit = 50) {
+  /** List delivered signals. Default = actionable queue (pending only). */
+  listCopySignals(userId: number, limit = 50, status: CopySignalStatus | "all" = "pending") {
+    if (status === "all") {
+      return this.db.prepare(
+        "SELECT * FROM copy_signals WHERE user_id=? ORDER BY ts DESC LIMIT ?"
+      ).all(userId, limit) as any[];
+    }
     return this.db.prepare(
-      "SELECT * FROM copy_signals WHERE user_id=? ORDER BY ts DESC LIMIT ?"
-    ).all(userId, limit) as any[];
+      "SELECT * FROM copy_signals WHERE user_id=? AND status=? ORDER BY ts DESC LIMIT ?"
+    ).all(userId, status, limit) as any[];
+  }
+
+  /** Resolve a pending signal (done = acted on it, dismissed = rejected).
+   *  Scoped to the owner and to pending rows: terminal states never flip.
+   *  Returns the number of rows changed (0 = not found or already resolved). */
+  markCopySignal(userId: number, id: number, status: "done" | "dismissed", now = Math.floor(Date.now() / 1000)): number {
+    return this.db.prepare(
+      "UPDATE copy_signals SET status=?, resolved_at=? WHERE user_id=? AND id=? AND status='pending'"
+    ).run(status, now, userId, id).changes;
   }
 
   /** Upsert a CT call signal (idempotent per tweet+token). */

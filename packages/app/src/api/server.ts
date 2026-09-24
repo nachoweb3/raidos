@@ -2400,15 +2400,34 @@ export class ApiServer {
     });
 
     // Auth: my delivered copy signals (the 1-tap queue).
+    // Default = actionable queue (pending only); ?status=all|done|dismissed for history.
     this.router.route("GET", "/api/copy/signals", (ctx) => {
       const userId = this.requireUserId(ctx);
       const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 200);
-      const signals = this.db.listCopySignals(userId, limit).map((s: any) => ({
+      const status = ctx.query.get("status") ?? "pending";
+      if (status !== "pending" && status !== "done" && status !== "dismissed" && status !== "all") {
+        throw new HttpError(400, "status must be pending | done | dismissed | all");
+      }
+      const signals = this.db.listCopySignals(userId, limit, status).map((s: any) => ({
         id: s.id, source: s.source, chain: s.chain, wallet: s.wallet, handle: s.handle,
         token: s.token, symbol: s.token_symbol, side: s.side,
         refPriceUsd: s.ref_price_usd, maxPerTradeUsdc: s.max_per_trade_usdc, ts: s.ts,
+        status: s.status, resolvedAt: s.resolved_at ?? null,
       }));
       sendJson(ctx.res, 200, { signals, mode: this.appMode });
+    });
+
+    // Auth: resolve a pending signal (done = acted on it, dismissed = rejected).
+    // Terminal: already-resolved signals return 409, never flip.
+    this.router.route("PATCH", "/api/copy/signals/:id", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const id = Number(ctx.params.id);
+      if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "invalid id");
+      const status = ctx.body?.status;
+      if (status !== "done" && status !== "dismissed") throw new HttpError(400, "status must be done | dismissed");
+      const changed = this.db.markCopySignal(userId, id, status);
+      if (!changed) throw new HttpError(409, "signal not pending (unknown, already resolved, or not yours)");
+      sendJson(ctx.res, 200, { ok: true, id, status });
     });
 
     // ── Rewards (fee-funded trading + referral program) ──
