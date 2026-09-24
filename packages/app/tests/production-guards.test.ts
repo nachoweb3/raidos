@@ -16,7 +16,8 @@ describe("all financial endpoints fail closed", () => {
       // Solana quotes stay off without a Jupiter key; EVM quote adapters with
       // keys expose real self-custody execution (signed client-side).
       expect(chains.find((c: any) => c.id === "solana")).toMatchObject({ quotes: false, liveExecution: false, status: "UNAVAILABLE" });
-      for (const id of ["bsc", "robinhood", "arc"]) {
+      // Arc quotes and executes keylessly via Li.Fi (no API key needed).
+      for (const id of ["bsc", "robinhood"]) {
         expect(chains.find((c: any) => c.id === id)).toMatchObject({ quotes: false, liveExecution: false, status: "UNAVAILABLE" });
       }
       expect(chains.find((c: any) => c.id === "base")).toMatchObject({ quotes: true, quoteStatus: "UNVERIFIED", liveExecution: true, selfCustody: true, status: "LIVE" });

@@ -50,6 +50,8 @@ export interface TradeQuote {
   sellAmount: string;
   /** Amount to buy (estimated) */
   buyAmount: string;
+  /** Provider-guaranteed minimum buy amount (slippage-applied), when known. */
+  buyAmountMin?: string;
   /** Price impact % */
   priceImpact: string;
   /** Trading fee in USDC */
@@ -197,6 +199,13 @@ export class TradingEngine {
   static DEFAULT_TAKER = "0x0000000000000000000000000000000000012345";
 
   private async getEvmQuote(params: TradeParams, config: ChainConfig, fee: string): Promise<TradeQuote> {
+    // Arc has no 0x presence, but Li.Fi routes it (verified on-chain shape:
+    // kyberswap tool, full transactionRequest, Diamond approvalAddress). The
+    // Li.Fi integrator fee comes off the fromToken — the same sell-leg
+    // accounting parseEvmTransferFill already validates for 0x.
+    if (params.fromChain === "arc") {
+      return this.getLiFiArcQuote(params, config, fee);
+    }
     const NATIVE_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const DEFAULT_TAKER = TradingEngine.DEFAULT_TAKER;
     // Symbols that map to the chain's native gas token even when named
@@ -268,6 +277,9 @@ export class TradingEngine {
       gas?: string;
       gasPrice?: string;
       chainId: number;
+      /** Exact ERC-20 approve to sign BEFORE the swap (Li.Fi Diamond flow).
+       * Omitted when no prior allowance is required. */
+      approveTx?: { to: string; data: string };
     };
   }> {
     const quote = await this.getQuote({ ...params, taker: walletAddress });
@@ -302,9 +314,41 @@ export class TradingEngine {
       };
     }
 
+    const config = getChain(params.fromChain);
+    if (params.fromChain === "arc") {
+      const raw = quote.raw as {
+        estimate?: { approvalAddress?: string };
+        transactionRequest?: { to?: string; data?: string; value?: string; gasLimit?: string; gasPrice?: string };
+      } | undefined;
+      const tx = raw?.transactionRequest;
+      if (!config || !tx?.to || !tx.data) throw new Error("quote is missing an EVM transaction payload");
+      // On Arc every token — including the native-USDC gas token — is an
+      // ERC-20 that Li.Fi spends via its Diamond. Emit the exact approve the
+      // wallet must sign first (amount = sellAmount, no guessed allowances);
+      // sequential nonces complete the approve→swap pair atomically from the
+      // user's perspective.
+      const approvalAddress = raw?.estimate?.approvalAddress;
+      const sellIsAddress = /^0x[0-9a-fA-F]{40}$/.test(params.sellToken);
+      const approveTx = approvalAddress && /^0x[0-9a-fA-F]{40}$/.test(approvalAddress) && sellIsAddress
+        ? { to: params.sellToken, data: erc20ApproveCalldata(approvalAddress, BigInt(params.amount)) }
+        : undefined;
+      return {
+        quote,
+        platformFeeBps: 0, // fee travels inside the Li.Fi route via LIFI_FEE_PCT
+        unsignedTransaction: {
+          kind: "evm",
+          to: tx.to,
+          data: tx.data,
+          value: tx.value ?? "0",
+          gas: tx.gasLimit,
+          gasPrice: tx.gasPrice,
+          chainId: config.chainId,
+          approveTx,
+        },
+      };
+    }
     const raw = quote.raw as { transaction?: { to?: string; data?: string; value?: string; gas?: string; gasPrice?: string } } | undefined;
     const transaction = raw?.transaction;
-    const config = getChain(params.fromChain);
     if (!config || !transaction?.to || !transaction.data) {
       throw new Error("quote is missing an EVM transaction payload");
     }
@@ -349,6 +393,73 @@ export class TradingEngine {
     url.searchParams.set("swapFeeToken", feeToken);
   }
 
+  /**
+   * Li.Fi intra-Arc quote (GET /v1/quote). Verified live 2026-09-24 on the
+   * WETH/USDC pool (~$30M daily volume): returns estimate.toAmountMin and a
+   * full transactionRequest (to = Li.Fi Diamond, data, gasLimit, gasPrice,
+   * value). Arc's native gas token IS USDC, but Li.Fi treats it as a regular
+   * ERC-20: tx value is always "0x0" and the Diamond needs a separate ERC-20
+   * approve when selling — prepareSelfCustodyTransaction emits the exact
+   * unsigned approve so the wallet signs approve→swap with sequential nonces.
+   * The integrator fee (our 0.3%) is deducted from the fromToken (sell leg),
+   * keeping receipt parsing identical to the 0x path. Requires no API key.
+   */
+  private async getLiFiArcQuote(params: TradeParams, config: ChainConfig, fee: string): Promise<TradeQuote> {
+    const ARC_USDC = config.usdcAddress;
+    const NATIVE_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const resolveToken = (raw: string) => {
+      if (/^0x[0-9a-fA-F]{40}$/.test(raw)) return raw;
+      if (raw.toUpperCase() === "USDC" || /^0x0{40}$/i.test(raw)) return ARC_USDC;
+      return raw;
+    };
+    const sellToken = resolveToken(params.sellToken);
+    const buyToken = resolveToken(params.buyToken);
+    const url = new URL("https://li.quest/v1/quote");
+    url.searchParams.set("fromChain", String(config.chainId));
+    url.searchParams.set("toChain", String(config.chainId));
+    url.searchParams.set("fromToken", sellToken);
+    url.searchParams.set("toToken", buyToken);
+    url.searchParams.set("fromAmount", params.amount);
+    // Li.Fi expects a fraction (0.005 = 0.5%); our params carry bps (50).
+    url.searchParams.set("slippage", String((params.slippageBps ?? 100) / 10_000));
+    const integrator = process.env.LIFI_INTEGRATOR;
+    if (integrator) url.searchParams.set("integrator", integrator);
+    const feePct = process.env.LIFI_FEE_PCT;
+    if (feePct && /^\d+(\.\d+)?$/.test(feePct) && Number(feePct) > 0 && Number(feePct) < 100) {
+      url.searchParams.set("fee", feePct);
+    }
+    const res = await fetch(url.toString(), { headers: { accept: "application/json" } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`lifi quote failed: ${res.status} ${body.slice(0, 200)}`);
+    }
+    const data = await res.json() as {
+      tool?: string;
+      toolDetails?: { name?: string };
+      estimate?: { toAmount?: string; toAmountMin?: string; approvalAddress?: string };
+      transactionRequest?: { to?: string; data?: string; value?: string; gasLimit?: string; gasPrice?: string; chainId?: number };
+    };
+    if (!data.estimate?.toAmount || !data.transactionRequest?.to || !data.transactionRequest.data) {
+      throw new Error("lifi quote is missing an executable transaction request");
+    }
+    return {
+      fromChain: params.fromChain,
+      toChain: params.toChain,
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      sellAmount: params.amount,
+      buyAmount: data.estimate.toAmount,
+      buyAmountMin: data.estimate.toAmountMin,
+      priceImpact: "0",
+      feeUsdc: fee,
+      gasEstimate: data.transactionRequest.gasLimit ?? "0",
+      route: data.toolDetails?.name ?? data.tool ?? "lifi",
+      aggregator: "lifi",
+      expiresAt: Date.now() + 60_000,
+      raw: data,
+    };
+  }
+
   /** Li.Fi bridge quote for cross-chain */
   private async getBridgeQuote(params: TradeParams, from: ChainConfig, to: ChainConfig, fee: string): Promise<TradeQuote> {
     const res = await fetch("https://api.li.fi/v2/quote", {
@@ -381,6 +492,15 @@ export class TradingEngine {
       expiresAt: Date.now() + 60_000,
     };
   }
+}
+
+/** ERC-20 approve(address,uint256) calldata — 4-byte selector + 32-byte words. */
+export function erc20ApproveCalldata(spender: string, amount: bigint): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(spender)) throw new Error("approve spender must be a 20-byte address");
+  const selector = "0x095ea7b3";
+  const paddedSpender = spender.toLowerCase().slice(2).padStart(64, "0");
+  const amountHex = amount.toString(16).padStart(64, "0");
+  return selector + paddedSpender + amountHex;
 }
 
 /**

@@ -10,8 +10,9 @@
  *   2. Li.Fi           (public API, second opinion + future alternative)
  *
  * Exit codes:
- *   0 = at least one aggregator returned a routable quote  → time to flip
- *       SELF_CUSTODY_CHAINS in src/api/server.ts to include "arc".
+ *   0 = at least one aggregator returned a routable quote.
+ *       (2026-09-24: Li.Fi confirmed + integrated; keeping the probe as a
+ *       route-liveness check — exit 0 now means "deploy state is current".)
  *   1 = no routes anywhere (expected until Arc DEX liquidity matures).
  *   2 = probe infrastructure failure (network/GeckoTerminal down) — retry later.
  *
@@ -128,10 +129,9 @@ async function probe() {
 
   if (zx.ok || lifi.ok) {
     const who = [zx.ok && "0x", lifi.ok && "Li.Fi"].filter(Boolean).join(" + ");
-    console.log(`\n🟢 ¡${who} tiene rutas reales en Arc! TOCA EL FLIP:`);
-    console.log('   1. Añade "arc" a SELF_CUSTODY_CHAINS en packages/app/src/api/server.ts');
-    console.log("   2. Integrar ejecutor Li.Fi (quote devuelta con transactionRequest lista para firmar)");
-    console.log("   3. pnpm test && deploy en Fly");
+    console.log(`\n🟢 ${who} tiene rutas reales en Arc — INTEGRACIÓN YA HECHA (2026-09-24):`);
+    console.log('   ✓ SELF_CUSTODY_CHAINS incluye "arc"; Li.Fi enruta intra-Arc con approve exacto + swap');
+    console.log("   → solo queda desplegar en Fly (deploy desde la raíz del repo)");
     return 0;
   }
   console.log("\n⚪ Sin rutas ejecutables aún. Datos de mercado de Arc siguen vivos; swaps siguen honestamente OFF.");

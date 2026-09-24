@@ -51,7 +51,7 @@ describe("self-custody execution policy", () => {
     expect(chains.find((c: any) => c.id === "solana")).toMatchObject({ liveExecution: true, selfCustody: true, status: "LIVE" });
     expect(chains.find((c: any) => c.id === "base")).toMatchObject({ liveExecution: true, status: "LIVE" });
     expect(chains.find((c: any) => c.id === "ethereum")).toMatchObject({ liveExecution: true, status: "LIVE" });
-    for (const id of ["bsc", "robinhood", "arc"]) {
+    for (const id of ["bsc", "robinhood"]) {
       expect(chains.find((c: any) => c.id === id)).toMatchObject({ liveExecution: false, status: "UNAVAILABLE" });
     }
   });

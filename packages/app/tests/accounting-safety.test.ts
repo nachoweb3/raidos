@@ -107,9 +107,10 @@ describe("live capability policy and financial input", () => {
     const { call } = await httpApp();
     const prepare = vi.spyOn(TradingEngine.prototype, "prepareSelfCustodyTransaction").mockRejectedValue(new Error("must not call provider"));
     const chains = await (await call("/api/chains")).json();
-    // bsc/robinhood/arc have no self-custody adapter; solana lacks a Jupiter
-    // key in this fixture, so only keyed EVM chains (base) advertise LIVE.
-    for (const id of ["bsc", "robinhood", "arc", "solana"]) {
+    // bsc/robinhood have no self-custody adapter; solana lacks a Jupiter key
+    // in this fixture. Arc routes via keyless Li.Fi, so only keyed EVM chains
+    // (base) plus arc advertise LIVE.
+    for (const id of ["bsc", "robinhood", "solana"]) {
       const chain = chains.chains.find((c: any) => c.id === id);
       expect(chain.liveExecution).toBe(false);
       expect(chain.status).toBe("UNAVAILABLE");

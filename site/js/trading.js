@@ -204,6 +204,15 @@ export const TradingEngine = {
       throw new Error(`Cambia MetaMask a la red correcta (chainId ${tx.chainId})`);
     }
     const from = walletAddress;
+    // Li.Fi flow (e.g. Arc): an exact ERC-20 approve must be confirmed BEFORE
+    // the swap. Both txs are sent from the same wallet — the mempool keeps
+    // sequential nonces, so the swap can never front-run its approval.
+    if (tx.approveTx?.to && tx.approveTx?.data) {
+      await window.ethereum.request({
+        method: "eth_sendTransaction",
+        params: [{ from, to: tx.approveTx.to, data: tx.approveTx.data, value: "0x0" }],
+      });
+    }
     const txHash = await window.ethereum.request({
       method: "eth_sendTransaction",
       params: [{ from, to: tx.to, data: tx.data, value: `0x${BigInt(tx.value || "0").toString(16)}`, ...(tx.gas ? { gas: `0x${BigInt(tx.gas).toString(16)}` } : {}) }],

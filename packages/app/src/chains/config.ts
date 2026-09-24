@@ -191,19 +191,16 @@ const MONAD: ChainConfig = {
   supportsLaunches: true,
 };
 
-// ── ARC (CIRCLE) ────────────────────────────────────────────────────────
-
-// Circle's stablecoin L1 (testnet — mainnet addresses not yet published).
-// USDC is the native gas token: the native balance uses 18 decimals while the
-// ERC-20 USDC interface (0x3600…0000) uses 6. There is no wrapped-USDC
-// contract — the native token already satisfies IERC20 directly.// ── ARC (Circle L1) ─────────────────────────────────────────────────────
+// ── ARC (Circle L1) ─────────────────────────────────────────────────────
 // Mainnet LIVE since 2026-09-16. Verified on-chain 2026-09-23:
 //   eth_chainId → 0x13b2 (5042); block explorer https://explorer.arc.io
 //   Native gas IS USDC at 0x3600…0000 with 6 decimals (GT pool data + docs;
 //   docs describe 18-decimal display quirks, the token contract is 6).
-//   No EVM aggregator routes Arc yet (0x quote probe 404 on 2026-09-23);
-//   market DATA is live via GeckoTerminal network "arc". Swap execution
-//   stays disabled (no verified route) until an aggregator ships support.
+// SWAP EXECUTION LIVE since 2026-09-24 via Li.Fi (verified route probe:
+// kyberswap tool, full transactionRequest, Diamond approvalAddress; the
+// WETH/USDC pool carries ~$30M daily volume). Li.Fi treats native USDC as a
+// regular ERC-20 (tx value 0x0 + separate approve). Market data stays on
+// GeckoTerminal network "arc".
 const ARC: ChainConfig = {
   id: "arc",
   name: "Arc",
@@ -215,8 +212,8 @@ const ARC: ChainConfig = {
   usdcAddress: "0x3600000000000000000000000000000000000000",
   usdcDecimals: 6,
   wrappedNative: "0x3600000000000000000000000000000000000000",
-  dexAggregator: "0x",
-  dexApiUrl: "https://api.0x.org",
+  dexAggregator: "lifi",
+  dexApiUrl: "https://li.quest/v1",
   bridgeProvider: "cctp",
   supportsLaunches: false,
 };

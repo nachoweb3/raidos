@@ -52,7 +52,7 @@ export const BLOCKSCOUT_INSTANCES: Record<string, string> = {
   arbitrum: "https://arbitrum.blockscout.com",
   polygon: "https://polygon.blockscout.com",
   bsc: "https://bnb.blockscout.com",
-  arc: "https://testnet.arcscan.app",
+  arc: "https://explorer.arc.io",
 };
 
 export class BlockscoutHoldersProvider implements HoldersProvider {

@@ -106,6 +106,9 @@ export const WELL_KNOWN_TOKENS: Record<string, { symbol: string; name: string }>
   "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c": { symbol: "BNB", name: "BNB" },
   // Polygon
   "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359": { symbol: "USDC", name: "USD Coin" },
+  // Arc (Circle L1) — native gas token IS USDC; WETH verified via Li.Fi probe
+  "0x3600000000000000000000000000000000000000": { symbol: "USDC", name: "USD Coin (Arc native)" },
+  "0x93ffd195481e8c08eb25a158689e4d9e61313111": { symbol: "WETH", name: "Wrapped Ether (Arc)" },
 };
 
 export class ApiServer {
@@ -584,13 +587,14 @@ export class ApiServer {
       const chains = Object.values(CHAINS).map((c) => {
         // Configuration permits requesting a quote; it is not a provider probe
         // or evidence of a valid route. Never advertise testnets/other adapters.
-        const quotes = c.id === "solana" ? Boolean(process.env.JUPITER_API_KEY) :
-          ["ethereum", "base"].includes(c.id) && c.dexAggregator === "0x" && Boolean(process.env.ZERO_X_API_KEY);
+        // Arc routes via Li.Fi (keyless); other EVM chains via 0x v2.
+        const quotes = c.id === "solana" ? Boolean(process.env.JUPITER_API_KEY)
+          : c.id === "arc" || (["ethereum", "base"].includes(c.id) && c.dexAggregator === "0x" && Boolean(process.env.ZERO_X_API_KEY));
         const selfCustody = this.appMode === "live" && quotes && SELF_CUSTODY_CHAINS.has(c.id);
         return {
           id: c.id, name: c.name, chainId: c.chainId, evm: c.evm,
           nativeCurrency: c.nativeCurrency, usdcAddress: c.usdcAddress,
-          usdcDecimals: c.usdcDecimals, dexAggregator: c.dexAggregator,
+          usdcDecimals: c.usdcDecimals, dexAggregator: c.id === "arc" ? "lifi" : c.dexAggregator,
           supportsLaunches: false,
           quotes,
           quoteStatus: "UNVERIFIED",
@@ -599,7 +603,7 @@ export class ApiServer {
           liveExecution: selfCustody,
           selfCustody,
           status: selfCustody ? "LIVE" : "UNAVAILABLE",
-          ...(selfCustody ? {} : { reason: "Self-custody execution is available on solana, ethereum and base; this network stays read-only" }),
+          ...(selfCustody ? {} : { reason: "Self-custody execution is available on solana, ethereum, base and arc; this network stays read-only" }),
         };
       });
       sendJson(ctx.res, 200, { chains, mode: this.appMode });
@@ -2898,8 +2902,10 @@ function parseSocialLinks(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** Chains whose self-custody execution path is implemented and receipt-verified. */
-const SELF_CUSTODY_CHAINS = new Set(["solana", "ethereum", "base"]);
+/** Chains whose self-custody execution path is implemented and receipt-verified.
+ *  arc routes via Li.Fi (verified live 2026-09-24, tool kyberswap); the other
+ *  EVM chains keep the 0x v2 path. */
+const SELF_CUSTODY_CHAINS = new Set(["solana", "ethereum", "base", "arc"]);
 
 /** Deterministic offline quote for mock mode (always labeled mock upstream). */
 export function buildMockQuote(params: TradeParams): import("../trading/engine.js").TradeQuote {
