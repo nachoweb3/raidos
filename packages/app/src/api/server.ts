@@ -2137,6 +2137,61 @@ export class ApiServer {
         leaders: this.db.getTopTraders(chain, limit, since) });
     });
 
+    // ── Follow graph (persisted; server-side identity = api key) ──
+    // One canonical shape for a social actor, reused by every listing.
+    const socialActor = (row: any) => ({
+      userId: row.user_id,
+      handle: row.x_handle ? `@${String(row.x_handle).replace(/^@/, "")}` : `@trader_${row.user_id}`,
+      displayName: row.display_name || (row.x_handle ? `@${String(row.x_handle).replace(/^@/, "")}` : `Trader #${row.user_id}`),
+      avatarUrl: row.avatar_url ?? null,
+      followersCount: row.followers_count ?? 0,
+      totalPnlUsdc: row.total_pnl_usdc ?? null,
+      winRate: row.win_rate ?? null,
+      totalTrades: row.total_trades ?? null,
+    });
+
+    this.router.route("POST", "/api/users/:id/follow", (ctx) => {
+      const followerId = this.requireUserId(ctx);
+      const targetId = Number(ctx.params.id);
+      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      if (targetId === followerId) throw new HttpError(400, "cannot follow yourself");
+      if (!this.db.getUserById(targetId)) throw new HttpError(404, "user not found");
+      this.db.ensureProfile(followerId);
+      this.db.ensureProfile(targetId);
+      const created = this.db.follow(followerId, targetId);
+      sendJson(ctx.res, 200, { following: true, created, followersCount: this.db.getProfile(targetId)?.followers_count ?? 0 });
+    });
+
+    this.router.route("DELETE", "/api/users/:id/follow", (ctx) => {
+      const followerId = this.requireUserId(ctx);
+      const targetId = Number(ctx.params.id);
+      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      const removed = this.db.unfollow(followerId, targetId);
+      sendJson(ctx.res, 200, { following: false, removed, followersCount: this.db.getProfile(targetId)?.followers_count ?? 0 });
+    });
+
+    this.router.route("GET", "/api/users/:id/follow", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const targetId = Number(ctx.params.id);
+      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      sendJson(ctx.res, 200, { following: this.db.isFollowing(userId, targetId) });
+    });
+
+    // Who follows this user / who this user follows (public, honest profiles).
+    this.router.publicRoute("GET", "/api/users/:id/followers", (ctx) => {
+      const targetId = Number(ctx.params.id);
+      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 100);
+      sendJson(ctx.res, 200, { followers: this.db.getFollowers(targetId, limit).map(socialActor) });
+    });
+
+    this.router.publicRoute("GET", "/api/users/:id/following", (ctx) => {
+      const targetId = Number(ctx.params.id);
+      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 100);
+      sendJson(ctx.res, 200, { following: this.db.getFollowing(targetId, limit).map(socialActor) });
+    });
+
     // ── Positions ──
     this.router.route("GET", "/api/positions", (ctx) => {
       const userId = this.requireUserId(ctx);
@@ -2181,11 +2236,20 @@ export class ApiServer {
     this.router.publicRoute("GET", "/api/feed", (ctx) => {
       const sinceId = ctx.query.get("sinceId") !== null ? Number(ctx.query.get("sinceId")) : undefined;
       const limit = Math.min(Number(ctx.query.get("limit") ?? 30), 100);
+      // actorIds: comma-separated list → only events from those actors
+      // (server-side "following" filter; client never decides who is followed).
+      const actorIdsRaw = ctx.query.get("actorIds");
+      let actorIds: number[] | undefined;
+      if (actorIdsRaw) {
+        actorIds = actorIdsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 100);
+        if (!actorIds.length) actorIds = undefined;
+      }
       const events = this.db.getFeed({
         sinceId: Number.isFinite(sinceId) ? sinceId : undefined,
         limit,
         chain: ctx.query.get("chain") ?? undefined,
         token: ctx.query.get("token") ?? undefined,
+        actorIds,
       }).map((e) => ({ ...e, payload: safeParse(e.payload) }));
       sendJson(ctx.res, 200, { events, maxId: this.db.getFeedMaxId(), mode: this.appMode });
     });

@@ -20,11 +20,26 @@ export const SocialEngine = {
   container: null,
   activePeriod: "all", // '24h' | '7d' | '30d' | 'all' | 'rising'
   leaders: [],
+  // Anonymous fallback: handles in localStorage (no server identity).
   followingSet: new Set(JSON.parse(localStorage.getItem("trenches_following") || "[]")),
+  // Authenticated: userIds persisted server-side; cached here for instant render.
+  followingIds: new Set(JSON.parse(localStorage.getItem("trenches_following_ids") || "[]")),
 
   init(containerElement) {
     this.container = containerElement;
     this.loadLeaderboard();
+    this.syncFollowingFromServer();
+  },
+
+  /** Pull the persisted follow list when the user has an API session. */
+  async syncFollowingFromServer() {
+    if (!ApiClient.isAuthenticated()) return;
+    try {
+      const ids = await ApiClient.getFollowingIds("me");
+      this.followingIds = new Set(ids);
+      localStorage.setItem("trenches_following_ids", JSON.stringify([...this.followingIds]));
+      this.render();
+    } catch { /* offline or 401 — local cache still applies */ }
   },
 
   async loadLeaderboard() {
@@ -68,7 +83,30 @@ export const SocialEngine = {
     this.loadLeaderboard();
   },
 
-  toggleFollow(handle) {
+  /**
+   * Follow/unfollow. With a session it persists server-side by userId
+   * (optimistic UI, reverted on failure); anonymous users keep the local
+   * handle-based fallback.
+   */
+  async toggleFollow(userId, handle) {
+    if (ApiClient.isAuthenticated() && Number.isFinite(Number(userId))) {
+      const id = Number(userId);
+      const had = this.followingIds.has(id);
+      if (had) this.followingIds.delete(id); else this.followingIds.add(id);
+      localStorage.setItem("trenches_following_ids", JSON.stringify([...this.followingIds]));
+      this.render();
+      try {
+        if (had) await ApiClient.unfollowUser(id);
+        else await ApiClient.followUser(id);
+      } catch (e) {
+        // Revert on failure — never lie about the persisted state.
+        if (had) this.followingIds.add(id); else this.followingIds.delete(id);
+        localStorage.setItem("trenches_following_ids", JSON.stringify([...this.followingIds]));
+        console.warn("[Social] follow sync failed:", e);
+        this.render();
+      }
+      return;
+    }
     const h = safeHandle(handle);
     if (this.followingSet.has(h)) {
       this.followingSet.delete(h);
@@ -129,8 +167,9 @@ export const SocialEngine = {
       return;
     }
 
+    const authed = ApiClient.isAuthenticated();
     this.container.innerHTML = this.leaders.map((l) => {
-      const isFollowing = this.followingSet.has(l.handle);
+      const isFollowing = authed ? this.followingIds.has(l.userId) : this.followingSet.has(l.handle);
       const pnlColor = l.pnlUsdc >= 0 ? "var(--delta-green)" : "var(--delta-red)";
       const pnlSign = l.pnlUsdc >= 0 ? "+" : "";
       return `
@@ -164,7 +203,7 @@ export const SocialEngine = {
             </div>
 
             <div style="display:flex; gap:8px">
-              <button class="btn ${isFollowing ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="window.SocialEngine.toggleFollow('${l.handle}')">
+              <button class="btn ${isFollowing ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="window.SocialEngine.toggleFollow(${Number(l.userId) || 0}, '${l.handle}')">
                 ${isFollowing ? 'Siguiendo' : 'Follow'}
               </button>
               <button class="btn btn-primary btn-sm" onclick='window.SocialEngine.openCopyModal(${esc(JSON.stringify({ handle: l.handle, displayName: l.displayName }))})'>

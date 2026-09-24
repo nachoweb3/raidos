@@ -1044,6 +1044,11 @@ export class AppDb {
     }
   }
 
+  /** Profiles are created lazily; every user gets one on first social interaction. */
+  ensureProfile(userId: number) {
+    this.db.prepare("INSERT OR IGNORE INTO profiles (user_id, joined_at) VALUES (?, ?)").run(userId, Math.floor(Date.now() / 1000));
+  }
+
   follow(followerId: number, targetId: number) {
     const info = this.db.prepare("INSERT OR IGNORE INTO follows (follower_id, target_id, created_at) VALUES (?, ?, ?)").run(followerId, targetId, Math.floor(Date.now() / 1000));
     if (info.changes > 0) {
@@ -1556,7 +1561,7 @@ export class AppDb {
     return Number(info.lastInsertRowid);
   }
 
-  getFeed(opts: { sinceId?: number; limit?: number; chain?: string; token?: string; actorId?: number } = {}) {
+  getFeed(opts: { sinceId?: number; limit?: number; chain?: string; token?: string; actorId?: number; actorIds?: number[] } = {}) {
     const limit = Math.min(opts.limit ?? 30, 100);
     const clauses: string[] = [];
     const args: any[] = [];
@@ -1564,6 +1569,10 @@ export class AppDb {
     if (opts.chain) { clauses.push("chain = ?"); args.push(opts.chain); }
     if (opts.token) { clauses.push("token = ?"); args.push(opts.token); }
     if (opts.actorId !== undefined) { clauses.push("actor_id = ?"); args.push(opts.actorId); }
+    if (opts.actorIds?.length) {
+      clauses.push(`actor_id IN (${opts.actorIds.map(() => "?").join(",")})`);
+      args.push(...opts.actorIds);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.db.prepare(
       `SELECT * FROM feed_events ${where} ORDER BY id DESC LIMIT ?`

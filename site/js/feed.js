@@ -53,12 +53,26 @@ export const FeedEngine = {
   posts: [],
   lastFeedId: 0,
   sseSource: null,
+  // Server-side follow graph (user ids), cached for the "following" filter.
+  followingIdsCache: new Set(JSON.parse(localStorage.getItem("trenches_following_ids") || "[]")),
 
   init(containerElement) {
     this.container = containerElement;
     if (this.container) this.container.textContent = "Cargando publicaciones...";
     this.fetchLiveFeed();
     this.setupSseStream();
+    this.refreshFollowingIds();
+  },
+
+  /** Sync the persisted follow list (authenticated sessions only). */
+  async refreshFollowingIds() {
+    if (!ApiClient.isAuthenticated()) return;
+    try {
+      const ids = await ApiClient.getFollowingIds("me");
+      this.followingIdsCache = new Set(ids);
+      localStorage.setItem("trenches_following_ids", JSON.stringify([...this.followingIdsCache]));
+      if (this.activeFilter === "following") this.render();
+    } catch { /* offline/401 — cached list still applies */ }
   },
 
   /** Turn $TICKER mentions into interactive pills using real prices. */
@@ -99,6 +113,7 @@ export const FeedEngine = {
       const text = p.text || "";
       return {
         id: "live_" + e.id,
+        actorId: e.actor_id,
         author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "T#", verified: false },
         type: e.type,
         direction: p.direction,
@@ -125,6 +140,7 @@ export const FeedEngine = {
       const usdc = Number(p.usdc ?? 0) / 1e6;
       return {
         id: "live_" + e.id,
+        actorId: e.actor_id,
         author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: false },
         type: "swap",
         token: e.token_symbol || undefined,
@@ -141,6 +157,7 @@ export const FeedEngine = {
       const up = pnl >= 0;
       return {
         id: "live_" + e.id,
+        actorId: e.actor_id,
         author: { name: actor, handle: `@trader_${e.actor_id}`, avatar: "⛓", verified: false },
         type: "position_closed",
         token: e.token_symbol || undefined,
@@ -249,9 +266,14 @@ export const FeedEngine = {
     } else if (this.activeFilter === "smart_money") {
       filtered = this.posts.filter((p) => p.type === "position_closed" || p.type === "swap");
     } else if (this.activeFilter === "following") {
-      // Local follow graph (trenches_following); matches author handles
-      const following = JSON.parse(localStorage.getItem("trenches_following") || "[]");
-      filtered = this.posts.filter((p) => following.includes(p.author.handle));
+      if (ApiClient.isAuthenticated() && this.followingIdsCache.size > 0) {
+        // Persisted follow graph: filter by actor id (server-side source of truth).
+        filtered = this.posts.filter((p) => p.actorId != null && this.followingIdsCache.has(p.actorId));
+      } else {
+        // Anonymous fallback: local handle graph.
+        const following = JSON.parse(localStorage.getItem("trenches_following") || "[]");
+        filtered = this.posts.filter((p) => following.includes(p.author.handle));
+      }
     }
 
     if (filtered.length === 0) {

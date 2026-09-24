@@ -208,6 +208,26 @@ export const ApiClient = {
     return this.request(`/api/leaderboard?period=${period}&limit=${limit}`);
   },
 
+  // ── Follow graph (server-side, persisted per account) ──
+
+  async followUser(userId) {
+    return this.request(`/api/users/${userId}/follow`, { method: "POST" });
+  },
+
+  async unfollowUser(userId) {
+    return this.request(`/api/users/${userId}/follow`, { method: "DELETE" });
+  },
+
+  async isFollowingUser(userId) {
+    const data = await this.request(`/api/users/${userId}/follow`);
+    return Boolean(data?.following);
+  },
+
+  async getFollowingIds(userId) {
+    const data = await this.request(`/api/users/${userId}/following?limit=100`);
+    return (data.following ?? []).map((a) => a.userId);
+  },
+
   async getWallets() {
     return this.request("/api/wallets");
   },
