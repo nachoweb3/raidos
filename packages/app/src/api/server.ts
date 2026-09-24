@@ -2178,16 +2178,25 @@ export class ApiServer {
     });
 
     // Who follows this user / who this user follows (public, honest profiles).
+    // ":id" accepts "me" → the authenticated user (401 if anonymous).
+    const resolveSocialId = (ctx: RequestContext): number => {
+      if (ctx.params.id === "me") {
+        if (ctx.userId === null) throw new HttpError(401, "missing or invalid API key");
+        return ctx.userId;
+      }
+      const id = Number(ctx.params.id);
+      if (!Number.isFinite(id)) throw new HttpError(400, "invalid user id");
+      return id;
+    };
+
     this.router.publicRoute("GET", "/api/users/:id/followers", (ctx) => {
-      const targetId = Number(ctx.params.id);
-      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      const targetId = resolveSocialId(ctx);
       const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 100);
       sendJson(ctx.res, 200, { followers: this.db.getFollowers(targetId, limit).map(socialActor) });
     });
 
     this.router.publicRoute("GET", "/api/users/:id/following", (ctx) => {
-      const targetId = Number(ctx.params.id);
-      if (!Number.isFinite(targetId)) throw new HttpError(400, "invalid user id");
+      const targetId = resolveSocialId(ctx);
       const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 100);
       sendJson(ctx.res, 200, { following: this.db.getFollowing(targetId, limit).map(socialActor) });
     });

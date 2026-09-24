@@ -77,11 +77,22 @@ describe("follow graph (persisted)", () => {
 
     const following = await (await fetch(base +  `/api/users/${a.id}/following`, { headers: auth(a.key) })).json() as any;
     expect(following.following).toHaveLength(1);
-    expect(following.following[0]).toMatchObject({ userId: b.id, handle: "@satoshi", displayName: "@satoshi" });
-
-    const followers = await (await fetch(base +  `/api/users/${b.id}/followers`)).json() as any;
+    expect(following.following[0]).toMatchObject({ userId: b.id, handle: "@satoshi", displayName: "@satoshi" });    const followers = await (await fetch(base + `/api/users/${b.id}/followers`)).json() as any;
     expect(followers.followers).toHaveLength(1);
     expect(followers.followers[0]).toMatchObject({ userId: a.id, handle: `@trader_${a.id}` });
+  });
+
+  it("listings accept 'me' as the authenticated user; anonymous 'me' is 401", async () => {
+    const a = mkUser();
+    const b = mkUser();
+    await fetch(base + `/api/users/${b.id}/follow`, { method: "POST", headers: auth(a.key) });
+
+    const mine = await (await fetch(base + `/api/users/me/following`, { headers: auth(a.key) })).json() as any;
+    expect(mine.following).toHaveLength(1);
+    expect(mine.following[0].userId).toBe(b.id);
+
+    const anon = await fetch(base + `/api/users/me/following`);
+    expect(anon.status).toBe(401);
   });
 
   it("feed ?actorIds= returns only events from the given actors; junk degrades to no filter", async () => {
