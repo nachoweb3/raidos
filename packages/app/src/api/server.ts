@@ -13,6 +13,8 @@ import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
 import { SocialEngine } from "../social/engine.js";
+import { PairService, ALL_ASSETS, parsePairId, resolveAsset } from "../pairs/pair-service.js";
+import { PairPriceService } from "../pairs/pair-prices.js";
 import { RATING_FORMULA_VERSION, RATING_WEIGHTS, MIN_TRADES_FOR_SCORE } from "../social/rating.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, extname, resolve } from "node:path";
@@ -141,6 +143,9 @@ export class ApiServer {
   /** Solana connection factory (LaunchLab/factory/AMM); returns null without RPC. */
   private readonly solanaConnectionFactory: () => Connection | null;
   private socialEngine!: SocialEngine;
+  private pairs!: PairService;
+  private pairPrices!: PairPriceService;
+  private pairTimer: NodeJS.Timeout | null = null;
   constructor(options: ServerOptions) {
     this.appMode = options.appMode ?? ((process.env.APP_MODE as "live" | "mock") ?? "mock");
     if (this.appMode !== "live" && this.appMode !== "mock") throw new Error("APP_MODE must be live or mock");
@@ -171,6 +176,8 @@ export class ApiServer {
     this.rewards = new RewardsEngine(this.db);
     this.history = new TradeHistory(this.db);
     this.socialEngine = new SocialEngine(this.db, this.db.marketCatalog, this.marketData);
+    this.pairPrices = new PairPriceService(this.db);
+    this.pairs = new PairService(this.pairPrices, () => null);
 
     this.registerRoutes();
   }
@@ -205,6 +212,18 @@ export class ApiServer {
       });
     }, 60_000);
     this.socialTimer.unref?.();
+    // Universal Pairs: snapshot loop — one row per tracked asset per pass.
+    // Runs in every mode (read-only observation, never execution). The first
+    // pass is immediate so the API has data right after boot.
+    void this.pairPrices.refreshAll().catch((err) => {
+      console.warn("[pairs] initial snapshot failed:", err instanceof Error ? err.message : "unknown error");
+    });
+    this.pairTimer = setInterval(() => {
+      void this.pairPrices.refreshAll().catch((err) => {
+        console.warn("[pairs] snapshot pass failed:", err instanceof Error ? err.message : "unknown error");
+      });
+    }, 5 * 60_000);
+    this.pairTimer.unref?.();
     return this.portNumber;
   }
 
@@ -216,6 +235,10 @@ export class ApiServer {
     if (this.socialTimer) {
       clearInterval(this.socialTimer);
       this.socialTimer = null;
+    }
+    if (this.pairTimer) {
+      clearInterval(this.pairTimer);
+      this.pairTimer = null;
     }
     if (this.server) {
       await new Promise<void>((resolvePromise) => this.server!.close(() => resolvePromise()));
@@ -2199,6 +2222,49 @@ export class ApiServer {
       const targetId = resolveSocialId(ctx);
       const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 100);
       sendJson(ctx.res, 200, { following: this.db.getFollowing(targetId, limit).map(socialActor) });
+    });
+
+    // ── Universal Pairs (relative value layer) ──
+    // Discovery: curated pairs with honest availability and relative movers.
+    this.router.publicRoute("GET", "/api/pairs", (ctx) => {
+      const kind = ctx.query.get("kind") ?? "trending";
+      if (!/^(trending|nft-token|synthetic|relative-movers|relative-breakout)$/.test(kind)) throw new HttpError(400, "invalid pairs kind");
+      const limit = Math.min(Math.max(Number(ctx.query.get("limit") ?? 24), 1), 60);
+      void this.pairs.list(kind, limit).then(
+        (data) => sendJson(ctx.res, 200, { ...data, mode: this.appMode }),
+        (err: unknown) => sendJson(ctx.res, 503, { error: err instanceof Error ? err.message : "pairs unavailable" }),
+      );
+    });
+
+    // Pair resolution: "MAD/SOL" or "mad_lads/wrapped-sol" → canonical id + availability.
+    this.router.publicRoute("GET", "/api/pairs/resolve", (ctx) => {
+      const raw = ctx.query.get("q") ?? "";
+      const parsed = parsePairId(raw);
+      if (!parsed) throw new HttpError(400, "expected base/quote (e.g. MAD/SOL)");
+      const base = resolveAsset(parsed.baseId);
+      const quote = resolveAsset(parsed.quoteId);
+      if (!base || !quote) throw new HttpError(404, "unknown asset");
+      if (base.id === quote.id) throw new HttpError(400, "base and quote must differ");
+      sendJson(ctx.res, 200, { pairId: `${base.id}/${quote.id}`, base, quote });
+    });
+
+    // Pair detail: series, DNA, legs, NFT stats, intelligence.
+    this.router.publicRoute("GET", "/api/pairs/:id/detail", (ctx) => {
+      const id = decodeURIComponent(ctx.params.id ?? "");
+      if (!parsePairId(id)) throw new HttpError(400, "invalid pair id");
+      const sinceTs = Math.floor(Date.now() / 1000) - 7 * 86400;
+      void this.pairs.detail(id, sinceTs).then(
+        (data) => sendJson(ctx.res, 200, { ...data, mode: this.appMode }),
+        (err: unknown) => {
+          const msg = err instanceof Error ? err.message : "pair unavailable";
+          sendJson(ctx.res, /unknown asset|invalid/.test(msg) ? 404 : 503, { error: msg });
+        },
+      );
+    });
+
+    // Asset directory (for search & UI pickers).
+    this.router.publicRoute("GET", "/api/pairs/assets", (ctx) => {
+      sendJson(ctx.res, 200, { assets: ALL_ASSETS });
     });
 
     // ── Positions ──

@@ -15,6 +15,7 @@ import { CopyEngine } from "./copy.js";
 import { PremiumEngine } from "./premium.js";
 import { DexFeed } from "./dexfeed.js";
 import { MarketsEngine } from "./markets.js";
+import { PairsEngine } from "./pairs.js";
 import { TokenMeta } from "./tokens.js";
 import { TerminalView } from "./terminal-view.js";
 
@@ -49,6 +50,7 @@ export const App = {
     safeInit("Portfolio", () => PortfolioEngine.init());
     safeInit("Premium", () => PremiumEngine.load());
     safeInit("Markets", () => MarketsEngine.init(document.getElementById("marketsContainer")));
+    safeInit("Pairs", () => PairsEngine.init(document.getElementById("pairsRoot")));
     safeInit("Rewards", () => RewardsEngine.init(document.getElementById("rewardsRoot")));
     safeInit("Trenches", () => TrenchesEngine.init());
 
@@ -67,6 +69,14 @@ export const App = {
     this.switchView("trade");
     window.TerminalView = TerminalView;
     TerminalView.init();
+
+    // 7. Universal Pairs deep link: #pairs=base%2Fquote opens the pair terminal.
+    const pairsHash = location.hash.match(/^#pairs=(.+)$/);
+    if (pairsHash) {
+      const pairId = decodeURIComponent(pairsHash[1]);
+      this.switchView("pairs");
+      safeInit("Pairs deep link", () => PairsEngine.openPair(pairId));
+    }
   },
 
   /** Populate feed sidebars: real top movers (CoinGecko) + real top traders (API). */
@@ -206,6 +216,8 @@ export const App = {
       CopyEngine.load();
     } else if (viewName === "markets") {
       MarketsEngine.render();
+    } else if (viewName === "pairs") {
+      PairsEngine.load();
     }
   },
 

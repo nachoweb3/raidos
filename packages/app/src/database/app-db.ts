@@ -268,6 +268,18 @@ export class AppDb {
       CREATE INDEX IF NOT EXISTS idx_feed_actor ON feed_events(actor_id, ts DESC);
       CREATE INDEX IF NOT EXISTS idx_feed_token ON feed_events(chain, token, ts DESC);
 
+      -- Universal Pairs: cumulative price snapshots per tracked asset.
+      -- Tokens persist USD; NFT collections persist the observed SOL floor.
+      -- One row per (asset_id, ts); upserts keep the series dense and unique.
+      CREATE TABLE IF NOT EXISTS pair_snapshots (
+        asset_id TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        price_usd REAL,
+        price_sol REAL,
+        PRIMARY KEY (asset_id, ts)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pair_snap_ts ON pair_snapshots(asset_id, ts);
+
       -- Durable execution intents/transactions/fills. These records separate a
       -- user's request from a submitted transaction and a settled accounting
       -- fill. The idempotency key prevents retry-induced duplicate execution.
@@ -1582,6 +1594,27 @@ export class AppDb {
   getFeedMaxId(): number {
     const row = this.db.prepare("SELECT COALESCE(MAX(id), 0) AS m FROM feed_events").get() as { m: number };
     return row.m;
+  }
+
+  // ── Universal Pairs: snapshot store ─────────────────────────────────
+
+  upsertPairSnapshot(assetId: string, ts: number, priceUsd: number | null, priceSol: number | null): void {
+    this.db.prepare(
+      "INSERT INTO pair_snapshots (asset_id, ts, price_usd, price_sol) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(asset_id, ts) DO UPDATE SET price_usd = excluded.price_usd, price_sol = excluded.price_sol"
+    ).run(assetId, ts, priceUsd, priceSol);
+  }
+
+  getPairSnapshots(assetId: string, sinceTs: number): { time: number; priceUsd: number | null; priceSol: number | null }[] {
+    return this.db.prepare(
+      "SELECT ts AS time, price_usd AS priceUsd, price_sol AS priceSol FROM pair_snapshots " +
+      "WHERE asset_id = ? AND ts >= ? ORDER BY ts ASC"
+    ).all(assetId, sinceTs) as { time: number; priceUsd: number | null; priceSol: number | null }[];
+  }
+
+  countPairSnapshots(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM pair_snapshots").get() as { n: number };
+    return row.n;
   }
 
   // ── Leaderboard snapshots ────────────────────────────────────────────
