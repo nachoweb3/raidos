@@ -20,6 +20,8 @@ import { NFT_COLLECTIONS, QUOTE_TOKENS, PairPriceService, type NftStats } from "
 const SOL_ASSET: PairAsset = { kind: "token", id: "wrapped-sol", chain: "solana", symbol: "SOL", name: "Solana" };
 
 const BENCHMARK_IDS = ["wrapped-sol", "ethereum", "bitcoin", "nvidia-xstock", "usd-coin"];
+/** CoinGecko id per pair-asset id ("wrapped-sol" → "solana" after CG retired the slug). */
+const CG_ID_BY_PAIR_ID = new Map(QUOTE_TOKENS.map((t) => [t.id, t.coingeckoId]));
 
 export const ALL_ASSETS: PairAsset[] = [
   ...NFT_COLLECTIONS,
@@ -159,7 +161,8 @@ export class PairService {
     const benchLegs: QuoteLeg[] = [];
     let cg: Map<string, { priceUsd: number | null; change24hPct: number | null }> = new Map();
     try { cg = await this.prices.tokenPrices(QUOTE_TOKENS.map((t) => t.coingeckoId)); } catch { /* unavailable stays unavailable */ }
-    const baseChangePct = base.kind === "nft_collection" ? null : cg.get((base as (typeof QUOTE_TOKENS)[number]).coingeckoId)?.change24hPct ?? null;
+    const baseChangePct = base.kind === "nft_collection" ? null
+      : cg.get(CG_ID_BY_PAIR_ID.get(base.id) ?? base.id)?.change24hPct ?? null;
     for (const id of BENCHMARK_IDS) {
       const asset = QUOTE_TOKENS.find((t) => t.id === id);
       if (!asset) continue;
@@ -191,7 +194,7 @@ export class PairService {
       ratioSeries: ratios.filter((r) => r.ratio != null).length >= 2 ? ratios : null,
       legs: {
         base: { asset: base, priceUsd: quotes.get(base.id)?.priceUsd ?? null, priceSol: quotes.get(base.id)?.priceSol ?? null, change24hPct: baseChangePct, source: isDirect ? "magiceden" : "coingecko" },
-        quote: { asset: quote, priceUsd: quotes.get(quote.id)?.priceUsd ?? null, priceSol: quotes.get(quote.id)?.priceSol ?? null, change24hPct: cg.get((quote as (typeof QUOTE_TOKENS)[number]).coingeckoId)?.change24hPct ?? null, source: "coingecko" },
+        quote: { asset: quote, priceUsd: quotes.get(quote.id)?.priceUsd ?? null, priceSol: quotes.get(quote.id)?.priceSol ?? null, change24hPct: cg.get(CG_ID_BY_PAIR_ID.get(quote.id) ?? quote.id)?.change24hPct ?? null, source: "coingecko" },
       },
       nft,
       intelligence: pairIntelligence(baseChangePct, benchLegs),

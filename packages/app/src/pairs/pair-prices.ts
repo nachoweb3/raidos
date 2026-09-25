@@ -52,7 +52,10 @@ export const NFT_COLLECTIONS: PairAsset[] = [
 ];
 
 export const QUOTE_TOKENS: QuoteToken[] = [
-  { kind: "token", id: "wrapped-sol", coingeckoId: "wrapped-sol", chain: "solana", symbol: "SOL", name: "Solana" },
+  // CoinGecko retired the "wrapped-sol" coin id (coins/wrapped-sol → 404);
+  // the live SOL/USD market lives under "solana". Pair ids keep the stable
+  // slug "wrapped-sol" so existing identifiers don't break.
+  { kind: "token", id: "wrapped-sol", coingeckoId: "solana", chain: "solana", symbol: "SOL", name: "Solana" },
   { kind: "token", id: "ethereum", coingeckoId: "ethereum", chain: "ethereum", symbol: "ETH", name: "Ethereum" },
   { kind: "token", id: "bitcoin", coingeckoId: "bitcoin", chain: "bitcoin", symbol: "BTC", name: "Bitcoin" },
   { kind: "token", id: "usd-coin", coingeckoId: "usd-coin", chain: "solana", symbol: "USDC", name: "USD Coin" },

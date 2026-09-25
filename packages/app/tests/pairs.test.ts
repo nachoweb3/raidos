@@ -107,7 +107,7 @@ describe("pair price provider & service", () => {
     const fetcher = stubFetcher(new Map<string, unknown>([
       ["/v2/collections/mad_lads/stats", { symbol: "mad_lads", floorPrice: 8_570_000_000, listedCount: 203, avgPrice24hr: 9_678_320_000, volume7d: 1_308_114_740_954 }],
       ["/coins/markets", [
-        { id: "wrapped-sol", current_price: 150, price_change_percentage_24h: 3.1 },
+        { id: "solana", current_price: 150, price_change_percentage_24h: 3.1 },
         { id: "nvidia-xstock", current_price: 180, price_change_percentage_24h: -1.2 },
       ]],
     ]));
@@ -116,8 +116,8 @@ describe("pair price provider & service", () => {
     expect(stats.floorSol).toBeCloseTo(8.57, 6);
     expect(stats.listedCount).toBe(203);
 
-    const cg = await prices.tokenPrices(["wrapped-sol", "nvidia-xstock"]);
-    expect(cg.get("wrapped-sol")?.priceUsd).toBe(150);
+    const cg = await prices.tokenPrices(["solana", "nvidia-xstock"]);
+    expect(cg.get("solana")?.priceUsd).toBe(150);
 
     const res = await prices.refreshAll();
     expect(res.snapshots).toBeGreaterThanOrEqual(2);
