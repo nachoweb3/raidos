@@ -164,6 +164,7 @@ export class PairService {
     const baseChangePct = base.kind === "nft_collection" ? null
       : cg.get(CG_ID_BY_PAIR_ID.get(base.id) ?? base.id)?.change24hPct ?? null;
     for (const id of BENCHMARK_IDS) {
+      if (id === base.id) continue; // never compare an asset against itself
       const asset = QUOTE_TOKENS.find((t) => t.id === id);
       if (!asset) continue;
       benchLegs.push({ id, symbol: asset.symbol, changePct: cg.get(asset.coingeckoId)?.change24hPct ?? null });

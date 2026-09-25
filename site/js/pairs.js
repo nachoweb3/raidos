@@ -400,14 +400,20 @@ export const PairsEngine = {
         <button class="btn btn-secondary btn-sm" onclick="window.PairsEngine.backToList()">← Pares</button>
       </div>
       <div id="matrixBody" class="glass-panel" style="padding:16px; font-size:12px; color:var(--text-tertiary)">Calculando…</div>`;
-    // Fetch every tracked asset's 24h USD change through the intelligence of one
-    // synthetic detail per token (batched CG underneath). Simpler: assets endpoint + one detail per token.
+    // One detail per token against SOL (except SOL itself, which pairs against
+    // ETH) yields every token's own 24H USD change — batched CoinGecko underneath.
     try {
       const tokens = this.assetDir.filter((a) => a.kind === "token");
       const changes = await Promise.all(tokens.map(async (t) => {
+        if (t.id === "wrapped-sol") {
+          try {
+            const d = await ApiClient.request(`/api/pairs/${encodeURIComponent("wrapped-sol/ethereum")}/detail`);
+            return [t.id, d.legs?.base?.change24hPct ?? null];
+          } catch { return [t.id, null]; }
+        }
         try {
           const d = await ApiClient.request(`/api/pairs/${encodeURIComponent(t.id + "/wrapped-sol")}/detail`);
-          return [t.id, d.legs?.quote?.asset?.id === t.id ? d.legs.quote.change24hPct : d.legs?.base?.change24hPct ?? null];
+          return [t.id, d.legs?.base?.change24hPct ?? null];
         } catch { return [t.id, null]; }
       }));
       const map = new Map(changes);
