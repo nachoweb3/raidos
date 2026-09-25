@@ -120,6 +120,14 @@ describe("Liquidity Teleport", () => {
     expect(route.legs).toHaveLength(0);
   });
 
+  it("reverse pair (SOL/MAD): NO_ROUTE names NFT sell honestly, no crash", async () => {
+    const engine = new TeleportEngine();
+    const route = await engine.findRoute(SOL, MAD, "1000000000");
+    expect(route.status).toBe("NO_ROUTE");
+    expect(route.reason).toContain("venta de NFT no habilitada");
+    expect(route.reason).toContain("Magic Eden");
+  });
+
   it("floor provider not configured → honest NO_ROUTE (no fake ready state)", async () => {
     const engine = new TeleportEngine();
     const route = await engine.findRoute(MAD, SOL, "1");

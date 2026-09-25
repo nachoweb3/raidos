@@ -171,6 +171,8 @@ export class TeleportEngine {
         const snap = await this.floors.floorFor(base.id, maxRank);
         return this.floorReadyRoute(base, quote, maxRank, snap);
       }
+      // Quote-side NFT (e.g. SOL/MAD): selling the floor also requires signing
+      // Magic Eden's program — name that instead of a generic "no market".
       return {
         status: "NO_ROUTE",
         hops: 0,
@@ -179,7 +181,9 @@ export class TeleportEngine {
         feeUsdc: null,
         reason: !a && !b ? "ninguna pata es ejecutable todavía (floor liquidity y fractionalization en fases siguientes)"
           : !a ? `${base.symbol}: sin mercado ejecutable conocido`
-          : `${quote.symbol}: sin mercado ejecutable conocido`,
+          : !b && quote.kind === "nft_collection"
+            ? `${quote.symbol}: venta de NFT no habilitada todavía (comprar/vender el floor exige firmar el programa on-chain de Magic Eden)`
+            : `${quote.symbol}: sin mercado ejecutable conocido`,
       };
     }
 

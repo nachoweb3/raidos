@@ -267,8 +267,12 @@ export const PairsEngine = {
       <!-- Liquidity Teleport (routing) -->
       <div class="glass-panel" style="padding:18px; margin-bottom:14px">
         <h3 style="font-size:14px; font-weight:800; margin:0 0 4px">🌀 Liquidity Teleport</h3>
-        <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:10px">
-          Busca la mejor ruta EJECUTABLE entre los dos assets (legs reales vía agregadores). Las cotizaciones son informativas y caducan; la ejecución real siempre vive en el flujo self-custody del terminal.
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px">
+          <div style="font-size:11px; color:var(--text-tertiary)">
+            Busca la mejor ruta EJECUTABLE entre los dos assets (legs reales vía agregadores). Las cotizaciones son informativas y caducan; la ejecución real siempre vive en el flujo self-custody del terminal.
+          </div>
+          <button class="btn btn-ghost btn-sm" style="flex-shrink:0; min-height:36px; min-width:36px" title="Ver la ruta inversa ${esc(shortPair(d.legs.quote.asset.id + "/" + d.legs.base.asset.id))}"
+            onclick="window.PairsEngine.checkRoute({reverse:true})">⇄ Inversa</button>
         </div>
         <div id="teleportBody">
           <button class="btn btn-secondary btn-sm" onclick="window.PairsEngine.checkRoute()">🔗 Chequear ruta ejecutable</button>
@@ -276,6 +280,8 @@ export const PairsEngine = {
       </div>
 
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px">
+        <button class="btn btn-primary btn-sm" title="ROTATE: abrir el par inverso (${esc(shortPair(d.legs.quote.asset.id + "/" + d.legs.base.asset.id))})"
+          onclick="window.PairsEngine.rotatePair()">⇄ Rotar ${esc(d.legs.quote.asset.symbol)}→${esc(d.legs.base.asset.symbol)}</button>
         <button class="btn btn-secondary btn-sm" onclick="window.PairsEngine.openPair(window.PairsEngine.currentPair,{force:true})">↻ Actualizar</button>
         <button class="btn btn-ghost btn-sm" onclick="window.PairsEngine.setView('matrix')">📊 Ver matriz relativa</button>
       </div>`;
@@ -362,12 +368,23 @@ export const PairsEngine = {
 
   /* ── Liquidity Teleport ───────────────────────────────────────────── */
 
-  async checkRoute() {
+  /** ROTATE UX: open the reversed pair (quote/base) in one tap. */
+  rotatePair() {
+    const d = this.detail;
+    if (!d) return;
+    this.openPair(`${d.legs.quote.asset.id}/${d.legs.base.asset.id}`, { force: true });
+  },
+
+  async checkRoute(opts = {}) {
     const body = document.getElementById("teleportBody");
     if (!body || !this.currentPair) return;
+    const pairId = opts.reverse
+      ? `${this.detail?.legs?.quote?.asset?.id}/${this.detail?.legs?.base?.asset?.id}`
+      : this.currentPair;
+    if (!pairId || !pairId.includes("/")) return;
     body.innerHTML = `<div style="font-size:12px; color:var(--text-tertiary)" class="loading-pulse">🌀 Buscando ruta ejecutable…</div>`;
     try {
-      const r = await ApiClient.request(`/api/pairs/route?q=${encodeURIComponent(this.currentPair)}&amountIn=1000000000`);
+      const r = await ApiClient.request(`/api/pairs/route?q=${encodeURIComponent(pairId)}&amountIn=1000000000`);
       if (r.status === "ROUTABLE") {
         const legs = r.legs.map((l, i) => `
           <div style="display:flex; align-items:center; gap:8px; padding:8px 0; ${i < r.legs.length - 1 ? "border-bottom:1px solid var(--border-subtle)" : ""}">
