@@ -382,6 +382,25 @@ export const PairsEngine = {
           <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:8px">
             Impacto total ${r.totalImpactPct != null ? r.totalImpactPct.toFixed(3) + "%" : "n/d"} · salida final ${r.minOutAmount ?? "—"} (unidades base del destino) · cotización solo informativa, sin sesión ni firma.
           </div>`;
+      } else if (r.status === "FLOOR_READY") {
+        const f = r.floor && r.floor.floor ? r.floor.floor : null;
+        const rows = f ? `
+          <div style="display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border-subtle)">
+            <span style="color:var(--text-tertiary)">Listado real</span><span style="font-weight:700; text-align:right">${esc(f.name ?? f.mint.slice(0, 8) + "…")}</span></div>
+          <div style="display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border-subtle)">
+            <span style="color:var(--text-tertiary)">Precio floor</span><span class="mono">${fmtNum(f.priceSol, 4)} SOL</span></div>
+          <div style="display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border-subtle)">
+            <span style="color:var(--text-tertiary)">Rareza</span><span class="mono">${f.rarityRank != null ? `rank #${fmtNum(f.rarityRank, 0)} (${esc(f.raritySource ?? "")})` : "sin rank en el listado"}</span></div>
+          <div style="display:flex; justify-content:space-between; gap:10px; font-size:11px; padding:6px 0">
+            <span style="color:var(--text-tertiary)">Listados vivos</span><span class="mono">${fmtNum(r.floor.listingsObserved, 0)} observados${r.floor.excludedByRarity ? ` · ${fmtNum(r.floor.excludedByRarity, 0)} excluidos por rareza` : ""}</span></div>
+          <div style="margin-top:8px"><a class="btn btn-secondary btn-sm" href="${esc(f.listingUrl)}" target="_blank" rel="noopener noreferrer">Ver en Magic Eden ↗</a></div>`
+          : `<div style="font-size:12px; color:var(--text-secondary)">${esc(r.reason || "floor no disponible")}</div>`;
+        body.innerHTML = `
+          <div style="font-size:11.5px; font-weight:800; color:#fde047; margin-bottom:8px">🟡 FLOOR READY — leg de floor observada, ejecución de compra NFT pendiente</div>
+          ${rows}
+          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:8px">
+            El floor es REAL (listados de Magic Eden) pero comprarlo exige firmar el programa on-chain de Magic Eden (API key pendiente). Esta pata NUNCA se presenta como ejecutable.
+          </div>`;
       } else {
         body.innerHTML = `
           <div style="font-size:11.5px; font-weight:800; color:#fde047; margin-bottom:6px">⛔ NO ROUTE</div>

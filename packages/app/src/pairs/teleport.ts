@@ -9,9 +9,11 @@
  * Graph edges (real liquidity only):
  *  - token→token on the same chain: quoted live via the existing TradingEngine
  *    (Jupiter on Solana, 0x v2 on Ethereum/Base, Li.Fi on Arc).
- *  - NFT collections: floor-liquidity legs are NOT executable yet (the floor
- *    pool executor is a later phase), so collections participate in the graph
- *    only as honest terminal nodes with ROUTE_PENDING liquidity.
+ *  - NFT collections: the floor leg is OBSERVED via real Magic Eden listings
+ *    (FloorLiquidityService, with a rarity guard) and reported as FLOOR_READY —
+ *    an honest middle state. Buying the floor requires signing Magic Eden's
+ *    on-chain program (gated by their API key), so a FLOOR_READY route is never
+ *    presented as executable.
  *
  * Every leg carries its own price impact; totals and fees are computed, never
  * guessed. When a hop cannot be quoted the path is reported as NOT_ROUTABLE
@@ -19,6 +21,7 @@
  */
 import { TradingEngine } from "../trading/engine.js";
 import { CHAINS } from "../chains/config.js";
+import { FloorLiquidityService, DEFAULT_MAX_RANK, type FloorSnapshot } from "./floor-liquidity.js";
 import type { PairAsset } from "./pair-engine.js";
 
 /** Canonical on-chain token per pair-asset id that is actually executable. */
@@ -33,7 +36,7 @@ export const EXECUTABLE_TOKENS: Record<string, { chain: string; mint: string; de
 
 export const INTERMEDIATE_HUBS = ["usd-coin", "wrapped-sol", "ethereum"];
 
-export type LegExecutability = "executable" | "route_pending";
+export type LegExecutability = "executable" | "floor_ready" | "route_pending";
 
 export interface TeleportLeg {
   from: string; // pair-asset id
@@ -50,19 +53,25 @@ export interface TeleportLeg {
 }
 
 export interface TeleportRoute {
-  status: "ROUTABLE" | "NO_ROUTE";
+  status: "ROUTABLE" | "FLOOR_READY" | "NO_ROUTE";
   hops: number;
   legs: TeleportLeg[];
   totalImpactPct: number | null;
   feeUsdc: string | null;
   minOutAmount?: string;
   reason?: string;
+  /** FLOOR_READY: the real observed floor listing (mint/price/rarity). */
+  floor?: FloorSnapshot | null;
 }
 
 export interface TeleportDeps {
   trading?: TradingEngine;
   /** Wallet that anchors price-only quotes (0x taker). Optional. */
   taker?: string;
+  /** Real Magic Eden listings provider (floor liquidity). Optional for tests. */
+  floors?: Pick<FloorLiquidityService, "floorFor">;
+  /** Rarity guard cap used when the API request omits maxRank. */
+  defaultMaxRank?: number;
 }
 
 /** Pair asset → executable chain token, or null when not yet tradable. */
@@ -70,13 +79,33 @@ export function executableTokenFor(asset: PairAsset): { chain: string; mint: str
   return EXECUTABLE_TOKENS[asset.id] ?? null;
 }
 
+/** Accepts 1..1,000,000; anything else falls back to the configured default. */
+export function clampMaxRank(raw: string | null | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : fallback;
+}
+// ^ maxRank = the top-N rarest pieces excluded from floor attribution.
+
+/** Honest reason when the floor leg exists but no listing passed the guard. */
+export function floorUnavailableReason(snap: FloorSnapshot, maxRank: number): string {
+  if (snap.listingsObserved === 0) return `${snap.collection}: sin listados vivos en Magic Eden ahora mismo`;
+  if (snap.excludedByRarity > 0) {
+    return `${snap.collection}: ${snap.excludedByRarity} de ${snap.listingsObserved} listados son piezas del top-${maxRank} más raras (guard de rareza) — ese "floor" no representa la salida líquida de la colección`;
+  }
+  return `${snap.collection}: ningún listado superó el guard de rareza (top ${maxRank} más raras excluidas)`;
+}
+
 export class TeleportEngine {
   private readonly trading: TradingEngine;
   private readonly taker?: string;
+  private readonly floors: Pick<FloorLiquidityService, "floorFor"> | null;
+  private readonly defaultMaxRank: number;
 
   constructor(deps: TeleportDeps = {}) {
     this.trading = deps.trading ?? new TradingEngine();
     this.taker = deps.taker;
+    this.floors = deps.floors ?? null;
+    this.defaultMaxRank = deps.defaultMaxRank ?? DEFAULT_MAX_RANK;
   }
 
   /** Quote one token→token leg live through the existing trading stack. */
@@ -118,12 +147,30 @@ export class TeleportEngine {
    * Find the best path base→quote: direct leg first, then one hub
    * (base→hub→quote). Depth is capped at 2 hops — deeper paths multiply
    * slippage and fee opacity without adding real reach here.
+   *
+   * `maxRankRaw` (raw query param) feeds the NFT rarity guard for floor legs.
    */
-  async findRoute(base: PairAsset, quote: PairAsset, amountIn: string): Promise<TeleportRoute> {
+  async findRoute(base: PairAsset, quote: PairAsset, amountIn: string, maxRankRaw?: string | null): Promise<TeleportRoute> {
     const a = executableTokenFor(base);
     const b = executableTokenFor(quote);
 
     if (!a || !b) {
+      // NFT collections get an honest middle state: the floor leg EXISTS
+      // (verified against real Magic Eden listings) and the rarity guard is
+      // enforced — but buying the floor requires signing Magic Eden's on-chain
+      // program (gated by their API key), so execution stays disabled and the
+      // route can never be presented as executable.
+      if (!a && base.kind === "nft_collection") {
+        const maxRank = clampMaxRank(maxRankRaw, this.defaultMaxRank);
+        if (!this.floors) {
+          return {
+            status: "NO_ROUTE", hops: 0, legs: [], totalImpactPct: null, feeUsdc: null,
+            reason: `${base.symbol}: proveedor de floor no configurado`,
+          };
+        }
+        const snap = await this.floors.floorFor(base.id, maxRank);
+        return this.floorReadyRoute(base, quote, maxRank, snap);
+      }
       return {
         status: "NO_ROUTE",
         hops: 0,
@@ -131,7 +178,7 @@ export class TeleportEngine {
         totalImpactPct: null,
         feeUsdc: null,
         reason: !a && !b ? "ninguna pata es ejecutable todavía (floor liquidity y fractionalization en fases siguientes)"
-          : !a ? `${base.symbol}: ejecución de floor NFT no habilitada todavía`
+          : !a ? `${base.symbol}: sin mercado ejecutable conocido`
           : `${quote.symbol}: sin mercado ejecutable conocido`,
       };
     }
@@ -166,6 +213,40 @@ export class TeleportEngine {
     };
   }
 
+  /**
+   * FLOOR_READY only when a real listing passed the rarity guard; otherwise
+   * NO_ROUTE with the named reason and the observed snapshot attached — never
+   * a "ready" label without a real floor behind it.
+   */
+  private floorReadyRoute(base: PairAsset, quote: PairAsset, maxRank: number, snap: FloorSnapshot): TeleportRoute {
+    const floor = snap.floor;
+    if (!floor) {
+      return {
+        status: "NO_ROUTE",
+        hops: 0,
+        legs: [],
+        totalImpactPct: null,
+        feeUsdc: null,
+        floor: snap,
+        reason: floorUnavailableReason(snap, maxRank),
+      };
+    }
+    return {
+      status: "FLOOR_READY",
+      hops: 1,
+      legs: [{
+        from: base.id,
+        to: quote.id,
+        kind: "floor_ready",
+        chain: base.chain ?? "solana",
+        error: "ejecución de compra NFT no habilitada: requiere firmar el programa on-chain de Magic Eden (API key pendiente)",
+      }],
+      floor: snap,
+      totalImpactPct: null,
+      feeUsdc: null,
+    };
+  }
+
   private finish(legs: TeleportLeg[]): TeleportRoute {
     const totalImpactPct = legs.every((l) => l.priceImpactPct != null)
       ? legs.reduce((s, l) => s + (l.priceImpactPct ?? 0), 0)
@@ -183,3 +264,6 @@ export class TeleportEngine {
     };
   }
 }
+
+// FloorLiquidityService is re-exported for API wiring convenience.
+export { FloorLiquidityService };

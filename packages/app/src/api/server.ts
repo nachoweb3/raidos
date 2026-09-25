@@ -16,6 +16,7 @@ import { SocialEngine } from "../social/engine.js";
 import { PairService, ALL_ASSETS, parsePairId, resolveAsset } from "../pairs/pair-service.js";
 import { PairPriceService } from "../pairs/pair-prices.js";
 import { TeleportEngine } from "../pairs/teleport.js";
+import { FloorLiquidityService } from "../pairs/floor-liquidity.js";
 import { RATING_FORMULA_VERSION, RATING_WEIGHTS, MIN_TRADES_FOR_SCORE } from "../social/rating.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, extname, resolve } from "node:path";
@@ -147,6 +148,7 @@ export class ApiServer {
   private pairs!: PairService;
   private pairPrices!: PairPriceService;
   private teleport!: TeleportEngine;
+  private readonly floors: FloorLiquidityService;
   private pairTimer: NodeJS.Timeout | null = null;
   constructor(options: ServerOptions) {
     this.appMode = options.appMode ?? ((process.env.APP_MODE as "live" | "mock") ?? "mock");
@@ -180,7 +182,8 @@ export class ApiServer {
     this.socialEngine = new SocialEngine(this.db, this.db.marketCatalog, this.marketData);
     this.pairPrices = new PairPriceService(this.db);
     this.pairs = new PairService(this.pairPrices, () => null);
-    this.teleport = new TeleportEngine();
+    this.floors = new FloorLiquidityService();
+    this.teleport = new TeleportEngine({ floors: this.floors });
 
     this.registerRoutes();
   }
@@ -2277,7 +2280,8 @@ export class ApiServer {
       if (!base || !quote) throw new HttpError(404, "unknown asset");
       const amountIn = ctx.query.get("amountIn") ?? "1000000"; // leg units of the base asset
       if (!/^[0-9]{1,30}$/.test(amountIn)) throw new HttpError(400, "invalid amountIn (smallest units, base asset)");
-      void this.teleport.findRoute(base, quote, amountIn).then(
+      const maxRank = ctx.query.get("maxRank"); // NFT rarity guard (floor legs)
+      void this.teleport.findRoute(base, quote, amountIn, maxRank).then(
         (route) => sendJson(ctx.res, 200, { pairId: `${base.id}/${quote.id}`, amountIn, ...route, mode: this.appMode }),
         (err: unknown) => sendJson(ctx.res, 503, { error: err instanceof Error ? err.message : "routing unavailable" }),
       );

@@ -71,6 +71,62 @@ describe("Liquidity Teleport", () => {
     void USDC;
   });
 
+  it("FLOOR_READY exposes the real floor listing (mint, price, rarity) and is never executable", async () => {
+    const floors = {
+      floorFor: async (collection: string, maxRank: number) => {
+        expect(collection).toBe("mad_lads");
+        expect(maxRank).toBe(250); // clamped from "abc" → default top-250 rarest guard
+        return {
+          collection,
+          floor: {
+            mint: "2LKR1YLVmZaWqfaQBrfhgDR6wiH2A74jxAVdNKrUsSFL", priceSol: 9.5247, priceLamports: "9524700000",
+            name: "Mad Lads #4591", rarityRank: 2816, raritySource: "meInstant" as const,
+            collection, listingUrl: `https://magiceden.io/item-details/2LKR1YLVmZaWqfaQBrfhgDR6wiH2A74jxAVdNKrUsSFL`,
+          },
+          listingsObserved: 3, excludedByRarity: 0, source: "magiceden" as const, observedAt: 1_700_000_000,
+        };
+      },
+    };
+    const engine = new TeleportEngine({ floors: floors as any });
+    const route = await engine.findRoute(MAD, SOL, "1", "abc");
+    expect(route.status).toBe("FLOOR_READY");
+    expect(route.hops).toBe(1);
+    expect(route.legs[0]!.kind).toBe("floor_ready");
+    expect(route.legs[0]!.error).toContain("no habilitada");
+    expect(route.floor?.floor?.mint).toBe("2LKR1YLVmZaWqfaQBrfhgDR6wiH2A74jxAVdNKrUsSFL");
+    expect(route.floor?.floor?.rarityRank).toBe(2816);
+    expect(route.minOutAmount).toBeUndefined();
+    expect(route.totalImpactPct).toBeNull();
+  });
+
+  it("rarity guard excludes expensive-rank listings: NO_ROUTE with named reason and observed snapshot", async () => {
+    const floors = {
+      floorFor: async (collection: string, maxRank: number) => {
+        expect(maxRank).toBe(500);
+        return {
+          collection,
+          floor: null,
+          listingsObserved: 7, excludedByRarity: 2, source: "magiceden" as const, observedAt: 1_700_000_000,
+        };
+      },
+    };
+    const engine = new TeleportEngine({ floors: floors as any });
+    const route = await engine.findRoute(MAD, SOL, "1", "500");
+    expect(route.status).toBe("NO_ROUTE");
+    expect(route.reason).toContain("guard de rareza");
+    expect(route.reason).toContain("top-500");
+    expect(route.floor?.listingsObserved).toBe(7);
+    expect(route.floor?.excludedByRarity).toBe(2);
+    expect(route.legs).toHaveLength(0);
+  });
+
+  it("floor provider not configured → honest NO_ROUTE (no fake ready state)", async () => {
+    const engine = new TeleportEngine();
+    const route = await engine.findRoute(MAD, SOL, "1");
+    expect(route.status).toBe("NO_ROUTE");
+    expect(route.reason).toContain("proveedor de floor");
+  });
+
   it("falls back to hub when the direct leg fails, chaining amountOut → next amountIn", async () => {
     // A non-hub executable token so the hub path exists (both SOL and USDC are
     // themselves hubs; a direct failure between them leaves no fallback).
