@@ -228,6 +228,16 @@ export const ApiClient = {
     return (data.following ?? []).map((a) => a.userId);
   },
 
+  /** Full social actors the authenticated user follows. */
+  async getMyFollowing() {
+    return this.request("/api/users/me/following?limit=100");
+  },
+
+  /** Social actors that follow the authenticated user. */
+  async getMyFollowers() {
+    return this.request("/api/users/me/followers?limit=100");
+  },
+
   async getWallets() {
     return this.request("/api/wallets");
   },

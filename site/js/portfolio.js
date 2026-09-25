@@ -38,6 +38,8 @@ export const PortfolioEngine = {
   profile: null,
   pnl: null,
   wallets: [],
+  following: [],
+  followers: [],
   loading: false,
   loadedOnce: false,
 
@@ -180,12 +182,15 @@ export const PortfolioEngine = {
       }
 
       // Portfolio snapshot (PnL + holdings + positions) in one call; profile,
-      // trades and wallets may fail independently without killing the view.
-      const [portfolioRes, profileRes, tradesRes, walletsRes] = await Promise.all([
+      // trades, wallets and the social graph may fail independently without
+      // killing the view.
+      const [portfolioRes, profileRes, tradesRes, walletsRes, followingRes, followersRes] = await Promise.all([
         ApiClient.getPortfolio(),
         ApiClient.getMyProfile().catch(() => null),
         ApiClient.getTrades(50).catch(() => ({ trades: [] })),
         ApiClient.getWallets().catch(() => ({ wallets: [] })),
+        ApiClient.getMyFollowing().catch(() => ({ following: [] })),
+        ApiClient.getMyFollowers().catch(() => ({ followers: [] })),
       ]);
 
       this.pnl = portfolioRes?.pnl ?? null;
@@ -194,6 +199,8 @@ export const PortfolioEngine = {
       this.profile = profileRes?.profile ?? null;
       this.trades = tradesRes?.trades ?? [];
       this.wallets = walletsRes?.wallets ?? [];
+      this.following = followingRes?.following ?? [];
+      this.followers = followersRes?.followers ?? [];
       this.loadedOnce = true;
       this.render();
     } catch (e) {
@@ -352,6 +359,7 @@ export const PortfolioEngine = {
       </div>`;
 
     this.appendHoldings();
+    this.appendSocial();
     this.appendOnchainBalances();
     this.appendPositions();
     this.appendTrades();
@@ -422,6 +430,74 @@ export const PortfolioEngine = {
       }
     );
     this.target().appendChild(panel);
+  },
+
+  /* ── 🧑‍🤝‍🧑 Social graph (followers / following, persisted server-side) ── */
+
+  appendSocial() {
+    const el = this.target();
+    if (!el) return;
+    const wrap = document.createElement("div");
+    wrap.className = "glass-panel";
+    wrap.style.cssText = "padding:24px; margin-bottom:20px";
+    const fCount = Number(this.profile?.followersCount ?? 0);
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:10px; flex-wrap:wrap">
+        <h3 style="font-size:15px; font-weight:800; margin:0">🧑‍🤝‍🧑 Tu Red</h3>
+        <span class="mono" style="font-size:11.5px; color:var(--text-tertiary)">
+          ${fCount} seguidor${fCount === 1 ? "" : "es"} · ${this.following.length} siguiendo
+        </span>
+      </div>`;
+
+    const section = (title, actors, emptyText) => {
+      const box = document.createElement("div");
+      box.style.cssText = "margin-bottom:14px";
+      box.innerHTML = `<div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin-bottom:8px">${title}</div>`;
+      if (!actors.length) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "font-size:12.5px; color:var(--text-tertiary)";
+        empty.textContent = emptyText;
+        box.appendChild(empty);
+        return box;
+      }
+      const list = document.createElement("div");
+      list.style.cssText = "display:flex; flex-wrap:wrap; gap:8px";
+      for (const a of actors.slice(0, 24)) {
+        const chip = document.createElement("div");
+        chip.style.cssText =
+          "display:flex; align-items:center; gap:8px; padding:8px 12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:999px";
+        const initials = String(a.displayName || "?").slice(0, 2).toUpperCase();
+        const avatar = a.avatarUrl
+          ? `<img src="${escHtml(a.avatarUrl)}" alt="" referrerpolicy="no-referrer" style="width:22px; height:22px; border-radius:50%; object-fit:cover">`
+          : `<div style="width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:9.5px; font-weight:800; display:flex; align-items:center; justify-content:center">${escHtml(initials)}</div>`;
+        const pnl = a.totalPnlUsdc != null ? signedUsdMicro(a.totalPnlUsdc) : "";
+        chip.innerHTML = `
+          ${avatar}
+          <div style="min-width:0">
+            <div style="font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:120px">${escHtml(a.displayName)}</div>
+            <div class="mono" style="font-size:9.5px; color:var(--text-tertiary)">${escHtml(a.handle)}${pnl ? ` · ${pnl}` : ""}</div>
+          </div>`;
+        list.appendChild(chip);
+      }
+      box.appendChild(list);
+      return box;
+    };
+
+    wrap.appendChild(
+      section(
+        "Siguiendo",
+        this.following,
+        "No sigues a nadie todavía. Sigue traders desde el Leaderboard y aparecerán aquí — se guarda en tu cuenta, no en este dispositivo."
+      )
+    );
+    wrap.appendChild(
+      section(
+        "Seguidores",
+        this.followers,
+        "Sin seguidores aún. Publica tesis y opera con fills verificados para aparecer en el ranking."
+      )
+    );
+    el.appendChild(wrap);
   },
 
   /* ── 💰 On-chain balances (read-only scan of the user's wallets) ── */
