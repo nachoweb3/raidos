@@ -15,6 +15,7 @@ import { registerMarketCatalogRoutes } from "../market/routes.js";
 import { SocialEngine } from "../social/engine.js";
 import { PairService, ALL_ASSETS, parsePairId, resolveAsset } from "../pairs/pair-service.js";
 import { PairPriceService } from "../pairs/pair-prices.js";
+import { TeleportEngine } from "../pairs/teleport.js";
 import { RATING_FORMULA_VERSION, RATING_WEIGHTS, MIN_TRADES_FOR_SCORE } from "../social/rating.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, extname, resolve } from "node:path";
@@ -145,6 +146,7 @@ export class ApiServer {
   private socialEngine!: SocialEngine;
   private pairs!: PairService;
   private pairPrices!: PairPriceService;
+  private teleport!: TeleportEngine;
   private pairTimer: NodeJS.Timeout | null = null;
   constructor(options: ServerOptions) {
     this.appMode = options.appMode ?? ((process.env.APP_MODE as "live" | "mock") ?? "mock");
@@ -178,6 +180,7 @@ export class ApiServer {
     this.socialEngine = new SocialEngine(this.db, this.db.marketCatalog, this.marketData);
     this.pairPrices = new PairPriceService(this.db);
     this.pairs = new PairService(this.pairPrices, () => null);
+    this.teleport = new TeleportEngine();
 
     this.registerRoutes();
   }
@@ -2259,6 +2262,24 @@ export class ApiServer {
           const msg = err instanceof Error ? err.message : "pair unavailable";
           sendJson(ctx.res, /unknown asset|invalid/.test(msg) ? 404 : 503, { error: msg });
         },
+      );
+    });
+
+    // Liquidity Teleport: best EXECUTABLE path between two pair assets.
+    // Price-only quotes (no session, no keys moved); execution continues to
+    // live exclusively in the self-custody prepare/submit flow.
+    this.router.publicRoute("GET", "/api/pairs/route", (ctx) => {
+      const raw = ctx.query.get("q") ?? "";
+      const parsed = parsePairId(raw);
+      if (!parsed) throw new HttpError(400, "expected base/quote (e.g. MAD/SOL)");
+      const base = resolveAsset(parsed.baseId);
+      const quote = resolveAsset(parsed.quoteId);
+      if (!base || !quote) throw new HttpError(404, "unknown asset");
+      const amountIn = ctx.query.get("amountIn") ?? "1000000"; // leg units of the base asset
+      if (!/^[0-9]{1,30}$/.test(amountIn)) throw new HttpError(400, "invalid amountIn (smallest units, base asset)");
+      void this.teleport.findRoute(base, quote, amountIn).then(
+        (route) => sendJson(ctx.res, 200, { pairId: `${base.id}/${quote.id}`, amountIn, ...route, mode: this.appMode }),
+        (err: unknown) => sendJson(ctx.res, 503, { error: err instanceof Error ? err.message : "routing unavailable" }),
       );
     });
 

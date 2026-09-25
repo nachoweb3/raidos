@@ -264,6 +264,17 @@ export const PairsEngine = {
       <!-- Intelligence -->
       ${this.intelligenceHtml(d.intelligence, d.legs.base.asset.symbol)}
 
+      <!-- Liquidity Teleport (routing) -->
+      <div class="glass-panel" style="padding:18px; margin-bottom:14px">
+        <h3 style="font-size:14px; font-weight:800; margin:0 0 4px">🌀 Liquidity Teleport</h3>
+        <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:10px">
+          Busca la mejor ruta EJECUTABLE entre los dos assets (legs reales vía agregadores). Las cotizaciones son informativas y caducan; la ejecución real siempre vive en el flujo self-custody del terminal.
+        </div>
+        <div id="teleportBody">
+          <button class="btn btn-secondary btn-sm" onclick="window.PairsEngine.checkRoute()">🔗 Chequear ruta ejecutable</button>
+        </div>
+      </div>
+
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px">
         <button class="btn btn-secondary btn-sm" onclick="window.PairsEngine.openPair(window.PairsEngine.currentPair,{force:true})">↻ Actualizar</button>
         <button class="btn btn-ghost btn-sm" onclick="window.PairsEngine.setView('matrix')">📊 Ver matriz relativa</button>
@@ -347,6 +358,40 @@ export const PairsEngine = {
 
   kindLabel(kind) {
     return { token: "TOKEN", nft_collection: "NFT COLLECTION", fractional_nft: "FRACTIONAL NFT", index: "INDEX", vault: "VAULT", tokenized_asset: "TOKENIZED ASSET" }[kind] || String(kind).toUpperCase();
+  },
+
+  /* ── Liquidity Teleport ───────────────────────────────────────────── */
+
+  async checkRoute() {
+    const body = document.getElementById("teleportBody");
+    if (!body || !this.currentPair) return;
+    body.innerHTML = `<div style="font-size:12px; color:var(--text-tertiary)" class="loading-pulse">🌀 Buscando ruta ejecutable…</div>`;
+    try {
+      const r = await ApiClient.request(`/api/pairs/route?q=${encodeURIComponent(this.currentPair)}&amountIn=1000000000`);
+      if (r.status === "ROUTABLE") {
+        const legs = r.legs.map((l, i) => `
+          <div style="display:flex; align-items:center; gap:8px; padding:8px 0; ${i < r.legs.length - 1 ? "border-bottom:1px solid var(--border-subtle)" : ""}">
+            <span style="font-size:11px; font-weight:800; color:var(--text-tertiary)">${i + 1}.</span>
+            <span class="mono" style="font-size:11.5px; font-weight:700">${esc(shortPair(l.from + "/" + l.to))}</span>
+            <span style="flex:1"></span>
+            <span class="mono" style="font-size:11px; color:var(--text-tertiary)">${esc(l.venue ?? "")} · impacto ${l.priceImpactPct != null ? l.priceImpactPct.toFixed(3) + "%" : "n/d"}</span>
+          </div>`).join("");
+        body.innerHTML = `
+          <div style="font-size:11.5px; font-weight:800; color:var(--delta-green); margin-bottom:8px">✅ ROUTABLE — ${r.hops} leg${r.hops === 1 ? "" : "s"} ejecutable${r.hops === 1 ? "" : "s"}</div>
+          ${legs}
+          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:8px">
+            Impacto total ${r.totalImpactPct != null ? r.totalImpactPct.toFixed(3) + "%" : "n/d"} · salida final ${r.minOutAmount ?? "—"} (unidades base del destino) · cotización solo informativa, sin sesión ni firma.
+          </div>`;
+      } else {
+        body.innerHTML = `
+          <div style="font-size:11.5px; font-weight:800; color:#fde047; margin-bottom:6px">⛔ NO ROUTE</div>
+          <div style="font-size:12px; color:var(--text-secondary)">${esc(r.reason || "sin ruta ejecutable")}</div>
+          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:6px">El par sigue siendo útil como mercado analítico sintético — pero no se puede ejecutar todavía.</div>`;
+      }
+    } catch (e) {
+      body.innerHTML = `<div style="font-size:12px; color:var(--delta-red)">Routing no disponible: ${esc(e?.message || "error")}</div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="window.PairsEngine.checkRoute()">Reintentar</button>`;
+    }
   },
 
   /* ── Chart (Lightweight Charts, same stack as the terminal) ───────── */
