@@ -34,6 +34,8 @@ export interface PairAsset {
   symbol: string;
   name: string;
   image?: string | null;
+  /** fractional_nft only: collection symbol the fractions claim to represent. */
+  underlyingCollection?: string;
 }
 
 export interface PairDNA {
@@ -42,12 +44,12 @@ export interface PairDNA {
   pairMode: PairMode;
   liquidityModel: PairLiquidityModel;
   backingModel: PairBackingModel;
-  /** Real vault identity only when backing is verified; null otherwise. */
-  vault: null;
+  /** Real vault identity ONLY when a fractional protocol is verified; null otherwise. */
+  vault: string | null;
   /** Named oracle sources, e.g. "magiceden+coingecko" or "coingecko". */
   oracle: string;
-  /** Reserved for the fractional layer identity; "none" today. */
-  fractionalization: "none";
+  /** "none" until a fractionalization protocol is verified live; else "protocol:<id>". */
+  fractionalization: string;
   routing: "none" | "teleport";
   fees: { platformBps: number };
   restrictions: string[];

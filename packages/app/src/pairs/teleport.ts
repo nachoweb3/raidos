@@ -22,6 +22,7 @@
 import { TradingEngine } from "../trading/engine.js";
 import { CHAINS } from "../chains/config.js";
 import { FloorLiquidityService, DEFAULT_MAX_RANK, type FloorSnapshot } from "./floor-liquidity.js";
+import { hasVerifiedVault } from "./pair-fractional.js";
 import type { PairAsset } from "./pair-engine.js";
 
 /** Canonical on-chain token per pair-asset id that is actually executable. */
@@ -170,6 +171,20 @@ export class TeleportEngine {
         }
         const snap = await this.floors.floorFor(base.id, maxRank);
         return this.floorReadyRoute(base, quote, maxRank, snap);
+      }
+      // Fractional legs without a verified vault never route — the reason says
+      // exactly what is missing (registry in pair-fractional.ts is the truth).
+      if (!a && base.kind === "fractional_nft" && !hasVerifiedVault(base)) {
+        return {
+          status: "NO_ROUTE", hops: 0, legs: [], totalImpactPct: null, feeUsdc: null,
+          reason: `${base.symbol}: fractionalization sin protocolo verificado en vivo — no hay vault ni backing real`,
+        };
+      }
+      if (!b && quote.kind === "fractional_nft" && !hasVerifiedVault(quote)) {
+        return {
+          status: "NO_ROUTE", hops: 0, legs: [], totalImpactPct: null, feeUsdc: null,
+          reason: `${quote.symbol}: fractionalization sin protocolo verificado en vivo — no hay vault ni backing real`,
+        };
       }
       // Quote-side NFT (e.g. SOL/MAD): selling the floor also requires signing
       // Magic Eden's program — name that instead of a generic "no market".

@@ -246,6 +246,8 @@ export const PairsEngine = {
           ${this.dnaRow("BACKING", "NONE — sin vault verificado")}
           ${this.dnaRow("ORÁCULO", esc(d.dna.oracle))}
           ${this.dnaRow("LIQUIDEZ", esc(d.dna.liquidityModel))}
+          ${this.dnaRow("FRACTIONAL", esc(d.dna.fractionalization ?? "none"))}
+          ${this.dnaRow("VAULT", d.dna.vault ? esc(d.dna.vault) : "null — sin vault verificado")}
           ${this.dnaRow("ROUTING", "no routable todavía")}
         </div>
         <div style="margin-top:10px; font-size:11px; color:${d.pairMode === "direct" ? "var(--text-secondary)" : "#fde047"}">
