@@ -196,41 +196,6 @@
       margin-bottom: 32px;
     }
 
-    .waitlist-form {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      max-width: 460px;
-      background: rgba(255, 255, 255, 0.035);
-      border: 1px solid var(--border-mid);
-      border-radius: var(--radius-xl);
-      padding: 6px 6px 6px 16px;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      box-shadow: var(--shadow-card);
-      transition: border-color var(--transition-fast);
-    }
-
-    .waitlist-form:focus-within {
-      border-color: var(--border-focus);
-      background: rgba(255, 255, 255, 0.06);
-    }
-
-    .waitlist-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      color: #ffffff;
-      font-size: 14px;
-      padding: 6px 0;
-    }
-
-    .waitlist-input::placeholder {
-      color: var(--text-muted);
-    }
-
     .waitlist-stats {
       display: flex;
       align-items: center;
@@ -241,19 +206,6 @@
     }
 
     .waitlist-stats strong {
-      color: #ffffff;
-    }
-
-    .invite-link {
-      font-size: 12px;
-      color: var(--text-tertiary);
-      cursor: pointer;
-      text-decoration: underline;
-      text-underline-offset: 4px;
-      transition: color var(--transition-fast);
-    }
-
-    .invite-link:hover {
       color: #ffffff;
     }
 
@@ -664,8 +616,7 @@
     </nav>
 
     <div style="display:flex; align-items:center; gap:12px">
-      <a class="btn btn-ghost btn-sm" href="app.html">Entrar ahora →</a>
-      <a class="btn btn-primary btn-sm" href="app.html">Abrir mercado</a>
+      <a class="btn btn-primary btn-sm" href="app.html">Abrir la app →</a>
     </div>
   </header>
 
@@ -687,18 +638,15 @@
       Abre un gráfico. Explora las compras y ventas de las wallets del pool, filtra su actividad y comprueba cada transacción en la cadena. Tu próximo análisis empieza aquí.
     </p>
 
-    <!-- Waitlist Capture Form -->
+    <!-- Un solo CTA primario: sin competencias en el hero -->
     <div class="hero-actions">
-      <button class="btn btn-primary" data-install-app type="button">Instalar en Android / iPhone</button>
-      <a class="btn btn-primary" href="app.html" style="min-height:52px;padding:16px 28px">Entrar al terminal</a>
-      <a class="btn btn-primary" href="app.html" style="min-height:52px;padding:16px 28px">Crear cuenta gratis y operar →</a>
+      <a class="btn btn-primary" href="app.html" style="min-height:52px;padding:16px 32px;font-size:16px">Crear cuenta gratis y operar →</a>
+      <button class="btn btn-ghost" data-install-app type="button" style="min-height:52px;padding:16px 24px">Instalar la app</button>
 
       <div class="waitlist-stats">
         <span class="status-dot" style="background:#22c55e; box-shadow:0 0 8px #22c55e"></span>
         <span>Registro abierto · Cashback + referidos: hasta el 20% del fee de vuelta en USDC</span>
       </div>
-
-      <a class="invite-link" href="app.html">Explorar tokens, pools y gráficos reales →</a>
     </div>
 
     <!-- ── INTERACTIVE PRODUCT MOCKUP ── -->
@@ -770,8 +718,8 @@
               <span style="color:var(--text-tertiary)">SLIPPAGE: <strong style="color:#fff">0.3%</strong></span>
             </div>
             <div class="order-actions">
-              <button class="btn btn-primary" onclick="openInviteModal()">BUY / LONG</button>
-              <button class="btn btn-secondary" onclick="openInviteModal()">SELL / SHORT</button>
+              <a class="btn btn-primary" href="app.html">BUY / LONG</a>
+              <a class="btn btn-secondary" href="app.html">SELL / SHORT</a>
             </div>
           </div>
         </div>
@@ -907,86 +855,11 @@
     </div>
   </footer>
 
-  <!-- ── CLOSED BETA ACCESS CODE MODAL ── -->
-  <div class="modal-backdrop" id="inviteModal">
-    <div class="modal-window" style="padding:32px">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">      <h3 style="font-size:18px; font-weight:800">Acceso a TRENCHES</h3>
-      <button class="btn btn-ghost btn-sm" onclick="closeInviteModal()">✕</button>
-      </div>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:20px; line-height:1.5">
-        El registro está abierto: entra directamente con tu wallet, Google o X. Si llegaste con un código de invitación, verifícalo aquí.
-      </p>
-
-      <form onsubmit="handleAccessCodeSubmit(event)" style="display:flex; flex-direction:column; gap:14px">
-        <input type="text" id="accessCodeInput" placeholder="Código de invitación" style="width:100%; text-transform:uppercase" required>
-        <div id="accessCodeError" style="font-size:12px; color:var(--delta-red); display:none"></div>
-        <button type="submit" class="btn btn-primary btn-lg" id="accessCodeBtn">ACCEDER A LA APLICACIÓN</button>
-      </form>
-
-      <div style="margin-top:20px; padding-top:18px; border-top:1px solid var(--border-subtle); text-align:center">
-        <p style="font-size:12px; color:var(--text-tertiary)">
-          ¿Aún no tienes cuenta? <a href="app.html" style="color:#fff; font-weight:600">Entrar a la aplicación →</a>
-        </p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── SUCCESS MODAL (VIRAL WAITLIST LOOP) ── -->
-  <div class="modal-backdrop" id="successModal">
-    <div class="modal-window" style="padding:32px; text-align:center">
-      <div style="width:52px; height:52px; border-radius:50%; background:rgba(34,197,94,0.12); border:1px solid rgba(34,197,94,0.35); display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px; color:var(--delta-green)">
-        ✓
-      </div>
-      <h3 style="font-size:22px; font-weight:900; margin-bottom:6px">¡Estás en la lista!</h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:18px">
-        Tu solicitud para el <strong>Batch 01</strong> ha sido confirmada con éxito.
-      </p>
-
-      <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); padding:16px; margin-bottom:20px; font-family:var(--font-mono)">
-        <div style="font-size:11px; color:var(--text-tertiary); letter-spacing:1px; text-transform:uppercase">TU POSICIÓN EN LA COLA</div>
-        <div style="font-size:28px; font-weight:900; color:#ffffff; margin:4px 0" id="userWaitlistPos">#1,421</div>
-        <div style="font-size:11px; color:var(--text-secondary); margin-top:6px">
-          Código de referencia: <strong style="color:#fff" id="userRefCode">TRENCHES</strong>
-        </div>
-      </div>
-
-      <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px">
-        <button class="btn btn-primary btn-lg" onclick="shareOnX()" style="width:100%; gap:8px">
-          <span>𝕏</span> Compartir en X (+10 puestos en la cola)
-        </button>
-        <button class="btn btn-secondary" onclick="copyInviteLink()" style="width:100%" id="copyLinkBtn">
-          Copiar enlace de invitación
-        </button>
-      </div>
-
-      <p style="font-size:11px; color:var(--text-tertiary); margin-bottom:16px">
-        Diseñado por <a href="https://x.com/nacho_web3_" target="_blank" style="color:#fff; font-weight:600">@nacho_web3_</a> · Cada trader que use tu enlace acelera tu acceso al Batch 01.
-      </p>
-      <button class="btn btn-ghost btn-sm" onclick="closeSuccessModal()">Cerrar</button>
-    </div>
-  </div>
+  <!-- ── MODALES DE BETA/WAITLIST ELIMINADOS: eran relicarios muertos
+       ("Batch 01", "posición #1,421 en la cola", código de invitación) sin
+       formulario vivo que los invocara. El registro es abierto en app.html. ── -->
 
   <script>
-    const API_BASE = ["localhost", "127.0.0.1"].includes(location.hostname)
-      ? location.origin : "https://raidos-api.fly.dev";
-
-    // Fetch live waitlist count on load — the real number, no inflated base
-    async function loadWaitlistCount() {
-      try {
-        const res = await fetch(API_BASE + '/api/waitlist/count');
-        if (res.ok) {
-          const data = await res.json();
-          const countEl = document.getElementById('waitlistCount');
-          if (countEl && Number.isFinite(Number(data.count))) {
-            countEl.textContent = Number(data.count).toLocaleString();
-          }
-        }
-      } catch (e) {
-        // keep the '—' placeholder; never show an invented count
-      }
-    }
-    loadWaitlistCount();
-
     // ── Real market data for the product mockup (CoinGecko, public API) ──
     const LANDING_IDS = ['solana','ethereum','brett','virtuals','pendle','binancecoin','bonk'];
     async function loadLandingMarketData() {
@@ -1054,155 +927,6 @@
         </div>`).join('');
     }
     loadLandingMarketData();
-
-    // Handle waitlist submission
-    async function handleWaitlistSubmit(e) {
-      e.preventDefault();
-      const form = e.target;
-      const input = form.querySelector('input[type="email"]');
-      const email = input ? input.value.trim() : '';
-      if (!email) return;
-
-      const btn = form.querySelector('button[type="submit"]');
-      const originalText = btn.textContent;
-      btn.textContent = 'REGISTRANDO...';
-      btn.disabled = true;
-
-      try {
-        const res = await fetch(API_BASE + '/api/waitlist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          input.value = '';
-          const pos = Number(data.position) || null;
-          const ref = data.refCode || 'TRENCHES';
-          window.lastWaitlistData = { pos, ref };
-          const posEl = document.getElementById('userWaitlistPos');
-          const refEl = document.getElementById('userRefCode');
-          if (posEl && pos) posEl.textContent = '#' + pos.toLocaleString();
-          if (refEl) refEl.textContent = ref;
-          openSuccessModal();
-          loadWaitlistCount();
-        } else {
-          alert(data.error || 'Error al registrarte en la lista de espera');
-        }
-      } catch (err) {
-        openSuccessModal();
-      } finally {
-        btn.textContent = originalText;
-        btn.disabled = false;
-      }
-    }
-
-    function shareOnX() {
-      const ref = window.lastWaitlistData?.ref || 'TRENCHES';
-      const text = encodeURIComponent(`Acabo de unirme al early access de TRENCHES — The social network for markets creada por @nacho_web3_.\n\nDescubre alpha, analiza y opera en tiempo real desde un único ecosistema.\n\nÚnete a la waitlist aquí: https://inusaur.online/?ref=${ref}`);
-      window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
-    }
-
-    function copyInviteLink() {
-      const ref = window.lastWaitlistData?.ref || 'TRENCHES';
-      const url = `https://inusaur.online/?ref=${ref}`;
-      navigator.clipboard.writeText(url).then(() => {
-        const btn = document.getElementById('copyLinkBtn');
-        if (btn) {
-          btn.textContent = '¡Enlace Copiado al Portapapeles!';
-          setTimeout(() => { btn.textContent = 'Copiar enlace de invitación'; }, 2500);
-        }
-      }).catch(() => {
-        prompt('Copia tu enlace de invitación:', url);
-      });
-    }
-
-    // Handle invite access code verification
-    async function handleAccessCodeSubmit(e) {
-      e.preventDefault();
-      const input = document.getElementById('accessCodeInput');
-      const code = input ? input.value.trim() : '';
-      const errEl = document.getElementById('accessCodeError');
-      const btn = document.getElementById('accessCodeBtn');
-
-      errEl.style.display = 'none';
-      btn.textContent = 'VERIFICANDO...';
-      btn.disabled = true;
-
-      const verify = async (base) => {
-        const res = await fetch(base + '/api/auth/access-code', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code })
-        });
-        return { res, data: await res.json().catch(() => ({})) };
-      };
-      try {
-        let { res, data } = await verify(API_BASE);
-        // Self-heal: a stale/undreachable raidos_api_base in localStorage
-        // (e.g. left over from ?api= dev usage) makes every attempt throw.
-        // On network failure, drop it and retry against the default API.
-        if (!res) throw new Error('network');
-        if (res.status === 0 || (!res.ok && !data.error)) {
-          // fallthrough to catch-like retry below is handled via response shape
-        }
-        if (!res.ok && !data.error && localStorage.getItem('raidos_api_base')) {
-          localStorage.removeItem('raidos_api_base');
-          ({ res, data } = await verify('https://raidos-api.fly.dev'));
-        }
-        if (res.ok && data.valid) {
-          // Store token and grant access to the full app
-          sessionStorage.setItem('trenches_beta_unlocked', '1');
-          window.location.href = 'app.html';
-        } else {
-          errEl.textContent = data.error || 'Código de invitación no válido.';
-          errEl.style.display = 'block';
-        }
-      } catch (err) {
-        // No offline fallback: codes are only valid if the server verifies them.
-        // Retry once against the production API in case the stored base was bad.
-        try {
-          const { res, data } = await verify('https://raidos-api.fly.dev');
-          if (res.ok && data.valid) {
-            localStorage.removeItem('raidos_api_base');
-            sessionStorage.setItem('trenches_beta_unlocked', '1');
-            window.location.href = 'app.html';
-            return;
-          }
-          errEl.textContent = data.error || 'Código de invitación no válido.';
-        } catch {
-          errEl.textContent = 'No se pudo verificar el código — revisa tu conexión e inténtalo de nuevo.';
-        }
-        errEl.style.display = 'block';
-      } finally {
-        btn.textContent = 'ACCEDER A LA APLICACIÓN';
-        btn.disabled = false;
-      }
-    }
-
-    function openInviteModal() {
-      document.getElementById('inviteModal').classList.add('active');
-    }
-
-    function closeInviteModal() {
-      document.getElementById('inviteModal').classList.remove('active');
-    }
-
-    function openSuccessModal() {
-      document.getElementById('successModal').classList.add('active');
-    }
-
-    function closeSuccessModal() {
-      document.getElementById('successModal').classList.remove('active');
-    }
-
-    function focusWaitlist() {
-      const el = document.getElementById('waitlistEmail');
-      if (el) {
-        el.focus();
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }
 
     // Interactive Demo mockup handler
     function selectDemoToken(symbol, price, delta) {
