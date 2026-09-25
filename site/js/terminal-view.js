@@ -11,11 +11,7 @@ export const TerminalView = {
     this.dialog.querySelector("[data-terminal-close]").onclick = () => this.close();
     this.dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.close(); });
     window.addEventListener("popstate", () => this.restore());
-    this.dialog.querySelector("[data-terminal-share]").onclick = async () => {
-      const status = this.dialog.querySelector("[data-terminal-message]");
-      try { await navigator.clipboard.writeText(location.href); status.textContent = "Enlace copiado"; }
-      catch { status.textContent = "No se pudo copiar. Puedes copiar la URL del navegador."; }
-    };
+    this.dialog.querySelector("[data-terminal-share]").onclick = () => this.shareTerminal();
     this.restore();
   },
   show() {
@@ -73,6 +69,97 @@ export const TerminalView = {
     for (const key of ["token", "tokenChain", "reference"]) url.searchParams.delete(key);
     history.replaceState(history.state, "", url);
     this.hide();
+  },
+
+  /* ── 📤 Share: chart image + deep link ─────────────────────────────── */
+
+  /**
+   * Share the current terminal: composes a shareable banner (chart + price +
+   * branding) from the real Lightweight Charts canvas and shares it with the
+   * native sheet on mobile (files + link) or downloads + copies the link on
+   * desktop. Without a rendered chart it degrades to link-only sharing.
+   */
+  async shareTerminal() {
+    const status = this.dialog.querySelector("[data-terminal-message]");
+    const trading = window.TradingEngine;
+    const symbol = trading?.currentSymbol || "TOKEN";
+    const chain = trading?.currentChain || "solana";
+    const price = document.getElementById("terminalPrice")?.textContent || "—";
+    const delta = document.getElementById("terminalDelta")?.textContent || "";
+    const link = location.href;
+    try {
+      const canvas = trading?.chart?.takeScreenshot?.();
+      if (!canvas) throw new Error("no-chart");
+      const blob = await new Promise((resolve) => this.composeShareImage(canvas, { symbol, chain, price, delta }).toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("no-blob");
+      const file = new File([blob], `trenches-${symbol.toLowerCase()}-${chain}.png`, { type: "image/png" });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: `${symbol} · TRENCHES`, text: `${symbol} ${price} ${delta}\n${link}` });
+        status.textContent = "Compartido";
+        return;
+      }
+      // Desktop fallback: download the image + copy the deep link.
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = file.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      await navigator.clipboard.writeText(link).catch(() => {});
+      status.textContent = "Imagen descargada + enlace copiado";
+    } catch (e) {
+      if (e?.name === "AbortError") { status.textContent = ""; return; }
+      // No chart or composition failed → honest link-only share.
+      try {
+        if (navigator.share) { await navigator.share({ title: `${symbol} · TRENCHES`, url: link }); status.textContent = "Compartido"; return; }
+        throw new Error("no-share");
+      } catch (e2) {
+        if (e2?.name === "AbortError") { status.textContent = ""; return; }
+        try { await navigator.clipboard.writeText(link); status.textContent = "Enlace copiado"; }
+        catch { status.textContent = "No se pudo compartir. Copia la URL del navegador."; }
+      }
+    }
+  },
+
+  /** Chart + header/footer bars into one banner canvas (real data only). */
+  composeShareImage(chartCanvas, { symbol, chain, price, delta }) {
+    const W = 1000;
+    const topH = 96, bottomH = 56;
+    const chartW = W - 48;
+    const chartH = Math.round((chartCanvas.height / chartCanvas.width) * chartW);
+    const out = document.createElement("canvas");
+    out.width = W;
+    out.height = topH + chartH + bottomH;
+    const ctx = out.getContext("2d");
+    ctx.fillStyle = "#0b1221";
+    ctx.fillRect(0, 0, W, out.height);
+    // Top bar: brand + asset + price (real values from the terminal).
+    ctx.fillStyle = "#4ade80";
+    ctx.font = "800 26px system-ui, sans-serif";
+    ctx.fillText("TRENCHES", 24, 40);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = "600 16px system-ui, sans-serif";
+    ctx.fillText(chain.toUpperCase(), 24, 68);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "800 30px system-ui, sans-serif";
+    ctx.fillText(`${symbol} / USDC`, 190, 48);
+    ctx.textAlign = "right";
+    ctx.font = "700 26px ui-monospace, monospace";
+    ctx.fillText(price, W - 24, 44);
+    if (delta) {
+      ctx.font = "700 18px ui-monospace, monospace";
+      ctx.fillStyle = delta.trim().startsWith("-") ? "#f87171" : "#4ade80";
+      ctx.fillText(delta, W - 24, 72);
+    }
+    ctx.textAlign = "left";
+    // Chart (real screenshot) centered with margin.
+    ctx.drawImage(chartCanvas, 24, topH, chartW, chartH);
+    // Bottom bar: domain + honesty note.
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.font = "600 15px ui-monospace, monospace";
+    ctx.fillText("inusaur.online · gráfico on-chain en vivo", 24, out.height - 22);
+    ctx.textAlign = "right";
+    ctx.fillText("datos reales, sin custodia", W - 24, out.height - 22);
+    return out;
   },
   hide() {
     clearInterval(this.chartTimer);
