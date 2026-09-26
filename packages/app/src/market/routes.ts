@@ -2,9 +2,48 @@ import { Router, sendJson, type RequestContext } from "../api/router.js";
 import { MarketCatalog, type CatalogQuery } from "./catalog.js";
 import { MarketIndexer } from "./indexer.js";
 import { MarketDataService } from "./data.js";
+import { GmgnService, GmgnUnavailableError, GMGN_CHAINS } from "./gmgn.js";
 
-export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatalog, market: MarketDataService) {
+export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatalog, market: MarketDataService, gmgn?: GmgnService) {
   const indexer = new MarketIndexer(catalog, market);
+  const gmgnService = gmgn ?? new GmgnService();
+  const gmgnFail = (ctx: RequestContext, err: unknown) => {
+    if (err instanceof GmgnUnavailableError) {
+      const msg = err.message || "GMGN unavailable";
+      const disabled = msg.includes("GMGN_API_KEY not configured");
+      sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: msg, reason: disabled ? "GMGN_API_KEY_NOT_CONFIGURED" : "GMGN_PROVIDER_UNAVAILABLE" });
+    } else {
+      sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "Market provider unavailable; retry later" });
+    }
+  };
+  // GMGN trenches: the three FOMO-board categories with smart money / KOL /
+  // sniper / bundler / rug analytics. Read-only; degrades honestly to 503.
+  router.publicRoute("GET", "/api/market/gmgn/trenches", async (ctx) => {
+    try {
+      const chain = ctx.query.get("chain") ?? "solana";
+      if (!GMGN_CHAINS.includes(chain)) {
+        sendJson(ctx.res, 400, { status: "UNAVAILABLE", error: `invalid chain: ${chain}` });
+        return;
+      }
+      const platform = ctx.query.get("platform") ?? undefined;
+      const result = await gmgnService.trenches(chain, platform && /^[a-z0-9_-]{1,32}$/.test(platform) ? platform : undefined);
+      sendJson(ctx.res, 200, {
+        ...result,
+        enabled: gmgnService.enabled,
+        source: "gmgn",
+        note: "Analítica de wallets (smart money/KOL/sniper/bundler) según el algoritmo de GMGN. Solo lectura: la ejecución sigue siendo self-custody en TRENCHES.",
+      });
+    } catch (err) { gmgnFail(ctx, err); }
+  });
+  // GMGN token security: rug ratio 0-1 + honeypot for one address.
+  router.publicRoute("GET", "/api/market/gmgn/security", async (ctx) => {
+    try {
+      const chain = ctx.query.get("chain") ?? "solana";
+      const address = ctx.query.get("address") ?? "";
+      const result = await gmgnService.tokenSecurity(chain, address);
+      sendJson(ctx.res, 200, result);
+    } catch (err) { gmgnFail(ctx, err); }
+  });
   const fail = (ctx: RequestContext, err: unknown) => {
     const message = err instanceof Error ? err.message : "";
     const invalid = message.startsWith("invalid");

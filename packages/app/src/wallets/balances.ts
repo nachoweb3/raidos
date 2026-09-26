@@ -39,6 +39,8 @@ export interface WalletBalance {
   usdcAmount: number | null;
   /** Other SPL/EVM tokens with meaningful balances. */
   tokens: TokenBalance[];
+  /** "linked" (signature-verified connect wallet) | "custodial". */
+  source?: string;
   error?: string;
 }
 
@@ -134,10 +136,10 @@ export class BalanceScanner {
    * Scan every wallet a user owns. Chain failures degrade per wallet —
    * the response always resolves.
    */
-  async scanWallets(wallets: { chain: string; address: string; label: string }[]): Promise<WalletBalance[]> {
+  async scanWallets(wallets: { chain: string; address: string; label: string; source?: string }[]): Promise<WalletBalance[]> {
     const out = await Promise.all(
       wallets.map(async (w): Promise<WalletBalance> => {
-        const base = { chain: w.chain, address: w.address, label: w.label };
+        const base = { chain: w.chain, address: w.address, label: w.label, ...(w.source ? { source: w.source } : {}) };
         try {
           const scanned = w.chain === "solana"
             ? await scanSolana(w.address)

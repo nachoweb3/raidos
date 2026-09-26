@@ -12,6 +12,7 @@ import http from "node:http";
 import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
+import { GmgnService } from "../market/gmgn.js";
 import { SocialEngine } from "../social/engine.js";
 import { PairService, ALL_ASSETS, parsePairId, resolveAsset } from "../pairs/pair-service.js";
 import { PairPriceService } from "../pairs/pair-prices.js";
@@ -65,6 +66,8 @@ export interface ServerOptions {
   bootstrapSecret?: string;
   /** Explicit adapter injection for isolated integration tests. */
   marketData?: MarketDataService;
+  /** Explicit GMGN service injection for isolated tests. Default: env-keyed read-only service. */
+  gmgn?: GmgnService;
   /** Explicit receipt provider injection for isolated integration tests. */
   receiptProvider?: ReceiptProvider;
   /** Explicit Solana Connection factory for isolated integration tests
@@ -134,6 +137,7 @@ export class ApiServer {
   private readonly history: TradeHistory;
   private readonly router = new Router();
   private readonly marketData: MarketDataService;
+  private readonly gmgn: GmgnService;
   private readonly receiptProvider: ReceiptProvider | null;
   private readonly siteDir: string | null;
   private readonly bootstrapSecret?: string;
@@ -155,6 +159,7 @@ export class ApiServer {
     if (this.appMode !== "live" && this.appMode !== "mock") throw new Error("APP_MODE must be live or mock");
     this.db = new AppDb(options.dbPath, this.appMode);
     this.marketData = options.marketData ?? new MarketDataService();
+    this.gmgn = options.gmgn ?? new GmgnService();
     this.receiptProvider = options.receiptProvider ?? null;
     this.port = options.port ?? Number(process.env.PORT ?? 8787);
     this.bootstrapSecret = options.bootstrapSecret ?? process.env.BOOTSTRAP_SECRET;
@@ -366,7 +371,7 @@ export class ApiServer {
 
   private registerRoutes(): void {
     registerTokenMetadataRoutes(this.router, this.db);
-    registerMarketCatalogRoutes(this.router, this.db.marketCatalog, this.marketData);
+    registerMarketCatalogRoutes(this.router, this.db.marketCatalog, this.marketData, this.gmgn);
     // Shared public market data; these endpoints never authorize trades.
     const marketReply = async (ctx: RequestContext, field: string, operation: () => Promise<import("../market/data.js").MarketSnapshot<any[]>>) => {
       try {
@@ -563,7 +568,12 @@ export class ApiServer {
     this.router.route("GET", "/api/me", (ctx) => {
       const userId = this.requireUserId(ctx);
       const user = this.db.getUserById(userId);
-      sendJson(ctx.res, 200, { userId, refCode: user?.ref_code ?? null, referredBy: user?.referred_by ?? null, mode: this.appMode });
+      // Linked wallets (sign-in + /api/wallet/link identities) let the UI
+      // precheck self-custody eligibility BEFORE asking for a quote/firm.
+      const wallets = this.db.getUserIdentities(userId)
+        .filter((i) => i.provider === "solana" || i.provider === "evm")
+        .map((i) => ({ chain: i.provider, address: i.external_id }));
+      sendJson(ctx.res, 200, { userId, refCode: user?.ref_code ?? null, referredBy: user?.referred_by ?? null, wallets, mode: this.appMode });
     });
 
     // ── Referrals ──
@@ -693,9 +703,17 @@ export class ApiServer {
     });
 
     // Read-only on-chain balances for every wallet (public RPCs, keyless).
+    // Includes signature-verified linked wallets (identities) — in live mode
+    // they are the ONLY wallets a user has, so without them the terminal
+    // could never show a real balance.
     this.router.route("GET", "/api/wallets/balances", async (ctx) => {
       const userId = this.requireUserId(ctx);
-      const wallets = this.wallets.listWallets(userId);
+      const custodial = this.wallets.listWallets(userId).map((w) => ({ chain: w.chain, address: w.address, label: w.label, source: "custodial" as const }));
+      const linked = this.db.getUserIdentities(userId)
+        .filter((i) => i.provider === "solana" || i.provider === "evm")
+        .map((i) => ({ chain: i.provider, address: i.external_id, label: i.display_name || "Connected", source: "linked" as const }));
+      const seen = new Set(custodial.map((w) => w.chain + ":" + w.address.toLowerCase()));
+      const wallets = [...custodial, ...linked.filter((w) => !seen.has(w.chain + ":" + w.address.toLowerCase()))];
       const balances = await this.balanceScanner.scanWallets(wallets);
       sendJson(ctx.res, 200, { balances, scannedAt: Math.floor(Date.now() / 1000) });
     });
