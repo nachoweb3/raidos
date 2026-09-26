@@ -25,37 +25,37 @@
   <link rel="stylesheet" href="css/design-system.css">
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260926-4">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260926-4">
+  <link rel="stylesheet" href="css/catalog.css?v=20260926-5">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260926-5">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260926-4",
-      "./js/app.js": "./js/app.js?v=20260926-4",
-      "./js/copy.js": "./js/copy.js?v=20260926-4",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260926-4",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260926-4",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260926-4",
-      "./js/discover.js": "./js/discover.js?v=20260926-4",
-      "./js/feed.js": "./js/feed.js?v=20260926-4",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260926-4",
-      "./js/markets.js": "./js/markets.js?v=20260926-4",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260926-4",
-      "./js/rails.js": "./js/rails.js?v=20260926-4",
-      "./js/premium.js": "./js/premium.js?v=20260926-4",
-      "./js/rewards.js": "./js/rewards.js?v=20260926-4",
-      "./js/social.js": "./js/social.js?v=20260926-4",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260926-4",
-      "./js/tokens.js": "./js/tokens.js?v=20260926-4",
-      "./js/trading.js": "./js/trading.js?v=20260926-4",
-      "./js/trenches.js": "./js/trenches.js?v=20260926-4",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260926-4",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260926-4",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260926-4",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260926-4",
-      "./js/install.js": "./js/install.js?v=20260926-4",
-      "./js/public-market.js": "./js/public-market.js?v=20260926-4",
-      "./js/pairs.js": "./js/pairs.js?v=20260926-4"
+      "./js/api.js": "./js/api.js?v=20260926-5",
+      "./js/app.js": "./js/app.js?v=20260926-5",
+      "./js/copy.js": "./js/copy.js?v=20260926-5",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260926-5",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260926-5",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260926-5",
+      "./js/discover.js": "./js/discover.js?v=20260926-5",
+      "./js/feed.js": "./js/feed.js?v=20260926-5",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260926-5",
+      "./js/markets.js": "./js/markets.js?v=20260926-5",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260926-5",
+      "./js/rails.js": "./js/rails.js?v=20260926-5",
+      "./js/premium.js": "./js/premium.js?v=20260926-5",
+      "./js/rewards.js": "./js/rewards.js?v=20260926-5",
+      "./js/social.js": "./js/social.js?v=20260926-5",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260926-5",
+      "./js/tokens.js": "./js/tokens.js?v=20260926-5",
+      "./js/trading.js": "./js/trading.js?v=20260926-5",
+      "./js/trenches.js": "./js/trenches.js?v=20260926-5",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260926-5",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260926-5",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260926-5",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260926-5",
+      "./js/install.js": "./js/install.js?v=20260926-5",
+      "./js/public-market.js": "./js/public-market.js?v=20260926-5",
+      "./js/pairs.js": "./js/pairs.js?v=20260926-5"
     } }
   </script>
 
@@ -845,10 +845,10 @@
             <!-- Amount Input -->
             <div>
               <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-tertiary); margin-bottom:6px">
-                <span>Pagar en USDC</span>
-                <span>Saldo no disponible</span>
+                <span id="amountLabel">Pagar en USDC</span>
+                <span id="balanceLabel">Saldo no disponible</span>
               </div>
-              <input type="number" id="orderAmountInput" placeholder="0.00 USDC" oninput="window.TradingEngine.calculateEstOutput()" style="width:100%; font-size:16px; font-family:var(--font-mono)">
+              <input type="number" id="orderAmountInput" placeholder="0.00 USDC" oninput="window.TradingEngine.scheduleQuote()" style="width:100%; font-size:16px; font-family:var(--font-mono)">
             </div>
 
             <!-- Percentage chips -->
@@ -857,6 +857,16 @@
               <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(50)">50%</button>
               <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(75)">75%</button>
               <button class="btn btn-ghost btn-sm" onclick="window.TradingEngine.setAmountPercent(100)">MAX</button>
+            </div>
+
+            <!-- Slippage tolerance -->
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px">
+              <span style="font-size:11.5px; color:var(--text-tertiary)">Slippage máx.</span>
+              <div style="display:grid; grid-template-columns:repeat(3, auto); gap:6px" id="slippageChips">
+                <button class="btn btn-ghost btn-sm slippage-chip active" onclick="window.TradingEngine.setSlippage(0.5, this)" style="min-width:44px; padding:3px 8px">0.5%</button>
+                <button class="btn btn-ghost btn-sm slippage-chip" onclick="window.TradingEngine.setSlippage(1, this)" style="min-width:44px; padding:3px 8px">1%</button>
+                <button class="btn btn-ghost btn-sm slippage-chip" onclick="window.TradingEngine.setSlippage(3, this)" style="min-width:44px; padding:3px 8px">3%</button>
+              </div>
             </div>
 
             <!-- Summary -->
@@ -868,6 +878,10 @@
               <div style="display:flex; justify-content:space-between">
                 <span>Comisión cotizada:</span>
                 <span id="estFeeAmount">—</span>
+              </div>
+              <div style="display:flex; justify-content:space-between">
+                <span>Impacto precio:</span>
+                <span id="estImpactAmount">—</span>
               </div>
             </div>
 
@@ -1267,7 +1281,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260926-4"></script>
+  <script type="module" src="js/app.js?v=20260926-5"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1533,6 +1547,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260926-4"></script>
+  <script type="module" src="js/install.js?v=20260926-5"></script>
 </body>
 </html>

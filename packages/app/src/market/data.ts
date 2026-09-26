@@ -1,5 +1,5 @@
 
-import { DISABLED_CHAIN_IDS } from "../chains/config.js";
+import { DISABLED_CHAIN_IDS, getChain } from "../chains/config.js";
 type Provider = "dexscreener" | "geckoterminal" | "coingecko" | "rugcheck" | "goplus";
 export interface MarketSnapshot<T> {
   data: T;
@@ -307,6 +307,83 @@ export class MarketDataService {
           title: signals.join(" · ") || "No listed risk signals; not a security guarantee",
           detail: signals.length + " signals" } };
     } catch { return missing; }
+  }
+
+  /**
+   * On-chain decimals/symbol for one token, straight from the chain (keyless
+   * public RPCs). Decimals never change once deployed, so a long TTL plus a
+   * stale fallback is safe; unknown stays unknown (never guessed).
+   */
+  async tokenInfo(chain: string, token: string): Promise<{
+    chain: string; address: string; decimals: number | null; symbol: string | null; name: string | null;
+    source: string; status: "LIVE" | "DEGRADED"; asOf: number; cacheAgeMs: number;
+  }> {
+    validChain(chain); validAddress(token);
+    const key = "tokeninfo:" + chain + ":" + addressKey(chain, token);
+    const cached = this.cache.get(key);
+    if (cached && cached.expires > this.now()) {
+      return { ...cached.value, status: "LIVE" as const, asOf: cached.asOf, cacheAgeMs: this.now() - cached.asOf };
+    }
+    const fetchAndCache = async (fromStale = false) => {
+      const config = getChain(chain);
+      if (!config) throw new Error("invalid chain: " + chain);
+      const info = config.evm ? await this.evmTokenInfo(config.rpcUrl, token) : await this.solanaTokenInfo(config.rpcUrl, token);
+      const value = { chain, address: token, ...info, source: "rpc" };
+      const entry = { value, asOf: this.now(), expires: this.now() + 86_400_000 }; // decimals are immutable
+      if (this.cache.size >= 500 && !this.cache.has(key)) this.cache.delete(this.cache.keys().next().value!);
+      this.cache.set(key, entry);
+      return { ...value, status: fromStale ? ("DEGRADED" as const) : ("LIVE" as const), asOf: entry.asOf, cacheAgeMs: 0 };
+    };
+    try { return await fetchAndCache(false); }
+    catch {
+      if (cached) return { ...cached.value, status: "DEGRADED" as const, asOf: cached.asOf, cacheAgeMs: this.now() - cached.asOf };
+      return await fetchAndCache(true); // one retry — public RPCs hiccup constantly
+    }
+  }
+
+  private async solanaTokenInfo(rpcUrl: string, token: string): Promise<{ decimals: number | null; symbol: string | null; name: string | null }> {
+    const value = await this.rpcJson(rpcUrl, { jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [token, { encoding: "jsonParsed" }] });
+    const parsed = value?.result?.value?.data?.parsed?.info;
+    const decimals = parsed?.decimals;
+    return {
+      decimals: Number.isInteger(decimals) && decimals >= 0 && decimals <= 18 ? decimals : null,
+      symbol: typeof parsed?.symbol === "string" && parsed.symbol ? parsed.symbol : null,
+      name: typeof parsed?.name === "string" && parsed.name ? parsed.name : null,
+    };
+  }
+
+  private async evmTokenInfo(rpcUrl: string, token: string): Promise<{ decimals: number | null; symbol: string | null; name: string | null }> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(token)) throw new Error("invalid EVM token contract");
+    const call = (selector: string) => this.rpcJson(rpcUrl, {
+      jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: token, data: selector }, "latest"],
+    });
+    const [decimalsRaw, symbolRaw, nameRaw] = await Promise.all([call("0x313ce567"), call("0x95d89b41"), call("0x06fdde03")]);
+    // ERC-20 symbol()/name() return an ABI-encoded dynamic string: offset (32
+    // bytes) then length, then the payload padded to 32-byte words.
+    const decodeAbiString = (hex: unknown) => {
+      if (typeof hex !== "string" || !hex.startsWith("0x") || hex.length < 130) return null;
+      const data = hex.slice(2);
+      try {
+        const length = parseInt(data.slice(64, 128), 16);
+        if (!Number.isInteger(length) || length <= 0 || length > 1024 || data.length < 128 + length * 2) return null;
+        return Buffer.from(data.slice(128, 128 + length * 2), "hex").toString("utf8").replace(/[\x00-\x1f]/g, "").trim() || null;
+      } catch { return null; }
+    };
+    const decHex = decimalsRaw?.result;
+    const decimals = typeof decHex === "string" && decHex.startsWith("0x") ? parseInt(decHex, 16) : NaN;
+    return {
+      decimals: Number.isInteger(decimals) && decimals >= 0 && decimals <= 36 ? decimals : null,
+      symbol: decodeAbiString(symbolRaw?.result),
+      name: decodeAbiString(nameRaw?.result),
+    };
+  }
+
+  private async rpcJson(rpcUrl: string, body: unknown): Promise<any> {
+    const response = await this.fetcher(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error("rpc unavailable");
+    const value: any = await response.json();
+    if (value?.error) throw new Error("rpc error");
+    return value;
   }
 
   async referenceMarkets(ids: string): Promise<MarketSnapshot<any[]>> {

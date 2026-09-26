@@ -14,7 +14,7 @@ async function loadTrading(api: any = {}, globals: Record<string, unknown> = {},
   });
   const module = new SourceTextModule(readFileSync(fileURLToPath(new URL("../../../site/js/trading.js", import.meta.url)), "utf8"), { context });
   const exports: Record<string, Record<string, unknown>> = {
-    "./api.js": { ApiClient: api },
+    "./api.js": { ApiClient: { isAuthenticated: () => false, ...api } },
     "./discover.js": { PriceFeed: {} },
     "./tokens.js": { TokenMeta: {} },
     "./dexfeed.js": { DexFeed: dex },
@@ -34,7 +34,40 @@ async function loadTrading(api: any = {}, globals: Record<string, unknown> = {},
 describe("trading UI truthfulness", () => {
   it("does not expose a made-up spendable balance", async () => {
     const { engine } = await loadTrading();
-    expect(engine.availableBalance()).toBeNull();
+    // Anonymous session → balances are never invented; resolves to null.
+    expect(await engine.availableBalance()).toBeNull();
+  });
+  it("sums real USDC balances across wallets when authenticated", async () => {
+    const { engine } = await loadTrading({
+      isAuthenticated: () => true,
+      getWalletBalances: async () => ({ balances: [
+        { chain: "solana", usdcAmount: 12.5, tokens: [] },
+        { chain: "solana", usdcAmount: 7.25, tokens: [] },
+        { chain: "base", usdcAmount: 999, tokens: [] },
+      ] }),
+    });
+    engine.currentChain = "solana";
+    expect(await engine.availableBalance()).toBeCloseTo(19.75);
+  });
+  it("sums token balances by address for SELL across wallets", async () => {
+    const { engine } = await loadTrading({
+      isAuthenticated: () => true,
+      getWalletBalances: async () => ({ balances: [
+        { chain: "solana", usdcAmount: 0, tokens: [{ address: "MINT1", amount: 3 }] },
+        { chain: "solana", usdcAmount: 0, tokens: [{ address: "mint1", amount: 4.5 }] },
+      ] }),
+    });
+    engine.currentChain = "solana";
+    engine.currentTokenAddress = "MINT1";
+    engine.orderSide = "SELL";
+    expect(await engine.availableBalance()).toBeCloseTo(7.5);
+  });
+  it("keeps the failed-scan fallback instead of reporting zero", async () => {
+    const { engine } = await loadTrading({
+      isAuthenticated: () => true,
+      getWalletBalances: async () => { throw new Error("rpc down"); },
+    });
+    expect(await engine.availableBalance()).toBeNull();
   });
   it("never removes a backend position when Close has not settled", async () => {
     const { engine } = await loadTrading();

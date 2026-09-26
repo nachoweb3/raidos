@@ -44,6 +44,15 @@ export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatal
       sendJson(ctx.res, 200, result);
     } catch (err) { gmgnFail(ctx, err); }
   });
+  // On-chain token decimals/symbol straight from the chain RPC (keyless).
+  // Sell orders route in token smallest units — decimals must be real, never guessed.
+  router.publicRoute("GET", "/api/market/token-info", async (ctx) => {
+    try {
+      const chain = ctx.query.get("chain") ?? "";
+      const address = ctx.query.get("address") ?? "";
+      sendJson(ctx.res, 200, await market.tokenInfo(chain, address));
+    } catch (err) { fail(ctx, err); }
+  });
   const fail = (ctx: RequestContext, err: unknown) => {
     const message = err instanceof Error ? err.message : "";
     const invalid = message.startsWith("invalid");

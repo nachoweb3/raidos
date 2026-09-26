@@ -34,6 +34,7 @@ export const TradingEngine = {
   positions: [],
   orders: [],
   chartInterval: 300, // seconds; matches common Candle UI (used for request size)
+  slippageBps: 50, // order-form slippage tolerance, user-selectable (50/100/300)
   lastCandleFetch: 0,
   chainCapabilities: null, // /api/chains cache: { [chainId]: { liveExecution, status, ... } }
 
@@ -284,6 +285,11 @@ export const TradingEngine = {
       deltaEl.textContent = this.currentDelta24h == null ? "—" : `${isUp ? "+" : ""}${this.currentDelta24h.toFixed(2)}% 24h`;
       deltaEl.style.color = isUp ? "var(--delta-green)" : "var(--delta-red)";
     }
+    // Order-form labels follow the side: BUY pays USDC, SELL spends the token.
+    const amountLabel = document.getElementById("amountLabel");
+    if (amountLabel) amountLabel.textContent = this.orderSide === "BUY" ? "Pagar en USDC" : `Vender ${this.currentSymbol}`;
+    const amountInput = document.getElementById("orderAmountInput");
+    if (amountInput) amountInput.placeholder = this.orderSide === "BUY" ? "0.00 USDC" : `0.00 ${this.currentSymbol}`;
     if (orderBtn) {
       const chain = this.chainCapabilities?.[this.currentChain];
       const executable = Boolean(chain?.liveExecution && chain.status === "LIVE" && this.currentTokenAddress);
@@ -435,7 +441,19 @@ export const TradingEngine = {
 
   setSide(side) {
     this.orderSide = side.toUpperCase();
+    this._balanceCache = null;
     this.updateTokenDisplay();
+    this.scheduleQuote();
+  },
+
+  /** Slippage chips: 0.5% / 1% / 3% (clamped 50..500 bps server-side). */
+  setSlippage(percent, chip) {
+    const value = Number(percent);
+    if (!Number.isFinite(value) || value < 0.1 || value > 5) return;
+    this.slippageBps = Math.round(value * 100);
+    document.querySelectorAll("#slippageChips .slippage-chip").forEach((el) => el.classList.remove("active"));
+    chip?.classList?.add("active");
+    this.scheduleQuote();
   },
 
   setOrderType(type) {
@@ -452,29 +470,154 @@ export const TradingEngine = {
     if (label) label.textContent = `${this.leverage}x`;
   },
 
-  setAmountPercent(percent) {
+  /* ── 💧 Balance (real, read-only) ───────────────────────────────────── */
+
+  /**
+   * Real connected-wallet balance for the CURRENT side: USDC when buying,
+   * the token itself when selling. Sourced from GET /api/wallets/balances
+   * (public RPCs, server-side scan). null = unknown, never invented.
+   */
+  async availableBalance() {
+    if (!ApiClient.isAuthenticated()) return null;
+    const key = this.currentChain + ":" + (this.orderSide === "BUY" ? "USDC" : String(this.currentTokenAddress || "").toLowerCase());
+    if (this._balanceCache?.key === key && Date.now() - this._balanceCache.at < 30_000) return this._balanceCache.value;
+    try {
+      const data = await ApiClient.getWalletBalances();
+      let value = null;
+      for (const wallet of data?.balances ?? []) {
+        if (wallet.chain !== this.currentChain) continue;
+        if (this.orderSide === "BUY") {
+          if (wallet.usdcAmount != null) value = (value ?? 0) + Number(wallet.usdcAmount);
+        } else if (this.currentTokenAddress) {
+          for (const token of wallet.tokens ?? []) {
+            if (String(token.address).toLowerCase() === String(this.currentTokenAddress).toLowerCase() && token.amount != null) {
+              value = (value ?? 0) + Number(token.amount);
+            }
+          }
+        }
+      }
+      this._balanceCache = { key, at: Date.now(), value };
+      return value;
+    } catch {
+      return this._balanceCache?.key === key ? this._balanceCache.value : null;
+    }
+  },
+
+  async setAmountPercent(percent) {
     const input = document.getElementById("orderAmountInput");
-    const balance = this.availableBalance();
-    if (balance === null) {
-      alert("Saldo no disponible. Introduce el importe manualmente.");
+    if (!input) return;
+    const label = document.getElementById("balanceLabel");
+    input.dataset.balancePending = "1";
+    const balance = await this.availableBalance();
+    delete input.dataset.balancePending;
+    if (balance === null || balance <= 0) {
+      if (label) label.textContent = balance === null ? "Saldo no disponible" : "Sin saldo";
       return;
     }
-    if (input) {
-      input.value = Math.round((balance * percent) / 100);
-      this.calculateEstOutput();
+    input.value = this.orderSide === "BUY"
+      ? String(Math.floor(balance * percent) / 100).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "")
+      : (balance * percent / 100).toFixed(6).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    if (label) label.textContent = `Disponible: ${balance < 0.01 && balance > 0 ? balance.toFixed(6) : balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    this.calculateEstOutput();
+  },
+
+  /* ── 💱 Real quote (debounced) ──────────────────────────────────────── */
+
+  /** Quote debounce timer id (calculateEstOutput is called on every keystroke). */
+  _quoteTimer: null,
+
+  /** Debounced wrapper: quotes fire 350 ms after the last keystroke. */
+  scheduleQuote() {
+    clearTimeout(this._quoteTimer);
+    this._quoteTimer = setTimeout(() => this.calculateEstOutput(), 350);
+  },
+
+  /**
+   * Live quote for the order form: POST /api/trades/quote with the REAL
+   * addresses and the selected slippage. Fills "Recibir estimado", fee and
+   * price impact. Honest states: sign-in required, no route, provider down.
+   */
+  async calculateEstOutput() {
+    const outputEl = document.getElementById("estReceiveAmount");
+    const feeEl = document.getElementById("estFeeAmount");
+    const impactEl = document.getElementById("estImpactAmount");
+    const raw = String(document.getElementById("orderAmountInput")?.value ?? "").trim();
+    const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(raw);
+    if (!outputEl) return;
+    if (!match) { outputEl.textContent = "—"; if (feeEl) feeEl.textContent = "—"; if (impactEl) impactEl.textContent = "—"; return; }
+    if (!ApiClient.isAuthenticated()) { outputEl.textContent = "Inicia sesión para cotizar"; if (feeEl) feeEl.textContent = "—"; if (impactEl) impactEl.textContent = "—"; return; }
+    if (!this.currentTokenAddress && !WELL_KNOWN_ADDR[this.currentChain]?.[this.currentSymbol]) {
+      outputEl.textContent = "Sin contrato on-chain"; return;
+    }
+    const sellAddr = this.resolveTokenAddress(this.orderSide === "BUY" ? "USDC" : this.currentSymbol, this.currentChain);
+    const buyAddr = this.resolveTokenAddress(this.orderSide === "BUY" ? this.currentSymbol : "USDC", this.currentChain);
+    if (!sellAddr || !buyAddr) { outputEl.textContent = "Sin ruta en esta red"; return; }
+    // Units: USDC has 6 decimals on every supported chain; SELL routes in the
+    // TOKEN's own smallest units (fetched on-chain, cached 10 min).
+    let amount;
+    if (this.orderSide === "BUY") {
+      amount = BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0"));
+    } else {
+      const decimals = await this._tokenDecimals(this.currentChain, sellAddr);
+      if (decimals == null) { outputEl.textContent = "Decimales del token desconocidos"; return; }
+      if ((match[2] ?? "").length > decimals) { outputEl.textContent = `Máximo ${decimals} decimales`; return; }
+      const whole = match[1], frac = match[2] ?? "";
+      amount = BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(frac.padEnd(decimals, "0"));
+    }
+    if (amount <= 0n) { outputEl.textContent = "Cantidad inválida"; return; }
+    const request = this._quoteRequest = (this._quoteRequest || 0) + 1;
+    outputEl.textContent = "Cotizando…";
+    try {
+      const data = await ApiClient.getQuote({
+        fromChain: this.currentChain, toChain: this.currentChain,
+        sellToken: sellAddr, buyToken: buyAddr,
+        amount: amount.toString(), type: "swap",
+        slippageBps: this.slippageBps,
+      });
+      if (request !== this._quoteRequest) return;
+      const quote = data?.quote;
+      if (!quote?.buyAmount) throw new Error(quote?.error || "sin ruta");
+      const buyDecimals = this.orderSide === "BUY" ? await this._tokenDecimals(this.currentChain, buyAddr) : 6;
+      if (buyDecimals == null) { outputEl.textContent = "Decimales del token desconocidos"; return; }
+      const divisor = 10n ** BigInt(buyDecimals);
+      const whole = BigInt(quote.buyAmount) / divisor;
+      const frac = (BigInt(quote.buyAmount) % divisor).toString().padStart(buyDecimals, "0").slice(0, 4);
+      outputEl.textContent = `${whole.toLocaleString("en-US")}${frac ? "." + frac : ""} ${this.orderSide === "BUY" ? this.currentSymbol : "USDC"}`;
+      if (feeEl) {
+        const feeMicro = Number(quote.feeUsdc);
+        feeEl.textContent = Number.isFinite(feeMicro) ? `$${(feeMicro / 1e6).toFixed(4)}` : "—";
+      }
+      if (impactEl) {
+        const impact = Number(quote.priceImpact);
+        impactEl.textContent = Number.isFinite(impact) && impact >= 0 ? `${(impact * 100).toFixed(2)}%` : "—";
+        impactEl.style.color = impact > 0.05 ? "var(--delta-red)" : impact > 0.01 ? "#eac184" : "var(--delta-green)";
+      }
+    } catch (err) {
+      if (request !== this._quoteRequest) return;
+      outputEl.textContent = String(err?.message || "Cotización no disponible").slice(0, 60);
+      if (feeEl) feeEl.textContent = "—";
+      if (impactEl) impactEl.textContent = "—";
     }
   },
 
-  availableBalance() {
-    // Connected-wallet balances are not yet verified for this order form.
-    return null;
-  },
-
-  calculateEstOutput() {
-    const outputEl = document.getElementById("estReceiveAmount");
-    const feeEl = document.getElementById("estFeeAmount");
-    if (outputEl) outputEl.textContent = "Requiere cotización";
-    if (feeEl) feeEl.textContent = "—";
+  /**
+   * On-chain decimals via GET /api/market/token-info (real chain RPC).
+   * Cache 10 min per address; unknown stays null (never guessed).
+   */
+  async _tokenDecimals(chain, address) {
+    if (!address) return null;
+    if (!this._decimalsCache) this._decimalsCache = new Map();
+    const key = chain + ":" + address.toLowerCase();
+    const hit = this._decimalsCache.get(key);
+    if (hit && Date.now() - hit.at < 600_000) return hit.value;
+    try {
+      const info = await ApiClient.request(`/api/market/token-info?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}`);
+      this._decimalsCache.set(key, { value: info?.decimals ?? null, at: Date.now() });
+      return info?.decimals ?? null;
+    } catch {
+      this._decimalsCache.set(key, { value: null, at: Date.now() });
+      return null;
+    }
   },
 
   /** Execute through the API; failed requests never create local positions. */
@@ -482,7 +625,7 @@ export const TradingEngine = {
     const amountInput = document.getElementById("orderAmountInput");
     const amount = Number(amountInput?.value || 0);
     if (amount <= 0) {
-      alert("Por favor introduce una cantidad en USDC.");
+      alert("Por favor introduce una cantidad mayor que cero.");
       return;
     }
 
@@ -516,16 +659,32 @@ export const TradingEngine = {
         );
         return;
       }
-      // Exact integer micro-USDC from the decimal input — no float math on money.
+      // Exact integer smallest units — no float math on money. BUY converts the
+      // USDC input to micro-units (6 decimals); SELL converts the token input
+      // to the TOKEN's own smallest units using its on-chain decimals.
       const raw = String(amountInput?.value ?? "").trim();
-      const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(raw);
+      const match = /^(\d+)(?:\.(\d{1,9}))?$/.exec(raw);
       if (!match) {
-        alert("Cantidad inválida. Usa un número en USDC con hasta 6 decimales.");
+        alert("Cantidad inválida. Usa un número positivo con decimales.");
         return;
       }
-      const micros = BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0") || "0");
+      let micros;
+      if (this.orderSide === "BUY") {
+        micros = BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0").slice(0, 6));
+      } else {
+        const decimals = await this._tokenDecimals(this.currentChain, sellAddr);
+        if (decimals == null) {
+          alert("No se pudieron verificar los decimales on-chain del token; venta bloqueada por seguridad.");
+          return;
+        }
+        if ((match[2] ?? "").length > decimals) {
+          alert(`Máximo ${decimals} decimales para vender este token.`);
+          return;
+        }
+        micros = BigInt(match[1]) * 10n ** BigInt(decimals) + BigInt((match[2] ?? "").padEnd(decimals, "0"));
+      }
       if (micros <= 0n) {
-        alert("Por favor introduce una cantidad en USDC.");
+        alert("Por favor introduce una cantidad mayor que cero.");
         return;
       }
       const tradeParams = {
@@ -535,6 +694,7 @@ export const TradingEngine = {
         buyToken: buyAddr,
         amount: micros.toString(),
         type: "swap",
+        slippageBps: this.slippageBps,
       };
 
       const walletAddress = this.currentChain === "solana"
