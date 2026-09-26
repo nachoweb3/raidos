@@ -386,7 +386,7 @@ export const TrenchesEngine = {
   /** ⚡ quick buy: 0.1 USDC — bonding curve for launches, DEX swap for market. */
   async quickBuy(symbol, id, event) {
     event?.stopPropagation();
-    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (!t) return;
     if (!ApiClient.isAuthenticated?.()) {
       window.App?.openWalletModal?.();
@@ -581,7 +581,8 @@ export const TrenchesEngine = {
   },
 
   selectById(symbol, id) {
-    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    // GMGN rows live outside allTokens(); the board resolves them first.
+    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (t) this.select(t);
   },
 

@@ -110,7 +110,9 @@ export const GmgnBoard = {
     } catch (err) {
       if (seq !== this._seq) return;
       const msg = String(err?.message || err);
-      if (/GMGN_API_KEY_NOT_CONFIGURED/i.test(msg)) {
+      // api.js surfaces data.error (the message); the 503 body also carries
+      // reason: GMGN_API_KEY_NOT_CONFIGURED — match both spellings.
+      if (/GMGN_API_KEY not configured|GMGN_API_KEY_NOT_CONFIGURED/i.test(msg)) {
         this.status = "DISABLED";
         this.error = "GMGN no configurado en el servidor — mostrando catálogo propio.";
       } else {
@@ -140,6 +142,21 @@ export const GmgnBoard = {
 
   get active() {
     return this.status === "LIVE" || this.status === "LOADING";
+  },
+
+  /** All mapped rows across the three sections (flat). */
+  rows() {
+    return [
+      ...(this.sections.new_creation ?? []),
+      ...(this.sections.near_completion ?? []),
+      ...(this.sections.completed ?? []),
+    ];
+  },
+
+  /** Lookup by (symbol, id) so TrenchesEngine.selectById/quickBuy resolve
+   *  GMGN rows too — they never enter allTokens() (tokens+market only). */
+  rowFor(symbol, id) {
+    return this.rows().find((x) => x.symbol === symbol && String(x.id) === String(id));
   },
 
   /** Render the three GMGN columns into the board target. */
