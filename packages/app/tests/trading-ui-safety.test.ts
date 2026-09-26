@@ -23,7 +23,10 @@ async function loadTrading(api: any = {}, globals: Record<string, unknown> = {},
     "./public-market.js": { publicPoolData: async () => { throw Error("offline"); } },
   };
   await module.link(async (specifier) => {
-    const values = exports[specifier];
+    // Production modules pin relative imports with a cache-busting ?v= query
+    // (trenches/trading import "./dexfeed.js?v=YYYYMMDD-N"); normalize it so
+    // the stub map keyed by bare specifiers keeps resolving.
+    const values = exports[specifier.replace(/\?v=\d{8}-\d+$/, "")];
     return new SyntheticModule(Object.keys(values), function () {
       for (const [name, value] of Object.entries(values)) this.setExport(name, value);
     }, { context });

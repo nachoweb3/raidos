@@ -53,6 +53,7 @@ function pairToRow(p, chainHint) {
     sells24h: nullableNumber(p.txns?.h24?.sells),
     txns24h: p.txns?.h24?.buys == null || p.txns?.h24?.sells == null ? null : Number(p.txns.h24.buys) + Number(p.txns.h24.sells),
     txns1h: Number(p.txns?.h1?.buys ?? 0) + Number(p.txns?.h1?.sells ?? 0),
+    change5m: nullableNumber(p.priceChange?.m5),
     change1h: nullableNumber(p.priceChange?.h1),
     change6h: nullableNumber(p.priceChange?.h6),
     change24h: nullableNumber(p.priceChange?.h24),

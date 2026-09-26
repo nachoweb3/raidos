@@ -61,6 +61,8 @@ export const GmgnBoard = {
 
   init(engine) {
     this.engine = engine;
+    // QA handle: Playwright inspects .status/.error/.asOf directly.
+    try { window.__GMGN = this; } catch {}
   },
 
   /** Normalize one GMGN token into the row shape renderRow() understands. */
@@ -94,8 +96,11 @@ export const GmgnBoard = {
     const seq = (this._seq = (this._seq || 0) + 1);
     if (!force && this.status !== "LOADING" && this.asOf && Date.now() - this.asOf < 30_000) return;
     this.status = this.status === "DISABLED" ? "DISABLED" : "LOADING";
+    // GMGN columns need a concrete chain; the app's default "all" view pins
+    // to Solana (the busiest trench) instead of hitting a guaranteed 400.
+    const effective = chain === "all" ? "solana" : chain;
     try {
-      const q = new URLSearchParams({ chain });
+      const q = new URLSearchParams({ chain: effective });
       const data = await ApiClient.request("/api/market/gmgn/trenches?" + q);
       if (seq !== this._seq) return;
       this.sections = {

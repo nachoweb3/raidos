@@ -18,9 +18,9 @@
 
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed, SecurityFeed } from "./dexfeed.js";
-import { CatalogBoard } from "./catalog-board.js?v=20260926-4";
-import { GmgnBoard } from "./gmgn-board.js?v=20260926-4";
+import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20260926-9";
+import { CatalogBoard } from "./catalog-board.js?v=20260926-9";
+import { GmgnBoard } from "./gmgn-board.js?v=20260926-9";
 
 const COLUMNS = [
   { id: "new", title: "Nuevas Creaciones", icon: "+", hint: "Pools de menos de 48 h" },
@@ -85,6 +85,8 @@ export const TrenchesEngine = {
       .catch(() => { /* catalog board already rendered */ });
     // Market refresh every 2 minutes (boosts feed changes constantly).
     setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
+    // Security badges re-fetch every ~5 min so 🛡️ labels track RugCheck/GoPlus.
+    setInterval(() => { if (document.visibilityState === "visible") this.loadSecurity(); }, 300_000);
     // ⏱ LIVE TICKING: re-render deltas every 5s from cached pair data and
     // re-pull pairs every 60s — rows breathe without hammering the API.
     setInterval(() => {
@@ -112,6 +114,29 @@ export const TrenchesEngine = {
       }
       if (t.dex && row._updatedAt !== t.dex._updatedAt) t.dex = row;
       if (row.mcap > 0) t.mcapUsd = row.mcap;
+    }
+    // GMGN-style row ticking: patch price/mcap in place so catalog columns
+    // breathe every 5s without a full re-render (selection and scroll survive).
+    if (!GmgnBoard.active && this._board) {
+      const root = this.target();
+      if (root) {
+        for (const el of root.querySelectorAll(".trench-row[data-token-id]")) {
+          const t = this.allTokens().find((x) => String(x.id) === el.getAttribute("data-token-id"));
+          if (!t) continue;
+          if (t.priceUsd > 0) {
+            const priceEl = el.querySelector(".tr-price");
+            const txt = "$" + (t.priceUsd < 0.02 ? t.priceUsd.toFixed(6) : t.priceUsd.toPrecision(4));
+            if (priceEl && priceEl.textContent !== txt) priceEl.textContent = txt;
+          }
+          if (t.mcapUsd > 0) {
+            const mcEl = el.querySelector(".tr-mc b");
+            if (mcEl) {
+              const txt = fmtUsd(t.mcapUsd);
+              if (mcEl.textContent !== txt) mcEl.textContent = txt;
+            }
+          }
+        }
+      }
     }
     if (changed) this.render();
   },
@@ -231,12 +256,16 @@ export const TrenchesEngine = {
       const sec = SecurityFeed.get(t.tokenAddress, t.chain);
       if (sec && sec !== t.security) { t.security = sec; any = true; }
     }
-    if (any) this.render();
+    // Cache TTL is 5 min: a periodic re-check must repaint even when the cached
+    // verdict object is identical, so bump a version on every completed scan.
+    this._secVersion = (this._secVersion || 0) + 1;
+    if (any || this._board) this.render();
   },
 
   /** Badge html for a token's security verdict (empty when unknown). */
   securityBadge(t) {
     const s = t.security;
+    void this._secVersion; // re-renders re-evaluate after loadSecurity() bumps it
     if (!s) return '<span title="Sin evaluación disponible" style="font-size:9px;color:var(--text-tertiary)">N/D</span>';
     const color = s.level === "good" ? "var(--delta-green)" : s.level === "warn" ? "#fde047" : "var(--delta-red)";
     const title = esc(s.title ?? s.label ?? "");
@@ -383,6 +412,14 @@ export const TrenchesEngine = {
     window.App?.openTradeForToken(t.symbol, t.chain, t.priceUsd || 0, t.tokenAddress);
   },
 
+  /** ⚡ quick sell: abre el terminal en SELL con el saldo real del token. */
+  async quickSell(symbol, id, event) {
+    event?.stopPropagation();
+    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    if (!t) return;
+    await window.TradingEngine?.quickMarketSell?.(t);
+  },
+
   /** ⚡ quick buy: 0.1 USDC — bonding curve for launches, DEX swap for market. */
   async quickBuy(symbol, id, event) {
     event?.stopPropagation();
@@ -519,7 +556,7 @@ export const TrenchesEngine = {
     const chg24h = dex?.change24h ?? null;
     const chg1h = dex?.change1h ?? null;
     const chg6h = dex?.change6h ?? null;
-    const chg5m = null; // DexScreener no expone 5m; chip neutro hasta tener ventana real
+    const chg5m = dex?.change5m ?? null;
     const pctChip = (v) => {
       if (v == null || !Number.isFinite(Number(v))) return `<span class="tr-chip">0%</span>`;
       const n = Number(v);
@@ -534,8 +571,12 @@ export const TrenchesEngine = {
       t.socials?.telegram ? `<a href="${esc(t.socials.telegram)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Telegram" class="tr-social">✈</a>` : "",
       t.socials?.website ? `<a href="${esc(t.socials.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Web" class="tr-social">🌐</a>` : "",
     ].join("");
-    const age = t.createdAt ? this.ageLabel(t.createdAt) : "";
+    // Pair age: DexScreener pairCreatedAt for market rows, launch timestamp otherwise.
+    const ageSrcMs = Number(t.dex?.createdAtMs || 0) || (t.createdAt ? t.createdAt * 1000 : 0);
+    const age = ageSrcMs ? this.ageLabel(Math.floor(ageSrcMs / 1000)) : "";
     const buys = Number(t.buyers ?? 0);
+    const sells = dex?.sells24h != null ? Number(dex.sells24h) : null;
+    const pressure = buys > 0 && sells > 0 ? Math.round((buys / (buys + sells)) * 100) : null;
     const txns = dex?.txns24h != null ? Number(dex.txns24h) : null;
     const liq = dex?.liqUsd > 0 ? fmtUsd(dex.liqUsd) : "—";
     const vol = dex?.vol24h > 0 ? fmtUsd(dex.vol24h) : "—";
@@ -547,7 +588,7 @@ export const TrenchesEngine = {
       ? `<div class="tr-progress" aria-hidden="true"><div style="width:${Math.min(100, t.progress)}%"></div></div>`
       : "";
     return `
-      <div class="trench-row gman-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
+      <div class="trench-row gman-row ${isSel ? "selected" : ""}" data-token-id="${esc(String(t.id))}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
         ${progress}
         <div class="tr-logo">${TokenMeta.logoHtml(t.symbol, { size: 38, round: false, imageUrl: t.imageUrl })}</div>
         <div class="tr-body">
@@ -560,7 +601,9 @@ export const TrenchesEngine = {
           </div>
           <div class="tr-meta">
             ${age ? `<span>${esc(age)}</span>` : ""}
-            ${buys > 0 ? `<span title="Compradores">👦 ${buys.toLocaleString("en-US")}</span>` : ""}
+            ${buys > 0 ? `<span title="Compradores 24h">👦 ${buys.toLocaleString("en-US")}</span>` : ""}
+            ${sells != null ? `<span title="Ventas 24h">▼ ${sells.toLocaleString("en-US")}</span>` : ""}
+            ${pressure != null ? `<span title="Compras sobre el total 24h" style="color:${pressure >= 55 ? "var(--delta-green)" : pressure <= 45 ? "var(--delta-red)" : "inherit"}">↑${pressure}%</span>` : ""}
             ${txns != null ? `<span title="Transacciones 24h">⊘ ${txns.toLocaleString("en-US")}</span>` : ""}
             ${GmgnBoard.metaExtras(t)}
             ${t.dex?.pairUrl ? `<a class="tr-social" href="${esc(t.dex.pairUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Ver par en DexScreener">↗</a>` : ""}
@@ -581,7 +624,7 @@ export const TrenchesEngine = {
           <div class="tr-mc-sub">V <span>${esc(vol)}</span> · F <span>${esc(liq)}</span></div>
           <div class="tr-actions">
             <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.quickBuy(${symAttr}, ${idAttr}, event)" title="Compra rápida 0.1 USDC">⚡ Comprar</button>
-            <button class="trench-thesis-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById(${symAttr}, ${idAttr})" title="Abrir terminal">Ver</button>
+            ${t.isMarket && t.tokenAddress ? `<button class="trench-thesis-btn" onclick="event.stopPropagation(); window.TrenchesEngine.quickSell(${symAttr}, ${idAttr}, event)" title="Abrir el terminal en SELL con tu saldo real">⚡ Vender</button>` : `<button class="trench-thesis-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById(${symAttr}, ${idAttr})" title="Abrir terminal">Ver</button>`}
           </div>
         </div>
       </div>`;
@@ -642,5 +685,23 @@ export const TrenchesEngine = {
     this._board?.persist();
     clearTimeout(this._searchTimer);
     this._searchTimer = setTimeout(() => this._board ? this._board.refresh() : this.render(), 300);
+    // A pasted contract resolves even when the pool is not indexed yet:
+    // live DexScreener lookup → if the catalog doesn't have it, open the
+    // terminal for that address directly (GMGN-style search jump).
+    const addr = this.search;
+    if (/^(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(addr)) {
+      clearTimeout(this._addrTimer);
+      this._addrTimer = setTimeout(async () => {
+        try {
+          const rows = await DexFeed.search(addr, "");
+          const norm = addr.startsWith("0x") ? addr.toLowerCase() : addr;
+          const row = rows.find((r) => String(r.address).toLowerCase() === norm);
+          if (!row) return;
+          this._board?.refresh();
+          const indexed = this.market.some((t) => String(t.tokenAddress).toLowerCase() === norm);
+          if (!indexed) this.select(this.normalizeMarket(row));
+        } catch { /* search stays catalog-only on failure */ }
+      }, 450);
+    }
   },
 };

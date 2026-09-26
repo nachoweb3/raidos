@@ -1,6 +1,6 @@
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js";
-import { GmgnBoard } from "./gmgn-board.js";
+import { DexFeed } from "./dexfeed.js?v=20260926-9";
+import { GmgnBoard } from "./gmgn-board.js?v=20260926-9";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const definitions = [
@@ -80,6 +80,8 @@ export class CatalogBoard {
       c.pages = more ? (c.pages || 0) + loaded : loaded;
       c.asOf = c.rows.length ? Math.min(...c.rows.map((r) => r.dex._updatedAt)) : null;
       this.engine.market = [...new Map(this.columns.flatMap((col) => col.rows).map((r) => [r.id, r])).values()];
+      // GMGN parity: catalog rows carry security badges too (RugCheck/GoPlus).
+      this.engine.loadSecurity?.();
     } catch (err) {
       if (sequence === c.sequence && err.name !== "AbortError") c.error = "No se pudo cargar esta columna. " + err.message;
     } finally { if (sequence === c.sequence) { c.loading = false; this.render(); } }

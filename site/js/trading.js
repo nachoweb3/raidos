@@ -3,7 +3,7 @@
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed } from "./dexfeed.js";
+import { DexFeed } from "./dexfeed.js?v=20260926-9";
 import { ChartTools } from "./chart-tools.js";
 import { PoolActivity } from "./pool-activity.js";
 import { publicPoolData } from "./public-market.js";
@@ -256,6 +256,30 @@ export const TradingEngine = {
     } catch (err) {
       alert("❌ " + String(err?.message || err));
       return null;
+    }
+  },
+
+  /** ⚡ Vender posición desde una fila: abre el terminal en SELL con el saldo
+   *  real del token (mismo scanner que los chips 25/50/75/MAX). Sin saldo
+   *  muestra el estado honesto — nunca inventa un importe. */
+  async quickMarketSell(t) {
+    if (!ApiClient.isAuthenticated?.()) {
+      window.App?.openWalletModal?.();
+      return;
+    }
+    window.App?.openTradeForToken?.(t.symbol, t.chain, t.priceUsd || 0, t.tokenAddress);
+    this.setSide("SELL");
+    this.currentTokenAddress = t.tokenAddress || null;
+    const available = await this.availableBalance();
+    const value = Number(available);
+    if (!Number.isFinite(value) || value <= 0) {
+      alert("Tus wallets no muestran saldo de " + t.symbol + " — terminal abierto con el saldo real (nada inventado).");
+      return;
+    }
+    const input = document.getElementById("terminalAmount");
+    if (input) {
+      input.value = String(value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   },
 
