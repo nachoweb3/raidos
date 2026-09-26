@@ -527,7 +527,7 @@ export const App = {
         chains: ["solana", "ethereum", "base"],
       });
       this.closeCopyModal();
-      alert("Configuración guardada en tu cuenta. La ejecución automática estará disponible próximamente.");
+      alert("Preferencias guardadas en tu cuenta. No hay ejecución automática: cada señal la ejecutas tú en el terminal, firmando con tu wallet.");
     } catch (err) {
       const msg = String(err?.message || err);
       if (msg.includes("401") || /unauthorized|no auth/i.test(msg)) {
