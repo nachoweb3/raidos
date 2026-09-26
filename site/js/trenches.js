@@ -19,8 +19,8 @@
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed, SecurityFeed } from "./dexfeed.js";
-import { CatalogBoard } from "./catalog-board.js";
-import { GmgnBoard } from "./gmgn-board.js";
+import { CatalogBoard } from "./catalog-board.js?v=20260926-4";
+import { GmgnBoard } from "./gmgn-board.js?v=20260926-4";
 
 const COLUMNS = [
   { id: "new", title: "Nuevas Creaciones", icon: "+", hint: "Pools de menos de 48 h" },
