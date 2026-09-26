@@ -7,6 +7,12 @@ async function boardWith(request: (url: string) => Promise<unknown>) {
     location: { href: "http://localhost/app.html" }, document: { getElementById: () => null }, window: { addEventListener() {} } });
   const module = new SourceTextModule(readFileSync(new URL("../../../site/js/catalog-board.js", import.meta.url), "utf8"), { context });
   await module.link(async (specifier) => {
+    // GmgnBoard stub: inactive (no GMGN in unit tests) so CatalogBoard owns the DOM.
+    if (specifier.includes("gmgn")) {
+      return new SyntheticModule(["GmgnBoard"], function () {
+        this.setExport("GmgnBoard", { active: false, status: "UNAVAILABLE", error: "gmgn off (test)", renderFallbackBanner() {} });
+      }, { context });
+    }
     const name = specifier.includes("api") ? "ApiClient" : "DexFeed";
     return new SyntheticModule([name], function () { this.setExport(name, name === "ApiClient" ? { request } : { _rows: (rows: unknown[]) => rows }); }, { context });
   });
