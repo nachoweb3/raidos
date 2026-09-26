@@ -1,5 +1,6 @@
 import { ApiClient } from "./api.js";
 import { DexFeed } from "./dexfeed.js";
+import { GmgnBoard } from "./gmgn-board.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const definitions = [
@@ -94,6 +95,9 @@ export class CatalogBoard {
   }
   render() {
     const target = this.engine.target(); if (!target) return;
+    // GMGN owns the board while LIVE/LOADING — painting catalog columns over
+    // it is exactly the race that made chain-switches snap back to catalog.
+    if (GmgnBoard.active) return;
     if (!target.querySelector("[data-catalog-column]")) {
       target.innerHTML = this.columns.map((c) => `<section class="trenches-col catalog-column" data-catalog-column="${c.id}" aria-label="${c.title}">
         <header><div class="catalog-head-row">
@@ -126,6 +130,9 @@ export class CatalogBoard {
     }
     const count = document.getElementById("trenchesCount"); if (count) count.textContent = `${this.engine.market.length} cargados`;
     const badge = document.getElementById("trenchesLiveBadge"); if (badge) badge.textContent = "Catálogo";
+    // Honest degradation: when GMGN is down/disabled, keep its banner visible
+    // above the catalog columns (single source of truth for the status).
+    if (GmgnBoard.status === "UNAVAILABLE" || GmgnBoard.status === "DISABLED") GmgnBoard.renderFallbackBanner(target);
   }
   renderRows(c) {
     const el = this.engine.target()?.querySelector(`[data-catalog-column="${c.id}"] [data-rows]`); if (!el) return;

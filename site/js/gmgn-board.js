@@ -119,6 +119,7 @@ export const GmgnBoard = {
         this.status = "UNAVAILABLE";
         this.error = "GMGN no disponible ahora mismo — mostrando catálogo propio.";
       }
+      this.render(); // paint the honest banner even if the catalog owns the board
       throw err; // caller decides the fallback
     }
   },
@@ -142,6 +143,19 @@ export const GmgnBoard = {
 
   get active() {
     return this.status === "LIVE" || this.status === "LOADING";
+  },
+
+  /** Banner injected by CatalogBoard when it owns the DOM but GMGN is
+   *  down/disabled — keeps the honest status visible without owning layout. */
+  renderFallbackBanner(target) {
+    const old = target.querySelector(":scope > .gmgn-banner");
+    if (old) old.remove();
+    const div = document.createElement("div");
+    div.className = "gmgn-banner" + (this.status === "LIVE" ? "" : " gmgn-off");
+    div.textContent = this.status === "DISABLED" || this.status === "UNAVAILABLE"
+      ? this.error || "GMGN no disponible — mostrando catálogo propio."
+      : "Cargando GMGN…";
+    target.prepend(div);
   },
 
   /** All mapped rows across the three sections (flat). */
