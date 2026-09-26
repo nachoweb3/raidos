@@ -1,69 +1,12 @@
 /**
- * 💎 PREMIUM & REFERRALS ENGINE — Subscriptions and invite tracking.
- * Subscriptions: 4 tiers served by GET/POST /api/subscription (revenue.ts).
+ * 💎 REFERRALS ENGINE — invite tracking.
  * Referrals: invite code, count, and referred users from GET /api/me/referrals.
+ * (Premium plans were removed: no product surface enforces tier limits, so the
+ * pricing grid promised features that do not exist. The backend routes remain
+ * but nothing in the app links to them anymore.)
  */
 
 import { ApiClient } from "./api.js";
-
-const TIERS = [
-  {
-    id: "free",
-    name: "Free",
-    price: 0,
-    tagline: "Para empezar a operar",
-    features: [
-      "Trading básico (swap)",
-      "Ver leaderboard",
-      "3 alertas por día",
-    ],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    price: 29,
-    tagline: "Para traders activos",
-    features: [
-      "Swaps ilimitados",
-      "Alertas avanzadas (volumen, ballenas, social)",
-      "Perfil público + calls",
-      "Copy-trade (hasta 5 traders)",
-      "Enrutamiento prioritario",
-      "Sin anuncios",
-    ],
-  },
-  {
-    id: "alpha",
-    name: "Alpha",
-    price: 99,
-    tagline: "Para cazadores de alpha",
-    badge: "POPULAR",
-    features: [
-      "Todo lo de Pro",
-      "Copy-trade ilimitado",
-      "Acceso API (10k llamadas/mes)",
-      "Dashboard de analítica avanzada",
-      "Prioridad en lanzamientos",
-      "Reglas de alerta personalizadas",
-      "Acceso anticipado a funciones",
-    ],
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    price: 499,
-    tagline: "Para equipos e instituciones",
-    features: [
-      "Todo lo de Alpha",
-      "API ilimitada",
-      "Integración white-label",
-      "Soporte dedicado",
-      "Estrategias de trading personalizadas",
-      "Analítica institucional",
-      "Revenue share por referidos",
-    ],
-  },
-];
 
 export const PremiumEngine = {
   currentTier: null,
@@ -72,36 +15,15 @@ export const PremiumEngine = {
   async load() {
     try {
       if (!ApiClient.isBetaUnlocked()) return;
-      const [subRes, refRes] = await Promise.all([
-        ApiClient.getSubscription().catch(() => null),
-        ApiClient.getReferrals().catch(() => null),
-      ]);
-      this.currentTier = subRes?.tier?.id ?? "free";
+      // Tier kept as a read-only badge if the account already has one.
+      ApiClient.getSubscription?.().catch(() => null).then?.((subRes) => {
+        this.currentTier = subRes?.tier?.id ?? "free";
+      });
+      const refRes = await ApiClient.getReferrals().catch(() => null);
       this.referrals = refRes;
       this.render();
     } catch (e) {
       console.warn("[Premium] load failed:", e);
-    }
-  },
-
-  async subscribe(tierId) {
-    if (tierId === this.currentTier) return;
-    const tier = TIERS.find((t) => t.id === tierId);
-    if (!tier) return;
-    if (tier.price > 0) {
-      const ok = confirm(
-        `Suscribirte a ${tier.name} por $${tier.price}/mes en USDC?\n\n` +
-          `El cargo se registrará en tu cuenta y se descontará de tu balance de trading.`
-      );
-      if (!ok) return;
-    }
-    try {
-      const res = await ApiClient.subscribe(tierId);
-      this.currentTier = res?.tier?.id ?? tierId;
-      alert(`✅ Suscripción ${tier.name} activada.`);
-      this.render();
-    } catch (e) {
-      alert("No se pudo activar la suscripción: " + (e?.message || "error"));
     }
   },
 
@@ -118,26 +40,19 @@ export const PremiumEngine = {
       .catch(() => prompt("Copia tu enlace de referido:", link));
   },
 
-  tierBadge(tierId) {
-    const t = TIERS.find((x) => x.id === tierId);
-    return t ? t.name : "Free";
-  },
-
   render() {
-    this.ensureContainer("premiumContainer");
     this.ensureContainer("referralsContainer");
-    this.renderSubscription();
     this.renderReferrals();
   },
 
   ensureContainer(id) {
     let el = document.getElementById(id);
     if (el) return el;
-    // FOMO layout: premium & referrals live in the right column. Before the
-    // portfolio renders, pfRight does not exist yet — creating the container
-    // inside #view-profile would land it outside the 3-column shell, so we
-    // skip and wait: PortfolioEngine.render() re-calls PremiumEngine.render()
-    // after the columns are built.
+    // FOMO layout: referrals live in the right column. Before the portfolio
+    // renders, pfRight does not exist yet — creating the container inside
+    // #view-profile would land it outside the 3-column shell, so we skip and
+    // wait: PortfolioEngine.render() re-calls PremiumEngine.render() after the
+    // columns are built.
     const pfRight = document.getElementById("pfRight");
     const section = document.getElementById("view-profile");
     if (pfRight) {
@@ -150,42 +65,6 @@ export const PremiumEngine = {
       section.appendChild(el);
     }
     return el ?? null;
-  },
-
-  renderSubscription() {
-    const el = document.getElementById("premiumContainer");
-    if (!el) return;
-    el.innerHTML = `
-      <div class="glass-panel" style="padding:16px 18px; margin-bottom:14px">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-          <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">💎 Planes Premium</h3>
-          <span class="brand-badge" style="font-size:10px">Plan actual: ${this.tierBadge(this.currentTier)}</span>
-        </div>
-        <p style="font-size:12px; color:var(--text-tertiary); margin-bottom:18px">
-          Se factura en USDC desde tu balance de trading. Cancela cuando quieras.
-        </p>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px">
-          ${TIERS.map(
-            (t) => `
-            <div style="padding:18px; background:rgba(255,255,255,0.02); border:1px solid ${t.id === this.currentTier ? "var(--delta-green)" : "var(--border-subtle)"}; border-radius:var(--radius-md); display:flex; flex-direction:column; gap:10px; position:relative">
-              ${t.badge ? `<span class="elite-badge high" style="position:absolute; top:-9px; right:12px; font-size:9px">🔥 ${t.badge}</span>` : ""}
-              <div>
-                <div style="font-weight:800; font-size:16px">${t.name}</div>
-                <div style="font-size:11px; color:var(--text-tertiary)">${t.tagline}</div>
-              </div>
-              <div class="mono" style="font-size:22px; font-weight:800">$${t.price}<span style="font-size:11px; color:var(--text-tertiary); font-weight:400">/mes</span></div>
-              <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-secondary); flex:1">
-                ${t.features.map((f) => `<li style="display:flex; gap:6px"><span style="color:var(--delta-green)">✓</span> ${f}</li>`).join("")}
-              </ul>
-              ${
-                t.id === this.currentTier
-                  ? `<button class="btn btn-ghost btn-sm" disabled style="opacity:0.6">Plan actual</button>`
-                  : `<button class="btn ${t.price === 0 ? "btn-secondary" : "btn-primary"} btn-sm" onclick="window.PremiumEngine.subscribe('${t.id}')">${t.price === 0 ? "Volver a Free" : "Suscribirse"}</button>`
-              }
-            </div>`
-          ).join("")}
-        </div>
-      </div>`;
   },
 
   renderReferrals() {
