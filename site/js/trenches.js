@@ -506,6 +506,13 @@ export const TrenchesEngine = {
     </div>`;
   },
 
+  /** Force the catalog board render, bypassing the GMGN priority — used by
+   *  GmgnBoard when it hands the board back after going down/disabled. */
+  renderCatalog() {
+    if (this._board) return this._board.render();
+    return this.render();
+  },
+
   renderRow(t) {
     const isSel = this.selected?.symbol === t.symbol && this.selected?.id === t.id;
     const dex = t.dex ?? null;

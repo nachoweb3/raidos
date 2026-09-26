@@ -173,7 +173,10 @@ export const GmgnBoard = {
     return this.rows().find((x) => x.symbol === symbol && String(x.id) === String(id));
   },
 
-  /** Render the three GMGN columns into the board target. */
+  /** Render the three GMGN columns into the board target. When GMGN is
+   *  down/disabled it paints ONLY the honest banner and hands the columns
+   *  back to the catalog board (which may have skipped its render while we
+   *  were LOADING). */
   render() {
     const el = document.getElementById("trenchesColumns");
     if (!el) return;
@@ -183,7 +186,11 @@ export const GmgnBoard = {
         : this.status === "DISABLED" || this.status === "UNAVAILABLE"
           ? `<div class="gmgn-banner gmgn-off">${esc(this.error)}</div>`
           : `<div class="gmgn-banner">Cargando GMGN…</div>`;
-
+    if (!this.active) {
+      el.innerHTML = banner;
+      this.engine?.renderCatalog?.();
+      return;
+    }
     el.innerHTML =
       banner +
       COLUMNS.map((c) => {
