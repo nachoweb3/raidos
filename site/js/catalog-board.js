@@ -3,9 +3,9 @@ import { DexFeed } from "./dexfeed.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const definitions = [
-  { id: "new", title: "New Pools", description: "Pools creados en las últimas 48 horas", defaults: { sort: "newest", maxAgeHours: 48 } },
-  { id: "soon", title: "Liquidity", description: "Pools por liquidez observada", defaults: { sort: "liquidity" } },
-  { id: "migrated", title: "Trending", description: "Actividad según volumen de 24 horas", defaults: { sort: "volume" } },
+  { id: "new", title: "Nuevas Creaciones", description: "Pools creados en las últimas 48 horas", defaults: { sort: "newest", maxAgeHours: 48 } },
+  { id: "soon", title: "Completando", description: "Pools por liquidez observada", defaults: { sort: "liquidity" } },
+  { id: "migrated", title: "Completado", description: "Actividad según volumen de 24 horas", defaults: { sort: "volume" } },
 ];
 const fields = [["minPrice", "Precio mínimo"], ["maxPrice", "Precio máximo"], ["minMarketCap", "Market cap mínimo"],
   ["maxMarketCap", "Market cap máximo"], ["minLiquidity", "Liquidez mínima"], ["maxLiquidity", "Liquidez máxima"],
@@ -96,8 +96,10 @@ export class CatalogBoard {
     const target = this.engine.target(); if (!target) return;
     if (!target.querySelector("[data-catalog-column]")) {
       target.innerHTML = this.columns.map((c) => `<section class="trenches-col catalog-column" data-catalog-column="${c.id}" aria-label="${c.title}">
-        <header><h3>${c.title}</h3><span data-count></span><p>${c.description}</p>
-        <div class="catalog-actions"><button data-filters>Filtros</button><button data-reset>Restablecer</button><button data-refresh aria-label="Refrescar ${c.title}">Actualizar</button></div>
+        <header><div class="catalog-head-row">
+          <h3>${c.title}</h3><span data-count></span>
+          <div class="catalog-actions"><button data-refresh aria-label="Refrescar ${c.title}" title="Refrescar">↻</button><button data-filters title="Filtros">⚙</button><button data-reset title="Restablecer filtros">✕</button></div>
+        </div>
         <small data-status aria-live="polite"></small></header>
         <div class="trenches-col-scroll" data-rows tabindex="0" aria-label="Resultados ${c.title}"></div>
         <footer><button data-more>Cargar más</button></footer></section>`).join("") +
@@ -114,11 +116,11 @@ export class CatalogBoard {
     }
     for (const c of this.columns) {
       const el = target.querySelector(`[data-catalog-column="${c.id}"]`);
-      el.querySelector("[data-count]").textContent = `${c.total} resultados`;
+      el.querySelector("[data-count]").textContent = `${c.total}`;
       const active = JSON.stringify(c.filters) !== JSON.stringify(c.defaults);
-      el.querySelector("[data-filters]").textContent = active ? "Filtros activos" : "Filtros";
+      el.querySelector("[data-filters]").textContent = active ? "⚙+" : "⚙";
       el.querySelector("[data-filters]").setAttribute("aria-pressed", String(active));
-      el.querySelector("[data-status]").textContent = c.error || (c.loading ? "Cargando…" : `${sorts[c.filters.sort]} · ${c.asOf ? "Datos: " + new Date(c.asOf).toLocaleTimeString() : "Sin datos"}`);
+      el.querySelector("[data-status]").textContent = c.error || (c.loading ? "Cargando…" : `${sorts[c.filters.sort]}${c.asOf ? " · " + new Date(c.asOf).toLocaleTimeString() : ""}`);
       const more = el.querySelector("[data-more]"); more.disabled = c.loading || !c.cursor; more.textContent = c.loading ? "Cargando…" : c.cursor ? "Cargar más" : "Fin de resultados";
       this.renderRows(c);
     }
@@ -135,7 +137,7 @@ export class CatalogBoard {
     el.dataset.range = range;
     const focusedAction = el.contains(document.activeElement) ? document.activeElement.getAttribute("onclick") : null;
     el.innerHTML = c.rows.length ? `<div style="height:${start * height}px" aria-hidden="true"></div>` +
-      c.rows.slice(start, end).map((row) => `<div class="catalog-row" style="height:${height}px">${this.engine.renderRow(row)}<small>${esc(row.dex.source)} · ${esc(row.dex.status)} · ${new Date(row.dex._updatedAt).toLocaleTimeString()}</small></div>`).join("") +
+      c.rows.slice(start, end).map((row) => `<div class="catalog-row" style="height:${height}px">${this.engine.renderRow(row)}<small title="${esc(row.dex.source)} · ${esc(row.dex.status)} · ${new Date(row.dex._updatedAt).toLocaleTimeString()}">${esc(row.dex.source)}</small></div>`).join("") +
       `<div style="height:${Math.max(0, c.rows.length - end) * height}px" aria-hidden="true"></div>` :
       `<p class="catalog-empty">${c.loading ? "Consultando catálogo…" : c.error ? "Error de consulta. Pulsa Actualizar." : "Sin resultados. Ajusta los filtros o descubre pools recientes."}</p>`;
     el.scrollTop = top;

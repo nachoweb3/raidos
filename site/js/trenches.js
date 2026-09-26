@@ -20,11 +20,12 @@ import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
 import { DexFeed, SecurityFeed } from "./dexfeed.js";
 import { CatalogBoard } from "./catalog-board.js";
+import { GmgnBoard } from "./gmgn-board.js";
 
 const COLUMNS = [
-  { id: "new", title: "New Pools", icon: "+", hint: "Pools de menos de 48 h" },
-  { id: "soon", title: "Liquidity", icon: "~", hint: "Mayor liquidez indexada" },
-  { id: "migrated", title: "Trending", icon: "/", hint: "Volumen de 24 h" },
+  { id: "new", title: "Nuevas Creaciones", icon: "+", hint: "Pools de menos de 48 h" },
+  { id: "soon", title: "Completando", icon: "~", hint: "Mayor liquidez indexada" },
+  { id: "migrated", title: "Completado", icon: "/", hint: "Volumen de 24 h" },
 ];
 
 /** Chain aliases for the market columns (DexScreener chainIds). */
@@ -72,10 +73,16 @@ export const TrenchesEngine = {
     if (this._initialized) return;
     this._initialized = true;
     this._board = new CatalogBoard(this);
+    GmgnBoard.init(this);
     this.load();
     this.loadMarket();
     this.loadTraders();
     this.connectStream();
+    // GMGN board: primary source when the server has a key; the catalog board
+    // stays as the honest fallback. Poll refresh keeps the board breathing.
+    GmgnBoard.load(this.activeChain)
+      .then(() => { this.render(); GmgnBoard.startPolling(() => this.activeChain); })
+      .catch(() => { /* catalog board already rendered */ });
     // Market refresh every 2 minutes (boosts feed changes constantly).
     setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
     // ⏱ LIVE TICKING: re-render deltas every 5s from cached pair data and
@@ -459,6 +466,9 @@ export const TrenchesEngine = {
   },
 
   render() {
+    // GMGN board takes priority when its feed is live or loading; the
+    // catalog board is the honest fallback (no invented analytics).
+    if (GmgnBoard.active) return GmgnBoard.render();
     if (this._board) return this._board.render();
     const el = this.target();
     if (!el) return;
@@ -498,49 +508,73 @@ export const TrenchesEngine = {
 
   renderRow(t) {
     const isSel = this.selected?.symbol === t.symbol && this.selected?.id === t.id;
-    const chg = t.dex?.change24h ?? null;
-    const chgCls = chg == null ? "" : chg >= 0 ? "up" : "down";
-    const price = t.priceUsd > 0 ? (t.priceUsd < 0.01 ? "$" + t.priceUsd.toFixed(6) : "$" + t.priceUsd.toPrecision(4)) : "—";
+    const dex = t.dex ?? null;
+    const chg24h = dex?.change24h ?? null;
+    const chg1h = dex?.change1h ?? null;
+    const chg6h = dex?.change6h ?? null;
+    const chg5m = null; // DexScreener no expone 5m; chip neutro hasta tener ventana real
+    const pctChip = (v) => {
+      if (v == null || !Number.isFinite(Number(v))) return `<span class="tr-chip">0%</span>`;
+      const n = Number(v);
+      const cls = n > 0 ? "up" : n < 0 ? "down" : "";
+      return `<span class="tr-chip ${cls}">${n > 0 ? "+" : ""}${n.toFixed(2)}%</span>`;
+    };
+    const price = t.priceUsd > 0
+      ? (t.priceUsd < 0.02 ? "$" + t.priceUsd.toFixed(6) : "$" + t.priceUsd.toPrecision(4))
+      : "—";
     const socialIcons = [
-      t.socials?.twitter ? `<a href="${esc(t.socials.twitter)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="X" style="color:var(--text-tertiary); text-decoration:none; font-size:10.5px">𝕏</a>` : "",
-      t.socials?.telegram ? `<a href="${esc(t.socials.telegram)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Telegram" style="color:var(--text-tertiary); text-decoration:none; font-size:10.5px">✈</a>` : "",
-      t.socials?.website ? `<a href="${esc(t.socials.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Web" style="color:var(--text-tertiary); text-decoration:none; font-size:10px">🌐</a>` : "",
+      t.socials?.twitter ? `<a href="${esc(t.socials.twitter)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="X / Twitter" class="tr-social">𝕏</a>` : "",
+      t.socials?.telegram ? `<a href="${esc(t.socials.telegram)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Telegram" class="tr-social">✈</a>` : "",
+      t.socials?.website ? `<a href="${esc(t.socials.website)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Web" class="tr-social">🌐</a>` : "",
     ].join("");
     const age = t.createdAt ? this.ageLabel(t.createdAt) : "";
+    const buys = Number(t.buyers ?? 0);
+    const txns = dex?.txns24h != null ? Number(dex.txns24h) : null;
+    const liq = dex?.liqUsd > 0 ? fmtUsd(dex.liqUsd) : "—";
+    const vol = dex?.vol24h > 0 ? fmtUsd(dex.vol24h) : "—";
+    const addr = String(t.tokenAddress || "");
     const idAttr = esc(JSON.stringify(String(t.id)));
     const symAttr = esc(JSON.stringify(t.symbol));
-    const addrAttr = safeAttr(t.tokenAddress ?? "");
+    // Curve progress bar sits on the left edge like a gauge (launchpad rows only).
+    const progress = t.progress > 0
+      ? `<div class="tr-progress" aria-hidden="true"><div style="width:${Math.min(100, t.progress)}%"></div></div>`
+      : "";
     return `
-      <div class="trench-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
-        ${TokenMeta.logoHtml(t.symbol, { size: 34, round: false, imageUrl: t.imageUrl })}
-        <div style="flex:1; min-width:0">
-          <div style="display:flex; align-items:center; gap:6px; min-width:0">
-            <strong style="font-size:12px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(t.symbol)}</strong>
+      <div class="trench-row gman-row ${isSel ? "selected" : ""}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
+        ${progress}
+        <div class="tr-logo">${TokenMeta.logoHtml(t.symbol, { size: 38, round: false, imageUrl: t.imageUrl })}</div>
+        <div class="tr-body">
+          <div class="tr-titleline">
+            <strong class="tr-sym" title="${esc(t.name)}">${esc(t.symbol)}</strong>
             ${this.securityBadge(t)}
-            <span style="font-size:10px; color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(String(t.name).slice(0, 18))}</span>
+            <span class="tr-name">${esc(String(t.name).slice(0, 16))}</span>
+            <a class="tr-copy" title="Copiar contrato" onclick="event.stopPropagation(); navigator.clipboard?.writeText('${esc(addr)}').catch(() => {})">⧉</a>
             ${socialIcons}
           </div>
-          <div class="trench-stats">
-            <span title="${esc(t.tokenAddress)}">${esc(t.chain)} · ${esc(String(t.tokenAddress).slice(0, 4))}…${esc(String(t.tokenAddress).slice(-4))}</span>
-            <span>Compras ${t.buyers ?? "—"}</span>
-            <span>💰 ${fmtUsd(t.mcapUsd)}</span>
-            ${t.progress > 0 ? `<span>${t.progress}%</span>` : ""}
-            ${age ? `<span>${age}</span>` : ""}
-            ${t.dex ? `<span>💧 ${fmtUsd(t.dex.liqUsd)}</span><span>🔁 ${t.dex.txns24h ?? "—"}</span>` : ""}
+          <div class="tr-meta">
+            ${age ? `<span>${esc(age)}</span>` : ""}
+            ${buys > 0 ? `<span title="Compradores">👦 ${buys.toLocaleString("en-US")}</span>` : ""}
+            ${txns != null ? `<span title="Transacciones 24h">⊘ ${txns.toLocaleString("en-US")}</span>` : ""}
+            ${GmgnBoard.metaExtras(t)}
+            ${t.dex?.pairUrl ? `<a class="tr-social" href="${esc(t.dex.pairUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Ver par en DexScreener">↗</a>` : ""}
           </div>
-          ${t.progress > 0 ? `
-          <div style="margin-top:5px; height:3px; border-radius:2px; background:rgba(255,255,255,0.06); overflow:hidden">
-            <div style="height:100%; width:${t.progress}%; background:linear-gradient(90deg, var(--delta-green), #fde047)"></div>
-          </div>` : ""}
+          <div class="tr-chips">
+            ${pctChip(chg5m)}
+            ${pctChip(chg1h)}
+            ${pctChip(chg6h)}
+            ${pctChip(chg24h)}
+            <span class="tr-chip tr-liq" title="Liquidez">💧 ${esc(liq)}</span>
+          </div>
+          ${t.priceUsd > 0 ? `<div class="tr-price">${esc(price)}</div>` : ""}
+          ${t.progress > 0 ? `<div class="tr-raise">Recaudado ${fmtUsd(t.raisedUsd)} · ${Math.min(100, t.progress)}%</div>` : ""}
+          ${GmgnBoard.badges(t)}
         </div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px">
-          <div class="trench-metric">
-            <div style="color:#fff">${price}</div>
-            ${chg != null ? `<div class="${chgCls}">${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%</div>` : `<div style="color:var(--text-tertiary)">${esc(t.chain.slice(0, 3).toUpperCase())}</div>`}
-          </div>
-          <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end">
-            <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById(${symAttr}, ${idAttr})" title="Ver contrato y gráfico">Ver</button>
-            <button class="trench-thesis-btn" onclick="window.TrenchesEngine.postThesis(${symAttr}, ${idAttr}, event)" title="Publicar tesis sobre este token">📊 Tesis</button>
+        <div class="tr-right">
+          <div class="tr-mc">MC <b>${fmtUsd(t.mcapUsd)}</b></div>
+          <div class="tr-mc-sub">V <span>${esc(vol)}</span> · F <span>${esc(liq)}</span></div>
+          <div class="tr-actions">
+            <button class="trench-buy-btn" onclick="event.stopPropagation(); window.TrenchesEngine.quickBuy(${symAttr}, ${idAttr}, event)" title="Compra rápida 0.1 USDC">⚡ Comprar</button>
+            <button class="trench-thesis-btn" onclick="event.stopPropagation(); window.TrenchesEngine.selectById(${symAttr}, ${idAttr})" title="Abrir terminal">Ver</button>
           </div>
         </div>
       </div>`;
@@ -585,7 +619,13 @@ export const TrenchesEngine = {
     this.market = [];
     this.marketStatus = "LOADING";
     this._marketPage = 1;
+    // GMGN-style chain chips: sync the active state.
+    document.querySelectorAll(".chain-chip").forEach((chip) => {
+      chip.classList.toggle("active", chip.getAttribute("data-chain") === chain);
+    });
     this.render();
+    // GMGN columns refresh for the new chain; on failure the catalog covers it.
+    GmgnBoard.load(chain, true).then(() => this.render()).catch(() => {});
     return this.loadMarket(true);
   },
 

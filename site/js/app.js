@@ -18,6 +18,7 @@ import { MarketsEngine } from "./markets.js";
 import { PairsEngine } from "./pairs.js";
 import { TokenMeta } from "./tokens.js";
 import { TerminalView } from "./terminal-view.js";
+import { FomoRails } from "./rails.js";
 
 export const App = {
   currentView: "feed",
@@ -53,6 +54,7 @@ export const App = {
     safeInit("Pairs", () => PairsEngine.init(document.getElementById("pairsRoot")));
     safeInit("Rewards", () => RewardsEngine.init(document.getElementById("rewardsRoot")));
     safeInit("Trenches", () => TrenchesEngine.init());
+    safeInit("FomoRails", () => FomoRails.init());
 
     // 4. Check Auth State (401 is expected for gate-unlocked users without a key)
     safeInit("Auth", () => this.checkUserAuth());
@@ -141,6 +143,8 @@ export const App = {
       try {
         DiscoverEngine.refresh();
         this.loadFeedSidebars();
+        FomoRails.buildWatchlist();
+        FomoRails.buildTicker();
       } catch (e) {
         console.warn("[App] discover refresh failed:", e);
       }
@@ -638,6 +642,7 @@ window.MarketsEngine = MarketsEngine;
 window.TrenchesEngine = TrenchesEngine;
 window.RewardsEngine = RewardsEngine;
 window.CopyEngine = CopyEngine;
+window.FomoRails = FomoRails;
 
 document.addEventListener("DOMContentLoaded", () => {
   App.init();

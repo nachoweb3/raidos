@@ -23,36 +23,39 @@
   <meta name="twitter:title" content="TRENCHES — The Social Network for Markets">
   <meta name="twitter:image" content="https://inusaur.online/assets/og-image.jpg">
   <link rel="stylesheet" href="css/design-system.css">
+  <link rel="stylesheet" href="css/rails.css?v=20260926-1">
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260919-4">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260925-11">
+  <link rel="stylesheet" href="css/catalog.css?v=20260926-1">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260926-1">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260925-11",
-      "./js/app.js": "./js/app.js?v=20260925-11",
-      "./js/copy.js": "./js/copy.js?v=20260925-11",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260925-11",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260925-11",
-      "./js/discover.js": "./js/discover.js?v=20260925-11",
-      "./js/feed.js": "./js/feed.js?v=20260925-11",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260925-11",
-      "./js/markets.js": "./js/markets.js?v=20260925-11",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260925-11",
-      "./js/premium.js": "./js/premium.js?v=20260925-11",
-      "./js/rewards.js": "./js/rewards.js?v=20260925-11",
-      "./js/social.js": "./js/social.js?v=20260925-11",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260925-11",
-      "./js/tokens.js": "./js/tokens.js?v=20260925-11",
-      "./js/trading.js": "./js/trading.js?v=20260925-11",
-      "./js/trenches.js": "./js/trenches.js?v=20260925-11",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260925-11",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260925-11",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260925-11",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260925-11",
-      "./js/install.js": "./js/install.js?v=20260925-11",
-      "./js/public-market.js": "./js/public-market.js?v=20260925-11",
-      "./js/pairs.js": "./js/pairs.js?v=20260925-11"
+      "./js/api.js": "./js/api.js?v=20260926-1",
+      "./js/app.js": "./js/app.js?v=20260926-1",
+      "./js/copy.js": "./js/copy.js?v=20260926-1",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260926-1",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260926-1",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260926-1",
+      "./js/discover.js": "./js/discover.js?v=20260926-1",
+      "./js/feed.js": "./js/feed.js?v=20260926-1",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260926-1",
+      "./js/markets.js": "./js/markets.js?v=20260926-1",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260926-1",
+      "./js/rails.js": "./js/rails.js?v=20260926-1",
+      "./js/premium.js": "./js/premium.js?v=20260926-1",
+      "./js/rewards.js": "./js/rewards.js?v=20260926-1",
+      "./js/social.js": "./js/social.js?v=20260926-1",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260926-1",
+      "./js/tokens.js": "./js/tokens.js?v=20260926-1",
+      "./js/trading.js": "./js/trading.js?v=20260926-1",
+      "./js/trenches.js": "./js/trenches.js?v=20260926-1",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260926-1",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260926-1",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260926-1",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260926-1",
+      "./js/install.js": "./js/install.js?v=20260926-1",
+      "./js/public-market.js": "./js/public-market.js?v=20260926-1",
+      "./js/pairs.js": "./js/pairs.js?v=20260926-1"
     } }
   </script>
 
@@ -335,6 +338,13 @@
     @media (max-width: 1099px) {
       .trenches-layout { grid-template-columns: minmax(0, 1fr) !important; }
     }
+    /* Wide-desktop header squeeze: the actions row (search 230px + select +
+       buttons) overflows 1280–1400px viewports (scrollWidth 1513 @1440).
+       Narrowing the search input keeps everything on one row. */
+    @media (min-width: 1101px) and (max-width: 1500px) {
+      #universalSearchInput { width: 150px !important; }
+      .universal-search { min-width: 0; }
+    }
     @media (max-width: 768px) {
       /* Two rows: brand on top, actions+search below (needs wrap or the page
          overflows sideways). height:auto so the second row is not clipped. */
@@ -371,9 +381,181 @@
       .trenches-col { min-height: 300px; max-height: 480px; }
       #trenchesColumns > div:last-child { overflow-wrap: anywhere; }
     }
+
+    /* ══ FOMO-style shell: side rails + bottom ticker tape ══ */
+    .fomo-shell { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; align-items: start; }
+    @media (min-width: 1280px) {
+      .fomo-shell.with-rails { grid-template-columns: 216px minmax(0,1fr) 236px; }
+    }
+    .rail-panel { display: none; }
+    @media (min-width: 1280px) {
+      .rail-panel {
+        display: block;
+        position: sticky;
+        top: 62px;
+        max-height: calc(100vh - 80px);
+        overflow-y: auto;
+        scrollbar-width: none;
+        padding: 2px;
+      }
+      .rail-panel::-webkit-scrollbar { display: none; }
+    }
+    .rail-group { margin-bottom: 14px; }
+    .rail-group-title {
+      font-size: 9.5px; font-weight: 800; letter-spacing: 1.2px;
+      text-transform: uppercase; color: var(--text-tertiary); margin: 0 2px 6px;
+    }
+    .rail-empty { font-size: 11px; color: var(--text-tertiary); padding: 6px 2px; line-height: 1.45; }
+    .rail-token {
+      display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+      border-radius: 10px; cursor: pointer; transition: background 0.12s ease;
+    }
+    .rail-token:hover { background: rgba(255,255,255,0.05); }
+    .rail-token-main { min-width: 0; flex: 1; }
+    .rail-token-sym { font-size: 11.5px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rail-token-sub { font-size: 9.5px; color: var(--text-tertiary); }
+    .rail-token-right { text-align: right; flex-shrink: 0; }
+    .rail-token-price { font-size: 10px; color: var(--text-secondary); }
+    .rail-token-delta { font-size: 9.5px; font-weight: 800; }
+    .rail-token-delta.up { color: var(--delta-green); }
+    .rail-token-delta.down { color: var(--delta-red); }
+    .rail-trader { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; }
+    .rail-trader:hover { background: rgba(255,255,255,0.04); }
+    .rail-trader-main { min-width: 0; flex: 1; }
+    .rail-trader-name { font-size: 11.5px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rail-trader-handle { font-size: 9.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rail-follow-btn {
+      flex-shrink: 0; background: #2563eb; color: #fff; border: none; border-radius: 8px;
+      font-size: 10px; font-weight: 800; padding: 4px 10px; cursor: pointer; transition: background 0.12s ease;
+    }
+    .rail-follow-btn:hover { background: #1d4ed8; }
+    .rail-follow-btn.following { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+
+    /* ── Bottom ticker tape ── */
+    #fomoTicker {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 80; height: 32px;
+      display: none; align-items: center; overflow: hidden;
+      background: rgba(4,4,6,0.92);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-top: 1px solid var(--border-subtle);
+    }
+    @media (min-width: 1100px) {
+      #fomoTicker { display: flex; }
+      .app-body { padding-bottom: 72px; }
+    }
+    .ticker-track { display: flex; width: max-content; animation: tickerScroll 70s linear infinite; }
+    #fomoTicker:hover .ticker-track { animation-play-state: paused; }
+    @keyframes tickerScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .ticker-seq { display: flex; align-items: center; }
+    .ticker-item {
+      display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; height: 32px;
+      font-size: 11px; color: var(--text-secondary); white-space: nowrap; cursor: pointer;
+      border-right: 1px solid var(--border-ultra-subtle);
+    }
+    .ticker-item:hover { background: rgba(255,255,255,0.05); }
+    .ticker-star { color: #fde047; font-size: 9px; }
+    .ticker-sym { font-weight: 800; color: #fff; }
+    .ticker-price { color: var(--text-secondary); }
+    .ticker-delta { font-weight: 800; }
+    .ticker-delta.up { color: var(--delta-green); }
+    .ticker-delta.down { color: var(--delta-red); }
+    .ticker-status { cursor: default; }
+    .ticker-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--delta-green);
+      box-shadow: 0 0 6px var(--delta-green); display: inline-block;
+    }
+
+    /* ── Portfolio FOMO-style ── */
+    .pf-cashbox {
+      position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px; padding: 18px 20px;
+      background: linear-gradient(135deg, rgba(34,197,94,0.10), rgba(34,197,94,0.02) 55%, rgba(255,255,255,0.02));
+    }
+    .pf-cashbox::before {
+      content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+      pointer-events: none;
+    }
+    .pf-pos-head {
+      display: grid; grid-template-columns: minmax(140px,1.4fr) repeat(4, minmax(64px,1fr)); gap: 10px;
+      padding: 0 12px 8px; font-size: 9px; font-weight: 800; letter-spacing: 1px;
+      text-transform: uppercase; color: var(--text-tertiary);
+    }
+    .pf-pos-row {
+      display: grid; grid-template-columns: minmax(140px,1.4fr) repeat(4, minmax(64px,1fr)); gap: 10px;
+      align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer; transition: background 0.12s ease;
+    }
+    .pf-pos-row:hover { background: rgba(255,255,255,0.03); }
+    .pf-grid-main { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
+    @media (min-width: 1280px) {
+      .pf-grid-main { grid-template-columns: minmax(0,1.55fr) minmax(300px,1fr); align-items: start; }
+    }
+    .pf-side {
+      display: inline-flex; align-items: center; font-size: 8.5px; font-weight: 900; letter-spacing: 0.8px;
+      border-radius: 5px; padding: 1px 6px; line-height: 15px;
+    }
+    .pf-side.buy { color: var(--delta-green); border: 1px solid rgba(34,197,94,0.35); background: rgba(34,197,94,0.08); }
+    .pf-side.sell { color: var(--delta-red); border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); }
+    .pf-share-btn {
+      background: rgba(255,255,255,0.06); color: #fff; border: 1px solid var(--border-mid);
+      border-radius: 9px; font-size: 11px; font-weight: 700; padding: 6px 12px; cursor: pointer;
+      transition: background 0.12s ease; display: inline-flex; align-items: center; gap: 5px;
+    }
+    .pf-share-btn:hover { background: rgba(255,255,255,0.12); }
+
+    /* ── TRENCHES GMGN-style chain chips ── */
+    .chain-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .chain-chip {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);
+      color: var(--text-secondary); font-size: 10.5px; font-weight: 800;
+      border-radius: 8px; padding: 4px 10px; cursor: pointer; transition: all 0.12s ease;
+      font-family: var(--font-mono); letter-spacing: 0.3px;
+    }
+    .chain-chip:hover { color: #fff; border-color: var(--border-mid); }
+    .chain-chip.active { background: rgba(34,197,94,0.12); color: var(--delta-green); border-color: rgba(34,197,94,0.4); }
+
+    /* ── GMGN board (FOMO trenches) ── */
+    .gmgn-banner {
+      grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
+      font-size: 10.5px; color: var(--text-secondary); padding: 6px 2px;
+      font-family: var(--font-mono);
+    }
+    .gmgn-banner.gmgn-off { color: #fde047; }
+    .gmgn-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--delta-green);
+      box-shadow: 0 0 6px var(--delta-green); animation: livePulse 1.6s ease-in-out infinite;
+    }
+    .gmgn-col-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .gmgn-col-title { font-size: 12.5px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 6px; }
+    .gmgn-col-title span {
+      font-size: 9.5px; color: var(--text-tertiary); background: rgba(255,255,255,0.05);
+      border-radius: 999px; padding: 1px 7px; font-family: var(--font-mono);
+    }
+    .gmgn-col-hint { font-size: 9px; color: var(--text-tertiary); font-family: var(--font-mono); }
+    .gmgn-badge { font-size: 8.5px; }
+    .gmgn-badge.sm { color: #4ade80; }
+    .gmgn-badge.kol { color: #fde047; }
+    .gmgn-badge.snipe { color: #60a5fa; }
+    .gmgn-badge.bundle { color: #f87171; }
+    .gmgn-badge.insider { color: #fb923c; }
+    .gmgn-badge.lp { color: var(--text-secondary); }
+    .gmgn-badge.rug-low { color: var(--delta-green); }
+    .gmgn-badge.rug-mid { color: #fde047; }
+    .gmgn-badge.rug-high { color: var(--delta-red); border-color: rgba(239,68,68,0.5); }
+    @media (max-width: 768px) {
+      .pf-pos-head { grid-template-columns: minmax(120px,1.6fr) repeat(2, minmax(64px,1fr)); }
+      .pf-pos-row { grid-template-columns: minmax(120px,1.6fr) repeat(2, minmax(64px,1fr)); }
+      .pf-pos-row .pos-col-2, .pf-pos-row .pos-col-4,
+      .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
+    }
   </style>
 </head>
 <body>
+  <!-- ── Bottom ticker tape (FOMO-style, desktop only) ── -->
+  <div id="fomoTicker" role="marquee" aria-label="Precios del mercado en vivo"><div class="ticker-track"></div></div>
+
   <div id="appRoot">
     <!-- ── TOP HEADER ── -->
     <header class="app-header">
@@ -433,7 +615,13 @@
 
       <!-- ════ VIEW 1: SOCIAL FEED ════ -->
       <section id="view-feed" class="view-panel" style="display:block">
-        <div style="display:grid; grid-template-columns:1fr 340px; gap:20px" class="feed-grid">
+        <div class="fomo-shell with-rails">
+          <!-- Left rail: watchlist (desktop only) -->
+          <aside class="rail-panel" aria-label="Watchlist">
+            <div id="watchRail"></div>
+          </aside>
+
+          <div style="min-width:0">
           <!-- Main Stream -->
           <div>
             <!-- Filter tabs -->
@@ -457,8 +645,17 @@
             <div id="feedPostsList"></div>
           </div>
 
-          <!-- Desktop Sidebar: Whale Radar & Market Alpha -->
-          <aside class="desktop-only" style="display:flex; flex-direction:column; gap:16px">
+          </div>
+
+          <!-- Right rail: top traders (desktop only) -->
+          <aside class="rail-panel" aria-label="Mejores traders">
+            <div class="rail-group-title" style="display:flex; align-items:center; justify-content:space-between">Sigue a los mejores traders</div>
+            <div id="tradersRail"></div>
+          </aside>
+        </div>
+
+        <!-- Desktop Sidebar: Whale Radar & Market Alpha (legacy, oculto) -->
+        <div hidden><aside style="display:flex; flex-direction:column; gap:16px">
             <div class="glass-panel" style="padding:18px">
               <div style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin-bottom:12px; display:flex; align-items:center; justify-content:space-between">
                 <span>🐋 Radar Smart Money</span>
@@ -480,8 +677,7 @@
                 <p style="font-size:11.5px; color:var(--text-tertiary)">Cargando ranking…</p>
               </div>
             </div>
-          </aside>
-        </div>
+          </aside></div>
       </section>
 
       <!-- ════ VIEW 2: DISCOVER ════ -->
@@ -575,6 +771,15 @@
           <h2 style="font-size:16px; font-weight:900; letter-spacing:0.06em; display:flex; align-items:center; gap:8px; margin:0">⚡ TRENCHES
             <span class="brand-badge" id="trenchesLiveBadge" style="font-size:9px; background:rgba(34,197,94,0.12); color:var(--delta-green); border:1px solid rgba(34,197,94,0.3)">LIVE</span>
           </h2>
+          <!-- GMGN-style chain chips -->
+          <div class="chain-chips" role="tablist" aria-label="Cadena del board">
+            <button class="chain-chip active" data-chain="all" onclick="window.TrenchesEngine.setChain('all')">ALL</button>
+            <button class="chain-chip" data-chain="solana" onclick="window.TrenchesEngine.setChain('solana')">◎ SOL</button>
+            <button class="chain-chip" data-chain="bsc" onclick="window.TrenchesEngine.setChain('bsc')">🟡 BSC</button>
+            <button class="chain-chip" data-chain="ethereum" onclick="window.TrenchesEngine.setChain('ethereum')">Ξ ETH</button>
+            <button class="chain-chip" data-chain="base" onclick="window.TrenchesEngine.setChain('base')">🔵 BASE</button>
+            <button class="chain-chip" data-chain="arc" onclick="window.TrenchesEngine.setChain('arc')">◉ ARC</button>
+          </div>
           <input type="text" id="trenchesSearch" placeholder="Filtrar por nombre o símbolo…" oninput="window.TrenchesEngine.setSearch(this.value)" style="flex:1; min-width:160px; max-width:300px; padding:7px 10px; font-size:12px">
           <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMarket(true)" title="Recargar catálogo" style="min-width:40px">↻</button>
           <span id="trenchesCount" style="font-size:10.5px; color:var(--text-tertiary); font-family:var(--font-mono)"></span>
@@ -738,9 +943,20 @@
         <div id="leaderboardList"></div>
       </section>
 
-      <!-- ════ VIEW 5: PORTFOLIO & WALLET ════ -->
+      <!-- ════ VIEW 5: PORTFOLIO & WALLET (FOMO-style 3 columnas) ════ -->
       <section id="view-profile" class="view-panel" style="display:none">
-        <!-- Rendered live by js/portfolio.js (PortfolioEngine) -->
+        <div class="fomo-shell with-rails">
+          <aside class="rail-panel" aria-label="Watchlist">
+            <div id="watchRailPortfolio"></div>
+          </aside>
+          <div id="portfolioMain" style="min-width:0">
+            <!-- Rendered live by js/portfolio.js (PortfolioEngine) -->
+          </div>
+          <aside class="rail-panel" aria-label="Mejores traders">
+            <div class="rail-group-title" style="display:flex; align-items:center; justify-content:space-between">Sigue a los mejores traders</div>
+            <div id="tradersRailPortfolio"></div>
+          </aside>
+        </div>
       </section>
 
     </main>
@@ -1051,7 +1267,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260925-11"></script>
+  <script type="module" src="js/app.js?v=20260926-1"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1317,6 +1533,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260925-11"></script>
+  <script type="module" src="js/install.js?v=20260926-1"></script>
 </body>
 </html>

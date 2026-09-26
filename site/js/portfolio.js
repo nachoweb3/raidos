@@ -255,7 +255,28 @@ export const PortfolioEngine = {
   },
 
   target() {
-    return document.getElementById("view-profile");
+    // FOMO layout: the section hosts a 3-column shell; the engine renders
+    // into the center column. Falls back to the raw section when absent.
+    return document.getElementById("portfolioMain") || document.getElementById("view-profile");
+  },
+
+  /** Column helper for the FOMO layout (left = tables, right = panels). */
+  into(id) {
+    const el = document.getElementById(id);
+    if (el) return el;
+    const fallback = this.target();
+    if (!fallback) return null;
+    const box = document.createElement("div");
+    box.id = id;
+    fallback.appendChild(box);
+    return box;
+  },
+
+  /** Signed percentage for PnL chips. */
+  fmtPct(n) {
+    const v = Number(n || 0);
+    if (!Number.isFinite(v)) return "—";
+    return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   },
 
   /* ── Derived numbers ───────────────────────────────────────────────── */
@@ -307,62 +328,81 @@ export const PortfolioEngine = {
 
     const winRate = Number(pnl.winRate ?? 0);
     const open = this.openPositions();
-    const pnlColor = Number(pnl.totalPnlUsdc || 0) >= 0 ? "var(--delta-green)" : "var(--delta-red)";
+    const pnlNum = Number(pnl.totalPnlUsdc || 0);
+    const pnlColor = pnlNum >= 0 ? "var(--delta-green)" : "var(--delta-red)";
     const openVal = this.totalOpenValue();
     const netWorth = openVal.allLive ? fmtUsd(openVal.total) : "—";
 
     el.innerHTML = `
-      <!-- Advanced profile header -->
-      <div class="glass-panel" style="padding:28px; margin-bottom:20px">
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px">
-          <div style="display:flex; align-items:center; gap:16px; min-width:0">
-            ${this.renderAvatar(64)}
+      <!-- FOMO-style profile header -->
+      <div class="glass-panel" style="padding:16px 18px; margin-bottom:14px">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px">
+          <div style="display:flex; align-items:center; gap:12px; min-width:0">
+            ${this.renderAvatar(46)}
             <div style="min-width:0">
-              <h2 style="font-size:20px; font-weight:800; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
-                ${escHtml(this.displayName())}
-                <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.openEditModal()" title="Editar perfil" style="padding:2px 8px; font-size:12px">✏️</button>
-              </h2>
-              ${this.profile?.bio ? `<div style="font-size:12.5px; color:var(--text-secondary); margin-top:2px; max-width:520px">${escHtml(this.profile.bio)}</div>` : ""}
-              <div style="display:flex; align-items:center; gap:10px; margin-top:6px; flex-wrap:wrap">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                <span style="font-size:15px; font-weight:800; color:#fff">${escHtml(this.displayName())}</span>
+                <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.openEditModal()" title="Editar perfil" style="padding:2px 8px; font-size:11px">✏️ Editar</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:2px; flex-wrap:wrap">
                 ${this.renderSocialLinks()}
-                <span style="font-size:11px; color:var(--text-tertiary); font-family:var(--font-mono)">
-                  ${this.profile?.joinedAt ? "Miembro desde " + new Date(this.profile.joinedAt * 1000).toLocaleDateString("es-ES", { month: "short", year: "numeric" }) : "Wallet no custodial cifrada (AES-GCM)"}
+                <span style="font-size:10.5px; color:var(--text-tertiary)">
+                  ${this.profile?.joinedAt ? new Date(this.profile.joinedAt * 1000).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" }) : "Wallet no custodial"}
                 </span>
               </div>
             </div>
           </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button class="btn btn-secondary btn-sm" onclick="window.PortfolioEngine.load()">↻ Actualizar</button>
-            <button class="btn btn-secondary btn-sm" onclick="window.App.openWalletModal()">Gestionar Billeteras</button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+            <div style="text-align:right; margin-right:6px">
+              <div style="font-size:9.5px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">Ganancia / pérdida total</div>
+              <div class="mono" style="font-size:16px; font-weight:800; color:${pnlColor}">${signedUsdMicro(pnl.totalPnlUsdc)} <span style="font-size:11px">${this.fmtPct(pnl.totalPnlPct)}</span></div>
+            </div>
+            <button class="pf-share-btn" onclick="window.TradingEngine.openShareCard({ side: 'PNL', symbol: 'PORTFOLIO', chain: 'sol', pnlUsdc: Number(window.PortfolioEngine.pnl?.totalPnlUsdc || 0) / 1e6 })" title="Compartir PnL">↗ Compartir</button>
           </div>
         </div>
+        ${this.profile?.bio ? `<div style="font-size:12px; color:var(--text-secondary); margin-top:10px; max-width:640px">${escHtml(this.profile.bio)}</div>` : ""}
+      </div>
 
-        <!-- Portfolio Stats -->
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:16px; margin-top:24px">
-          ${this.statCard("VALOR ABIERTO", netWorth, "#fff", openVal.allLive ? "a precios en vivo" : "sin precios en vivo")}
-          ${this.statCard("PNL REALIZADO", signedUsdMicro(pnl.totalPnlUsdc), pnlColor)}
-          ${this.statCard("WIN RATE", winRate.toFixed(0) + "%", "#fff")}
-          ${this.statCard("POSICIONES ABIERTAS", String(open.length), "#fff")}
+      <!-- Cashbox: total portfolio value (FOMO "Efectivo total") -->
+      <div class="pf-cashbox" style="margin-bottom:14px">
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:14px; flex-wrap:wrap">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text-secondary)">
+              <span style="width:20px; height:20px; border-radius:50%; background:rgba(255,255,255,0.08); display:inline-flex; align-items:center; justify-content:center; font-size:11px">$</span>
+              Efectivo total
+            </div>
+            <div class="mono" style="font-size:30px; font-weight:800; color:#fff; letter-spacing:-0.03em; margin-top:4px">${netWorth}</div>
+            <div style="font-size:10.5px; color:${openVal.allLive ? "var(--delta-green)" : "var(--text-tertiary)"}; margin-top:2px">${openVal.allLive ? "a precios en vivo" : "sin precios en vivo"}</div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <div style="padding:8px 12px; border:1px solid var(--border-subtle); border-radius:10px; background:rgba(0,0,0,0.25)">
+              <div style="font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">PnL realizado</div>
+              <div class="mono" style="font-size:13px; font-weight:800; color:${pnlColor}">${signedUsdMicro(pnl.totalPnlUsdc)}</div>
+            </div>
+            <div style="padding:8px 12px; border:1px solid var(--border-subtle); border-radius:10px; background:rgba(0,0,0,0.25)">
+              <div style="font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">Win rate</div>
+              <div class="mono" style="font-size:13px; font-weight:800; color:#fff">${winRate.toFixed(0)}%</div>
+            </div>
+            <div style="padding:8px 12px; border:1px solid var(--border-subtle); border-radius:10px; background:rgba(0,0,0,0.25)">
+              <div style="font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">Posiciones</div>
+              <div class="mono" style="font-size:13px; font-weight:800; color:#fff">${open.length}</div>
+            </div>
+          </div>
         </div>
+      </div>
 
-        <!-- Secondary stats -->
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:16px; margin-top:12px">
-          ${this.statCard("OPERACIONES", String(pnl.totalTrades || 0), "#fff")}
-          ${this.statCard("VOLUMEN TOTAL", fmtUsdMicro(pnl.volumeUsdc), "#fff")}
-          ${this.statCard("COMISIONES", fmtUsdMicro(pnl.totalFeesUsdc), "#fff")}
-          ${this.statCard(
-            "MEJOR OPERACIÓN",
-            signedUsdMicro(pnl.bestTradePnlUsdc),
-            Number(pnl.bestTradePnlUsdc || 0) > 0 ? "var(--delta-green)" : "#fff"
-          )}
-        </div>
+      <!-- FOMO 2-column body: tables left, panels right -->
+      <div class="pf-grid-main">
+        <div id="pfLeft" style="min-width:0"></div>
+        <div id="pfRight" style="min-width:0; display:flex; flex-direction:column; gap:14px"></div>
       </div>`;
 
-    this.appendHoldings();
-    this.appendSocial();
-    this.appendOnchainBalances();
     this.appendPositions();
     this.appendTrades();
+    this.appendHoldings();
+    this.appendStatsPanel();
+    this.appendSocial();
+    this.appendOnchainBalances();
     this.appendWallets();
 
     const credit = document.createElement("div");
@@ -381,11 +421,34 @@ export const PortfolioEngine = {
 
   statCard(label, value, color, sub) {
     return `
-      <div style="padding:14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)">
-        <div style="font-size:11px; color:var(--text-tertiary)">${label}</div>
-        <div class="mono" style="font-size:20px; font-weight:800; color:${color}; margin-top:4px">${value}</div>
-        ${sub ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:2px">${sub}</div>` : ""}
+      <div style="padding:10px 12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:10px">
+        <div style="font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary)">${label}</div>
+        <div class="mono" style="font-size:15px; font-weight:800; color:${color}; margin-top:3px">${value}</div>
+        ${sub ? `<div style="font-size:9.5px; color:var(--text-tertiary); margin-top:1px">${sub}</div>` : ""}
       </div>`;
+  },
+
+  /** Right-column stats panel (secondary metrics, FOMO compact). */
+  appendStatsPanel() {
+    const pnl = this.pnl || {};
+    const box = this.into("pfRight");
+    if (!box) return;
+    const wrap = document.createElement("div");
+    wrap.className = "glass-panel";
+    wrap.style.cssText = "padding:16px 18px; margin-bottom:0";
+    wrap.innerHTML = `
+      <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0 0 10px">Estadísticas</h3>
+      <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px">
+        ${this.statCard("OPERACIONES", String(pnl.totalTrades || 0), "#fff")}
+        ${this.statCard("VOLUMEN TOTAL", fmtUsdMicro(pnl.volumeUsdc), "#fff")}
+        ${this.statCard("COMISIONES", fmtUsdMicro(pnl.totalFeesUsdc), "#fff")}
+        ${this.statCard(
+          "MEJOR OPERACIÓN",
+          signedUsdMicro(pnl.bestTradePnlUsdc),
+          Number(pnl.bestTradePnlUsdc || 0) > 0 ? "var(--delta-green)" : "#fff"
+        )}
+      </div>`;
+    box.appendChild(wrap);
   },
 
   /* ── Holdings (from /api/portfolio pnlByToken, with logos + live value) ── */
@@ -414,22 +477,22 @@ export const PortfolioEngine = {
             : "TOKEN";
         return `
         <div style="display:flex; align-items:center; gap:10px; min-width:0">
-          ${TokenMeta.logoHtml(sym, { size: 30, imageUrl: TokenMeta.serverMeta[sym]?.imageUrl })}
+          ${TokenMeta.logoHtml(sym, { size: 26, imageUrl: TokenMeta.serverMeta[sym]?.imageUrl })}
           <div style="min-width:0">
-            <div style="font-weight:800; font-size:13.5px">$${sym}</div>
-            <div style="font-size:10.5px; color:var(--text-tertiary)">${sub}</div>
+            <div style="font-weight:800; font-size:12.5px">$${sym}</div>
+            <div style="font-size:10px; color:var(--text-tertiary)">${sub}</div>
           </div>
         </div>
         <div style="text-align:right">
-          <div class="mono" style="font-weight:800; font-size:13.5px; color:#fff">${value !== null ? fmtUsd(value) : "—"}</div>
-          <div style="font-size:10.5px; color:var(--text-tertiary)">
-            ${escHtml(units)} unidades base
+          <div class="mono" style="font-weight:800; font-size:12.5px; color:#fff">${value !== null ? fmtUsd(value) : "—"}</div>
+          <div style="font-size:10px; color:var(--text-tertiary)">
+            ${escHtml(units)} unidades
             ${pnlNum !== 0 ? ` · <span style="color:${pnlColor}">PnL ${signedUsdMicro(h.realizedPnlUsdc)}</span>` : ""}
           </div>
         </div>`;
       }
     );
-    this.target().appendChild(panel);
+    this.into("pfLeft")?.appendChild(panel);
   },
 
   /* ── 🧑‍🤝‍🧑 Social graph (followers / following, persisted server-side) ── */
@@ -439,12 +502,12 @@ export const PortfolioEngine = {
     if (!el) return;
     const wrap = document.createElement("div");
     wrap.className = "glass-panel";
-    wrap.style.cssText = "padding:24px; margin-bottom:20px";
+    wrap.style.cssText = "padding:16px 18px";
     const fCount = Number(this.profile?.followersCount ?? 0);
     wrap.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:10px; flex-wrap:wrap">
-        <h3 style="font-size:15px; font-weight:800; margin:0">🧑‍🤝‍🧑 Tu Red</h3>
-        <span class="mono" style="font-size:11.5px; color:var(--text-tertiary)">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:10px; flex-wrap:wrap">
+        <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">Tu Red</h3>
+        <span class="mono" style="font-size:10.5px; color:var(--text-tertiary)">
           ${fCount} seguidor${fCount === 1 ? "" : "es"} · ${this.following.length} siguiendo
         </span>
       </div>`;
@@ -497,7 +560,7 @@ export const PortfolioEngine = {
         "Sin seguidores aún. Publica tesis y opera con fills verificados para aparecer en el ranking."
       )
     );
-    el.appendChild(wrap);
+    this.into("pfRight")?.appendChild(wrap);
   },
 
   /* ── 💰 On-chain balances (read-only scan of the user's wallets) ── */
@@ -507,11 +570,11 @@ export const PortfolioEngine = {
    * take seconds; the rest of the portfolio must not wait on them.
    */
   async appendOnchainBalances() {
-    const target = this.target();
+    const target = this.into("pfRight");
     if (!target) return;
     const placeholder = document.createElement("div");
     placeholder.className = "glass-panel";
-    placeholder.style.cssText = "margin-top:14px; padding:16px 18px";
+    placeholder.style.cssText = "padding:16px 18px";
     placeholder.innerHTML = `<div class="loading-pulse" style="font-size:12px; color:var(--text-tertiary)">⛓️ Escaneando balances on-chain…</div>`;
     target.appendChild(placeholder);
 
@@ -523,7 +586,7 @@ export const PortfolioEngine = {
       );
       const panel = document.createElement("div");
       panel.className = "glass-panel";
-      panel.style.cssText = "margin-top:14px; padding:16px 18px";
+      panel.style.cssText = "padding:16px 18px";
       const totalUsdc = rows.reduce((s, b) => s + Number(b.usdcAmount ?? 0), 0);
       panel.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px">
@@ -564,42 +627,65 @@ export const PortfolioEngine = {
       </div>`;
   },
 
-  /* ── Open positions (from /api/positions rows) ── */
+  /* ── Open positions (FOMO table: Token | Precio | Cantidad | Valor | PnL) ── */
 
   appendPositions() {
-    const open = this.openPositions().slice(0, 10);
-    const panel = this.makePanel(
-      "📈 Posiciones Abiertas",
-      "Aún no tienes posiciones abiertas. Ejecuta tu primer swap en la pestaña Trade.",
-      open,
-      (p) => {
-        const sym = this.symbolFor(p);
-        const v = this.positionValue(p);
-        const invested = Number(p.net_invested_usdc || 0) / 1e6;
-        const unrealized = v.live && invested > 0 ? v.value - invested : null;
-        const uColor = unrealized === null ? "var(--text-tertiary)" : unrealized >= 0 ? "var(--delta-green)" : "var(--delta-red)";
-        return `
-        <div style="display:flex; align-items:center; gap:10px; min-width:0">
-          ${TokenMeta.logoHtml(sym, { size: 30 })}
+    const open = this.openPositions().slice(0, 12);
+    const left = this.into("pfLeft");
+    if (!left) return;
+    const wrap = document.createElement("div");
+    wrap.className = "glass-panel";
+    wrap.style.cssText = "padding:16px 18px; margin-bottom:14px";
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+        <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">Tus posiciones</h3>
+        <span class="mono" style="font-size:10.5px; color:var(--text-tertiary)">${open.length ? open.length + " abierta" + (open.length === 1 ? "" : "s") : ""}</span>
+      </div>`;
+    if (!open.length) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "font-size:12.5px; color:var(--text-tertiary); padding:8px 0 4px";
+      empty.textContent = "Aún no tienes posiciones abiertas. Ejecuta tu primer swap en la pestaña TRENCHES.";
+      wrap.appendChild(empty);
+      left.appendChild(wrap);
+      return;
+    }
+    const head = document.createElement("div");
+    head.className = "pf-pos-head";
+    head.innerHTML = `<div>Token</div><div class="pos-col-2" style="text-align:right">Precio</div><div style="text-align:right">Cantidad</div><div class="pos-col-4" style="text-align:right">Valor</div><div style="text-align:right">PnL</div>`;
+    wrap.appendChild(head);
+    const list = document.createElement("div");
+    for (const p of open) {
+      const sym = this.symbolFor(p);
+      const v = this.positionValue(p);
+      const invested = Number(p.net_invested_usdc || 0) / 1e6;
+      const units = Number(p.amount_remaining || 0) / 1e6;
+      const value = v.live ? v.value : invested;
+      const unrealized = v.live && invested > 0 ? v.value - invested : null;
+      const pnlPct = v.live && invested > 0 ? ((v.value - invested) / invested) * 100 : null;
+      const pnlColor = unrealized === null ? "var(--text-tertiary)" : unrealized >= 0 ? "var(--delta-green)" : "var(--delta-red)";
+      const row = document.createElement("div");
+      row.className = "pf-pos-row";
+      row.title = "Abrir en el terminal";
+      row.onclick = () => window.App.openTradeForToken(sym, p.chain || "solana", v.price || 0, String(p.token || "").length > 20 ? p.token : undefined);
+      row.innerHTML = `
+        <div style="display:flex; align-items:center; gap:9px; min-width:0">
+          ${TokenMeta.logoHtml(sym, { size: 28 })}
           <div style="min-width:0">
-            <div style="font-weight:800; font-size:14px">$${sym}</div>
-            <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase">
-              ${p.chain} · entrada ${fmtUsdMicro(p.avg_entry_usdc)}
-            </div>
+            <div style="font-weight:800; font-size:12.5px; color:#fff">${escHtml(sym)}</div>
+            <div style="font-size:9.5px; color:var(--text-tertiary); text-transform:uppercase">${escHtml(p.chain || "")} · entrada ${fmtUsdMicro(p.avg_entry_usdc)}</div>
           </div>
         </div>
+        <div class="pos-col-2 mono" style="text-align:right; font-size:11.5px; color:var(--text-secondary)">${v.live ? "$" + (v.price < 0.01 ? v.price.toPrecision(3) : v.price.toLocaleString("en-US", { maximumFractionDigits: 2 })) : "—"}</div>
+        <div class="mono" style="text-align:right; font-size:11.5px; color:#fff">${units.toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+        <div class="pos-col-4 mono" style="text-align:right; font-size:11.5px; font-weight:800; color:#fff">${v.live ? fmtUsd(value) : "—"}</div>
         <div style="text-align:right">
-          <div class="mono" style="font-weight:800; font-size:14px; color:#fff">${v.live ? fmtUsd(v.value) : fmtUsdMicro(p.net_invested_usdc)}</div>
-          <div style="font-size:11px; color:var(--text-tertiary)">
-            ${v.live
-              ? `${unrealized >= 0 ? "+" : ""}${fmtUsd(unrealized).replace("$", "$")} no realizado`
-              : `${Number(p.amount_remaining || 0).toLocaleString("en-US", { maximumFractionDigits: 4 })} unidades`}
-          </div>
-          <div style="font-size:10px; color:${uColor}">${v.live ? `precio $${v.price < 0.01 ? v.price.toFixed(6) : v.price.toFixed(2)}` : "sin precio en vivo"}</div>
+          <div class="mono" style="font-size:11.5px; font-weight:800; color:${pnlColor}">${unrealized === null ? "—" : (unrealized >= 0 ? "+" : "") + fmtUsd(unrealized)}</div>
+          <div class="mono" style="font-size:9.5px; color:${pnlColor}">${pnlPct === null ? (v.live ? "" : "sin precio") : this.fmtPct(pnlPct)}</div>
         </div>`;
-      }
-    );
-    this.target().appendChild(panel);
+      list.appendChild(row);
+    }
+    wrap.appendChild(list);
+    left.appendChild(wrap);
   },
 
   /* ── Trade history ── */
@@ -621,35 +707,39 @@ export const PortfolioEngine = {
           day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
         });
         return `
-        <div style="display:flex; align-items:center; gap:10px; min-width:0">
-          ${TokenMeta.logoHtml(sym, { size: 26 })}
-          <div>
-            <div style="font-weight:800; font-size:13px">${side} ${sym}</div>
-            <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase">${t.from_chain} · ${date} · ${t.status}</div>
+        <div style="display:flex; align-items:center; gap:9px; min-width:0">
+          ${TokenMeta.logoHtml(sym, { size: 24 })}
+          <div style="min-width:0">
+            <div style="display:flex; align-items:center; gap:6px">
+              <span class="pf-side ${t.type === "buy" ? "buy" : "sell"}">${side}</span>
+              <span style="font-weight:800; font-size:12px; color:#fff">${escHtml(sym)}</span>
+            </div>
+            <div style="font-size:9.5px; color:var(--text-tertiary)">${escHtml(t.from_chain)} · ${date}</div>
           </div>
         </div>
         <div style="text-align:right">
-          <div class="mono" style="font-weight:800; font-size:13px; color:${color}">${hasPnl ? signedUsdMicro(t.realized_pnl_usdc) : fmtUsdMicro(t.buy_amount)}</div>
-          ${hasPnl ? `<div style="font-size:11px; color:var(--text-tertiary)">PnL realizado</div>` : ""}
+          <div class="mono" style="font-weight:800; font-size:12px; color:${color}">${hasPnl ? signedUsdMicro(t.realized_pnl_usdc) : fmtUsdMicro(t.buy_amount)}</div>
+          <div style="font-size:9px; color:var(--text-tertiary); text-transform:uppercase">${hasPnl ? "PnL realizado" : escHtml(t.status)}</div>
         </div>`;
       }
     );
-    this.target().appendChild(panel);
+    this.into("pfLeft")?.appendChild(panel);
   },
 
   /* ── Wallets ── */
 
   appendWallets() {
-    const el = this.target();
+    const el = this.into("pfRight");
+    if (!el) return;
     const wrap = document.createElement("div");
     wrap.className = "glass-panel";
-    wrap.style.cssText = "padding:24px; margin-bottom:20px";
+    wrap.style.cssText = "padding:16px 18px";
     wrap.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
-        <h3 style="font-size:15px; font-weight:800; margin:0">👛 Mis Billeteras</h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">Mis Billeteras</h3>
         <div style="display:flex; gap:8px">
           <button class="btn btn-secondary btn-sm" onclick="window.PortfolioEngine.promptImportWallet()">+ Importar</button>
-          <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.promptDeleteWallet()">🗑 Eliminar</button>
+          <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.promptDeleteWallet()">🗑</button>
         </div>
       </div>`;
     const list = document.createElement("div");
@@ -679,21 +769,21 @@ export const PortfolioEngine = {
   makePanel(title, emptyText, rows, rowHtml) {
     const wrap = document.createElement("div");
     wrap.className = "glass-panel";
-    wrap.style.cssText = "padding:24px; margin-bottom:20px";
-    wrap.innerHTML = `<h3 style="font-size:15px; font-weight:800; margin-bottom:14px">${title}</h3>`;
+    wrap.style.cssText = "padding:16px 18px; margin-bottom:14px";
+    wrap.innerHTML = `<h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin-bottom:10px">${title}</h3>`;
     if (rows.length === 0) {
       const empty = document.createElement("div");
-      empty.style.cssText = "font-size:13px; color:var(--text-tertiary)";
+      empty.style.cssText = "font-size:12.5px; color:var(--text-tertiary)";
       empty.textContent = emptyText;
       wrap.appendChild(empty);
       return wrap;
     }
     const list = document.createElement("div");
-    list.style.cssText = "display:flex; flex-direction:column; gap:10px";
+    list.style.cssText = "display:flex; flex-direction:column; gap:8px";
     for (const row of rows) {
       const div = document.createElement("div");
       div.style.cssText =
-        "display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md)";
+        "display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:10px";
       div.innerHTML = rowHtml(row);
       list.appendChild(div);
     }

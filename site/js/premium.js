@@ -132,21 +132,33 @@ export const PremiumEngine = {
 
   ensureContainer(id) {
     let el = document.getElementById(id);
-    if (!el) {
+    if (el) return el;
+    // FOMO layout: premium & referrals live in the right column. Before the
+    // portfolio renders, pfRight does not exist yet — creating the container
+    // inside #view-profile would land it outside the 3-column shell, so we
+    // skip and wait: PortfolioEngine.render() re-calls PremiumEngine.render()
+    // after the columns are built.
+    const pfRight = document.getElementById("pfRight");
+    const section = document.getElementById("view-profile");
+    if (pfRight) {
       el = document.createElement("div");
       el.id = id;
-      document.getElementById("view-profile")?.appendChild(el);
+      pfRight.appendChild(el);
+    } else if (!document.getElementById("portfolioMain") && section) {
+      el = document.createElement("div");
+      el.id = id;
+      section.appendChild(el);
     }
-    return el;
+    return el ?? null;
   },
 
   renderSubscription() {
     const el = document.getElementById("premiumContainer");
     if (!el) return;
     el.innerHTML = `
-      <div class="glass-panel" style="padding:24px; margin-bottom:20px">
+      <div class="glass-panel" style="padding:16px 18px; margin-bottom:14px">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-          <h3 style="font-size:15px; font-weight:800; margin:0">💎 Planes Premium</h3>
+          <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">💎 Planes Premium</h3>
           <span class="brand-badge" style="font-size:10px">Plan actual: ${this.tierBadge(this.currentTier)}</span>
         </div>
         <p style="font-size:12px; color:var(--text-tertiary); margin-bottom:18px">
