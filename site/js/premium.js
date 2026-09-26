@@ -33,7 +33,7 @@ export const PremiumEngine = {
       alert("Conecta tu wallet primero para obtener tu código de referido.");
       return;
     }
-    const link = `https://inusaur.online/?ref=${encodeURIComponent(code)}`;
+    const link = `https://inusaur.online/app.html?ref=${encodeURIComponent(code)}`;
     navigator.clipboard
       .writeText(link)
       .then(() => alert("Enlace de referido copiado:\n" + link))

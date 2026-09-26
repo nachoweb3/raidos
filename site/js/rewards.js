@@ -110,7 +110,7 @@ export const RewardsEngine = {
   copyReferralLink() {
     const code = this.data?.refCode;
     if (!code) return;
-    const link = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}join.html?ref=${encodeURIComponent(code)}`;
+    const link = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}app.html?ref=${encodeURIComponent(code)}`;
     navigator.clipboard?.writeText(link).then(
       () => alert("📋 Link copiado:\n" + link),
       () => prompt("Copia tu link de referral:", link)
@@ -231,7 +231,7 @@ export const RewardsEngine = {
             ${this.row("Rewards obtenidas", `<span style="color:var(--delta-green); font-weight:800">${fmtUsdMicro(stats.tradingRewardsUsdc)}</span>`)}
           </div>
           <div style="margin-top:14px; font-size:10.5px; color:var(--text-tertiary); line-height:1.6">
-            Cada operación confirmada devuelve un % de tu fee real. Máximo diario: ${fmtUsdMicro(String((cfg.maxDailyRewardUsdc ?? 0) * 1e6))}.
+            Cada operación confirmada devuelve un % de tu fee real. Máximo diario: ${fmtUsdMicro(String((cfg.maxDailyRewardUsdc ?? 0) * 1e6))}. Reclamable desde ${fmtUsdMicro(String((cfg.minClaimUsdc ?? 5) * 1e6))} disponibles, pagados en USDC on-chain a una wallet vinculada.
           </div>
         </div>
 
@@ -250,7 +250,7 @@ export const RewardsEngine = {
             <button class="btn btn-secondary btn-sm" onclick="window.RewardsEngine.copyReferralLink()">📋 COPY REFERRAL LINK</button>
           </div>
           <div style="margin-top:12px; font-size:10.5px; color:var(--text-tertiary); line-height:1.6">
-            Ganas ${pct(cfg.referralRewardRate)} de las fees que generan tus referidos — solo con su actividad real, nunca por registrarse.
+            Ganas ${pct(cfg.referralRewardRate)} de las fees que generan tus referidos — solo con su actividad real, nunca por registrarse. Comparte tu link: la atribución se fija en su primer login.
           </div>
         </div>
       </div>

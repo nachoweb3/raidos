@@ -15,14 +15,14 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TRENCHES">
   <meta property="og:title" content="TRENCHES — The Social Network for Markets">
-  <meta property="og:description" content="Trading real en Solana, Ethereum y Base con cashback del 20% del fee. Descubre wallets, lanza tokens y opera en tiempo real — sin custodia de tus claves.">
+  <meta property="og:description" content="Trading real en Solana, Ethereum y Base con rewards reales: 10% de tus fees + 10% de las fees de tu red, en USDC. Descubre wallets, lanza tokens y opera en tiempo real — sin custodia de tus claves.">
   <meta property="og:url" content="https://inusaur.online/">
   <meta property="og:image" content="https://inusaur.online/assets/og-image.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="TRENCHES — The Social Network for Markets">
-  <meta name="twitter:description" content="Trading real on-chain con cashback del 20% del fee. Registro abierto — entra y opera hoy.">
+  <meta name="twitter:description" content="Trading real on-chain con rewards reales en USDC. Registro abierto — entra y opera hoy.">
   <meta name="twitter:image" content="https://inusaur.online/assets/og-image.jpg">
   <link rel="stylesheet" href="css/design-system.css">
   <link rel="stylesheet" href="css/terminal-premium.css?v=20260922-2">
@@ -641,12 +641,12 @@
 
     <!-- Un solo CTA primario: sin competencias en el hero -->
     <div class="hero-actions">
-      <a class="btn btn-primary" href="app.html" style="min-height:52px;padding:16px 32px;font-size:16px">Crear cuenta gratis y operar →</a>
+      <a class="btn btn-primary" href="app.html" style="min-height:52px;padding:16px 32px;font-size:16px" data-forward-ref>Crear cuenta gratis y operar →</a>
       <button class="btn btn-ghost" data-install-app type="button" style="min-height:52px;padding:16px 24px">Instalar la app</button>
 
       <div class="waitlist-stats">
         <span class="status-dot" style="background:#22c55e; box-shadow:0 0 8px #22c55e"></span>
-        <span>Registro abierto · Cashback + referidos: hasta el 20% del fee de vuelta en USDC</span>
+        <span>Registro abierto · Rewards: 10% de tus fees + 10% de las fees de tu red, en USDC</span>
       </div>
     </div>
 
@@ -836,10 +836,10 @@
       Ya está live. Ahora falta tú.
     </h2>
     <p style="max-width:560px; margin:0 auto 30px; font-size:15px; color:var(--text-secondary)">
-      Trading real en Solana, Ethereum y Base con cashback del 20% del fee y pagos on-chain. Crea tu cuenta en 10 segundos — sin invitaciones, sin lista de espera.
+      Trading real en Solana, Ethereum y Base: el 10% de cada fee vuelve a ti en USDC (y el 10% de las fees de tus referidos). Crea tu cuenta en 10 segundos — sin invitaciones, sin lista de espera.
     </p>
     <div style="display:flex; justify-content:center">
-      <a class="btn btn-primary btn-lg" href="app.html" style="min-height:52px;padding:16px 32px">EMPEZAR AHORA →</a>
+      <a class="btn btn-primary btn-lg" href="app.html" style="min-height:52px;padding:16px 32px" data-forward-ref>EMPEZAR AHORA →</a>
     </div>
   </section>
 
@@ -943,5 +943,20 @@
     }
   </script>
   <script type="module" src="js/install.js?v=20260922-2"></script>
+  <!-- Referral forwarding: app.html captures ?ref= for attribution; the
+       landing must not swallow it on the way to the app. -->
+  <script>
+    (function () {
+      var ref = new URLSearchParams(location.search).get("ref");
+      if (!ref) return;
+      document.querySelectorAll("a[href*=\"app.html\"]").forEach(function (a) {
+        try {
+          var u = new URL(a.getAttribute("href"), location.origin);
+          if (!u.searchParams.get("ref")) u.searchParams.set("ref", ref);
+          a.setAttribute("href", u.pathname + "?" + u.searchParams.toString());
+        } catch (e) {}
+      });
+    })();
+  </script>
 </body>
 </html>
