@@ -27,7 +27,44 @@
   <link rel="stylesheet" href="css/design-system.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"></noscript>
+  <!-- Boot loader: paint-first (inline CSS, zero dependencies, hides on window load). -->
+  <style>
+    #bootLoader {
+      position: fixed; inset: 0; z-index: 2147483000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background:
+        radial-gradient(ellipse 70% 45% at 50% 38%, rgba(212,175,106,0.10), transparent 70%),
+        #050505;
+      color: #fff; opacity: 1; transition: opacity .3s ease;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #bootLoader.boot-hide { opacity: 0; pointer-events: none; }
+    #bootLoader .boot-wordmark {
+      font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+      font-size: 34px; letter-spacing: 1px; color: #fff; user-select: none;
+    }
+    #bootLoader .boot-wordmark em { font-style: italic; color: #d4af6a; }
+    #bootLoader .boot-bar {
+      width: 180px; height: 2px; margin-top: 22px; border-radius: 2px;
+      background: rgba(212,175,106,0.14); overflow: hidden; position: relative;
+    }
+    #bootLoader .boot-bar::after {
+      content: ""; position: absolute; top: 0; left: 0; height: 100%; width: 40%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, #d4af6a, #f0d9a0, #d4af6a, transparent);
+      animation: boot-scan 1.15s ease-in-out infinite;
+    }
+    @keyframes boot-scan {
+      0% { transform: translateX(-110%); }
+      100% { transform: translateX(300%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #bootLoader .boot-bar::after { animation: none; left: 30%; }
+      #bootLoader { transition: none; }
+    }
+  </style>
 
   <style>
     /* ═══════════════════════════════════════════════════════════════
@@ -1094,6 +1131,11 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Saltar al contenido</a>
+  <!-- ── Boot loader (first paint; removed on window load) ── -->
+  <div id="bootLoader" role="status" aria-label="Cargando TRENCHES">
+    <div class="boot-wordmark">TREN<em>CHES</em></div>
+    <div class="boot-bar" aria-hidden="true"></div>
+  </div>
   <div class="grid-bg" aria-hidden="true"></div>
   <div class="grain" aria-hidden="true"></div>
 
@@ -1541,6 +1583,27 @@
           a.setAttribute("href", u.pathname + "?" + u.searchParams.toString());
         } catch (e) {}
       });
+    })();
+  </script>
+  <script>
+    (function () {
+      "use strict";
+      var el = document.getElementById("bootLoader");
+      var done = false;
+      function hide() {
+        if (done || !el) return;
+        done = true;
+        el.classList.add("boot-hide");
+        setTimeout(function () { el.remove(); }, 350);
+        window.removeEventListener("load", hide);
+        window.removeEventListener("error", onError, true);
+      }
+      function onError(e) {
+        if (e && (e instanceof ErrorEvent)) hide();
+      }
+      window.addEventListener("load", hide);
+      window.addEventListener("error", onError, true);
+      setTimeout(hide, 8000);
     })();
   </script>
 </body>
