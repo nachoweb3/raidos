@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 🖥 API SERVER — HTTP interface for the RaidOS trading app
  * Node-native http (zero dependencies). Serves:
  *   - /api/*    JSON API (Bearer API-key auth)
@@ -51,7 +51,7 @@ import { RewardsEngine } from "../trading/rewards.js";
 import { BalanceScanner } from "../wallets/balances.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
-import { TelegramSignalSource } from "../telegram/source.js";
+import { TelegramSignalSource, type TelegramSignalCandidate } from "../telegram/source.js";
 import { hashExecutionRequest } from "../trading/lifecycle.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { isUsdc as isChainUsdc, toMicroUsdc } from "../trading/pnl.js";
@@ -289,17 +289,42 @@ export class ApiServer {
     if (this.telegramSource.enabled) {
       this.tgStopped = false;
       let backoffMs = 0;
+      const snapshotSignalPrices = async (candidates: TelegramSignalCandidate[]): Promise<void> => {
+        for (const c of candidates) {
+          try {
+            const chain = c.chain === "evm" ? "ethereum" : (c.chain || "solana");
+            if (chain === "unknown") continue;
+            const snapshot = await this.marketData.tokens(chain, [c.token]);
+            const pair = snapshot?.data?.[0];
+            if (pair && Number(pair.priceUsd) > 0) {
+              const price = Number(pair.priceUsd);
+              const mcap = Number(pair.marketCap ?? pair.fdv ?? 0) || null;
+              this.db.updateTgSignalEntry(c.chatId, c.messageId, c.token, price, mcap);
+            }
+          } catch {
+            // Market lookup is best-effort: new tokens might not be indexed yet on DexScreener
+          }
+        }
+      };
       const tgPass = async (): Promise<void> => {
         if (this.tgStopped) return;
         const result = await this.telegramSource.poll(
-          (candidates) => this.db.insertTgSignals(
-            candidates.map((c) => ({
-              chat_id: c.chatId, message_id: c.messageId, update_id: 0, token: c.token,
-              chain: c.chain, symbol: c.symbol, author_id: c.authorId,
-              author_name: c.authorName, text: c.text, ts: c.ts,
-              fetched_at: Math.floor(Date.now() / 1000),
-            })),
-          ),
+          (candidates) => {
+            const inserted = this.db.insertTgSignals(
+              candidates.map((c) => ({
+                chat_id: c.chatId, message_id: c.messageId, update_id: 0, token: c.token,
+                chain: c.chain, symbol: c.symbol, author_id: c.authorId,
+                author_name: c.authorName, text: c.text, ts: c.ts,
+                fetched_at: Math.floor(Date.now() / 1000),
+                entry_price: c.entryPrice ?? null,
+                entry_mcap: c.entryMcap ?? null,
+              })),
+            );
+            if (inserted > 0) {
+              void snapshotSignalPrices(candidates);
+            }
+            return inserted;
+          },
           (token, chatId, messageId) =>
             messageId > 0
               ? this.db.hasTgSignal(token, chatId, messageId)
@@ -901,10 +926,16 @@ export class ApiServer {
         sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "TG_NOT_CONFIGURED", signals: [] });
         return;
       }
-      const limitRaw = Number(ctx.query.get("limit") ?? 100);
-      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 300) : 100;
+      // `since` = unix timestamp (seconds); when present, fetch all rows in the window (up to 500).
+      const sinceRaw = ctx.query.get("since");
+      const since = sinceRaw ? Number(sinceRaw) : undefined;
+      const hasSince = since != null && Number.isFinite(since) && since > 0;
+      const defaultLimit = hasSince ? 500 : 150;
+      const limitRaw = Number(ctx.query.get("limit") ?? defaultLimit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 500) : defaultLimit;
       const chain = (ctx.query.get("chain") ?? "").trim() || undefined;
-      const signals = this.db.listTgSignals(limit, chain).map((s: any) => ({
+      const caller = (ctx.query.get("caller") ?? "").trim() || undefined;
+      const signals = this.db.listTgSignals(limit, chain, caller, hasSince ? since : undefined).map((s: any) => ({
         id: Number(s.id),
         chatId: String(s.chat_id),
         messageId: Number(s.message_id),
@@ -915,13 +946,72 @@ export class ApiServer {
         authorName: String(s.author_name ?? ""),
         text: String(s.text ?? ""),
         ts: Number(s.ts),
+        entryPrice: s.entry_price != null ? Number(s.entry_price) : null,
+        entryMcap: s.entry_mcap != null ? Number(s.entry_mcap) : null,
       }));
       sendJson(ctx.res, 200, {
         status: "LIVE",
         signals,
         count: signals.length,
+        since: hasSince ? since : null,
+        caller: caller ?? null,
         lastSuccessAt: this.telegramSource.lastSuccessAt || null,
         lastError: this.telegramSource.lastError,
+      });
+    });
+
+    // ── Telegram avatar proxy ──
+    // Returns the Telegram profile photo URL for a given authorId.
+    // Results are cached in memory for 24 h to avoid hammering the Bot API.
+    this.router.publicRoute("GET", "/api/tg/avatar/:authorId", async (ctx) => {
+      const authorId = ctx.params.authorId ?? "";
+      if (!authorId || authorId === "0" || !this.telegramSource.enabled) {
+        sendJson(ctx.res, 200, { url: null });
+        return;
+      }
+      const cached = (this as any)._tgAvatarCache?.get(authorId);
+      if (cached !== undefined) {
+        sendJson(ctx.res, 200, { url: cached });
+        return;
+      }
+      if (!(this as any)._tgAvatarCache) (this as any)._tgAvatarCache = new Map<string, string | null>();
+      try {
+        const token = process.env.TG_BOT_TOKEN ?? "";
+        if (!token) { sendJson(ctx.res, 200, { url: null }); return; }
+        const photosRes = await fetch(`https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${encodeURIComponent(authorId)}&limit=1`);
+        const photosJson = await photosRes.json() as any;
+        const fileId = photosJson?.result?.photos?.[0]?.[0]?.file_id;
+        if (!fileId) {
+          (this as any)._tgAvatarCache.set(authorId, null);
+          sendJson(ctx.res, 200, { url: null });
+          return;
+        }
+        const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
+        const fileJson = await fileRes.json() as any;
+        const filePath = fileJson?.result?.file_path;
+        const url = filePath ? `https://api.telegram.org/file/bot${token}/${filePath}` : null;
+        (this as any)._tgAvatarCache.set(authorId, url);
+        // Expire cache entry after 24 h
+        if (url) setTimeout(() => (this as any)._tgAvatarCache?.delete(authorId), 86_400_000);
+        sendJson(ctx.res, 200, { url });
+      } catch {
+        (this as any)._tgAvatarCache.set(authorId, null);
+        sendJson(ctx.res, 200, { url: null });
+      }
+    });
+
+    this.router.publicRoute("GET", "/api/tg/callers", (ctx) => {
+      if (!this.telegramSource.enabled) {
+        sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "TG_NOT_CONFIGURED", callers: [] });
+        return;
+      }
+      const limitRaw = Number(ctx.query.get("limit") ?? 50);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
+      const callers = this.db.getTgCallerStats(limit);
+      sendJson(ctx.res, 200, {
+        status: "LIVE",
+        callers,
+        count: callers.length,
       });
     });
 

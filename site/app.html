@@ -65,41 +65,41 @@
   </style>
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script defer src="vendor/lightweight-charts/lightweight-charts.js?v=4.2.0"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260929-3">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-3">
+  <link rel="stylesheet" href="css/catalog.css?v=20260929-4">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-4">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
-  <script type="module" src="js/tg-signals.js?v=20260929-3"></script>
+  <script type="module" src="js/tg-signals.js?v=20260929-4"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260929-3",
-      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-3",
-      "./js/copy.js": "./js/copy.js?v=20260929-3",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-3",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-3",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-3",
-      "./js/discover.js": "./js/discover.js?v=20260929-3",
-      "./js/feed.js": "./js/feed.js?v=20260929-3",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260929-3",
-      "./js/markets.js": "./js/markets.js?v=20260929-3",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260929-3",
-      "./js/rails.js": "./js/rails.js?v=20260929-3",
-      "./js/premium.js": "./js/premium.js?v=20260929-3",
-      "./js/rewards.js": "./js/rewards.js?v=20260929-3",
-      "./js/social.js": "./js/social.js?v=20260929-3",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-3",
-      "./js/app.js": "./js/app.js?v=20260929-3",
-      "./js/trenches.js": "./js/trenches.js?v=20260929-3",
-      "./js/tokens.js": "./js/tokens.js?v=20260929-3",
-      "./js/trading.js": "./js/trading.js?v=20260929-3",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-3",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-3",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-3",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-3",
-      "./js/install.js": "./js/install.js?v=20260929-3",
-      "./js/public-market.js": "./js/public-market.js?v=20260929-3",
-      "./js/pairs.js": "./js/pairs.js?v=20260929-3",
-      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-3",
-      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-3"
+      "./js/api.js": "./js/api.js?v=20260929-4",
+      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-4",
+      "./js/copy.js": "./js/copy.js?v=20260929-4",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-4",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-4",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-4",
+      "./js/discover.js": "./js/discover.js?v=20260929-4",
+      "./js/feed.js": "./js/feed.js?v=20260929-4",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260929-4",
+      "./js/markets.js": "./js/markets.js?v=20260929-4",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260929-4",
+      "./js/rails.js": "./js/rails.js?v=20260929-4",
+      "./js/premium.js": "./js/premium.js?v=20260929-4",
+      "./js/rewards.js": "./js/rewards.js?v=20260929-4",
+      "./js/social.js": "./js/social.js?v=20260929-4",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-4",
+      "./js/app.js": "./js/app.js?v=20260929-4",
+      "./js/trenches.js": "./js/trenches.js?v=20260929-4",
+      "./js/tokens.js": "./js/tokens.js?v=20260929-4",
+      "./js/trading.js": "./js/trading.js?v=20260929-4",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-4",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-4",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-4",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-4",
+      "./js/install.js": "./js/install.js?v=20260929-4",
+      "./js/public-market.js": "./js/public-market.js?v=20260929-4",
+      "./js/pairs.js": "./js/pairs.js?v=20260929-4",
+      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-4",
+      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-4"
     } }
   </script>
 
@@ -401,38 +401,95 @@
     }
     .pill-tabs-bar::-webkit-scrollbar { display: none; }
 
-    /* ── 📡 TG Signals (Señales TG) ── */
-    .tg-toolbar {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      flex-wrap: wrap; margin-bottom: 14px;
+    /* ── 📡 TG Signals v2 — Filtros de tiempo, logos, avatares ── */
+
+    /* Toolbar */
+    .tg-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .tg-toolbar-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .tg-toolbar-label { font-size: 11px; color: var(--text-tertiary); font-weight: 600; }
+    .tg-filter-row { gap: 8px; flex-wrap: wrap; }
+    .tg-filter-group { display: flex; gap: 4px; flex-wrap: wrap; }
+    .tg-filter-btn {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full); padding: 4px 12px;
+      font-size: 11.5px; font-weight: 600; color: var(--text-secondary);
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
     }
-    .tg-loading { text-align: center; padding: 40px 0; color: var(--text-tertiary); font-size: 13px; }
-    .tg-row-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .tg-sym { font-weight: 800; font-size: 14px; color: #fff; }
-    .tg-token {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px; color: var(--text-secondary); margin-top: 4px;
-      word-break: break-all;
-    }
-    .tg-text {
-      font-size: 12px; color: var(--text-tertiary); margin-top: 6px;
-      max-height: 3.6em; overflow: hidden;
-    }
-    .tg-row-actions {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      margin-top: 10px; flex-wrap: wrap;
-    }
-    .tg-author { font-size: 11px; color: var(--text-tertiary); }
+    .tg-filter-btn:hover { color: #fff; border-color: var(--border-mid); background: rgba(255,255,255,0.08); }
+    .tg-filter-btn.active { color: #f59e0b; border-color: rgba(245,158,11,0.5); background: rgba(245,158,11,0.12); font-weight: 700; }
+    .tg-time-btn.active { color: #a78bfa; border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.1); }
+
+    /* Contador */
+    .tg-count-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 6px 10px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: 8px; }
+    .tg-count-badge { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+
+    /* Card principal */
+    .tg-card { padding: 14px 16px; margin-bottom: 10px; border-radius: 12px; display: flex; flex-direction: column; gap: 8px; animation: tgCardIn 0.2s ease; }
+    @keyframes tgCardIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .tg-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .tg-card-left { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+    .tg-card-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+    .tg-card-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .tg-card-sym-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    /* Avatar del caller */
+    .tg-caller-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.06); }
+    .tg-caller-avatar-sm { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1.5px solid rgba(255,255,255,0.1); }
+
+    /* Logo del token */
+    .tg-token-logo { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: rgba(255,255,255,0.04); }
+
+    .tg-sym { font-weight: 800; font-size: 15px; color: #fff; }
+    .tg-token-addr { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-tertiary); word-break: break-all; line-height: 1.4; }
+    .tg-text { font-size: 12px; color: var(--text-secondary); line-height: 1.5; max-height: 4em; overflow: hidden; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 8px; }
+
+    /* Métricas de precio */
+    .tg-card-metrics { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .tg-metrics-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .tg-price-badge { font-weight: 800; font-size: 14px; color: #f59e0b; font-family: ui-monospace, SFMono-Regular, monospace; }
+    .tg-mcap-badge { font-size: 11px; color: var(--text-secondary); background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 5px; }
+    .tg-delta { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 5px; }
+    .tg-delta-pos { color: #10b981; background: rgba(16,185,129,0.12); }
+    .tg-delta-neg { color: #ef4444; background: rgba(239,68,68,0.12); }
+    .tg-delta-zero { color: var(--text-tertiary); }
+
+    /* ROI badge — prominente */
+    .tg-roi-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--radius-full); font-size: 12px; font-weight: 800; }
+    .tg-roi-pos { color: #10b981; background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.35); }
+    .tg-roi-neg { color: #ef4444; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.35); }
+    .tg-roi-mult { font-weight: 900; font-size: 13px; }
+    .tg-roi-pct { font-size: 10.5px; opacity: 0.85; }
+    .tg-entry-only { font-size: 11px; color: var(--text-tertiary); font-style: italic; }
     .tg-ago { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
-    .tg-chip {
-      display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
-      border-radius: var(--radius-full); font-size: 10.5px; font-weight: 700;
-      border: 1px solid var(--border-subtle);
-    }
+
+    /* Footer */
+    .tg-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.05); }
+
+    /* Chips de cadena */
+    .tg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-full); font-size: 10.5px; font-weight: 700; border: 1px solid var(--border-subtle); }
     .tg-sol { color: #9ff5b8; border-color: rgba(57,255,20,0.35); background: rgba(57,255,20,0.08); }
     .tg-evm { color: #9fc3ff; border-color: rgba(80,140,255,0.35); background: rgba(80,140,255,0.08); }
     .tg-unk { color: var(--text-tertiary); }
     .tg-link { color: var(--text-secondary); text-decoration: none; }
+    .tg-link:hover { color: #fff; }
+
+    /* Banner filtro activo */
+    .tg-caller-banner { display: flex; align-items: center; justify-content: space-between; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--text-primary); }
+
+    /* Pill del autor */
+    .tg-author-pill { font-size: 11px; color: var(--text-secondary); cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: all 0.15s; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 4px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tg-author-pill:hover { color: #fff; background: rgba(255,255,255,0.08); border-color: var(--border-subtle); }
+    .tg-author-pill.active { color: #f59e0b; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.35); font-weight: 700; }
+
+    /* Panel de callers */
+    .tg-callers-panel { background: rgba(15,23,42,0.95); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+    .tg-callers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+    .tg-caller-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; transition: border-color 0.15s; }
+    .tg-caller-card:hover { border-color: rgba(255,255,255,0.15); }
+    .tg-caller-card.active { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); }
+
+    .tg-loading { text-align: center; padding: 40px 0; color: var(--text-tertiary); font-size: 13px; }
+
 
     .pill-tab {
       background: rgba(255, 255, 255, 0.035);
@@ -693,7 +750,7 @@
       .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
     }
   </style>
-<link rel="stylesheet" href="css/workstation.css?v=20260929-3">
+<link rel="stylesheet" href="css/workstation.css?v=20260929-4">
 </head>
 <body>
   <!-- ── Boot loader (first paint; removed on window load) ── -->
@@ -1476,7 +1533,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260929-3"></script>
+  <script type="module" src="js/app.js?v=20260929-4"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1742,6 +1799,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260929-3"></script>
+  <script type="module" src="js/install.js?v=20260929-4"></script>
 </body>
 </html>

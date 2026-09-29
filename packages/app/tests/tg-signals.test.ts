@@ -322,6 +322,43 @@ describe("AppDb tg_signals", () => {
     expect(db.countTgSignals()).toBe(3);
   });
 
+  it("records entry price and mcap, allows updating entry, and filters by caller", () => {
+    db.insertTgSignals([
+      row({ message_id: 9001, token: SOL_MINT, author_name: "@alpha_king", author_id: "101", entry_price: 0.05, entry_mcap: 50000 }),
+      row({ message_id: 9002, token: EVM_ADDR, author_name: "@beta_trader", author_id: "102", entry_price: 1.25, entry_mcap: 1250000 }),
+    ]);
+
+    const alphaCalls = db.listTgSignals(10, undefined, "@alpha_king");
+    expect(alphaCalls).toHaveLength(1);
+    expect(alphaCalls[0].entry_price).toBe(0.05);
+    expect(alphaCalls[0].entry_mcap).toBe(50000);
+
+    // Matching without @ prefix
+    const alphaCallsNoAt = db.listTgSignals(10, undefined, "alpha_king");
+    expect(alphaCallsNoAt).toHaveLength(1);
+
+    // Update entry price
+    expect(db.updateTgSignalEntry("-1003686690861", 9001, SOL_MINT, 0.08, 80000)).toBe(true);
+    const updated = db.listTgSignals(10, undefined, "101");
+    expect(updated[0].entry_price).toBe(0.08);
+    expect(updated[0].entry_mcap).toBe(80000);
+  });
+
+  it("aggregates caller statistics with getTgCallerStats", () => {
+    db.insertTgSignals([
+      row({ message_id: 9101, token: SOL_MINT, author_name: "@whale", author_id: "200", chain: "solana", entry_price: 0.1 }),
+      row({ message_id: 9102, token: EVM_ADDR, author_name: "@whale", author_id: "200", chain: "base", entry_price: 0.2 }),
+    ]);
+
+    const callers = db.getTgCallerStats(10);
+    expect(callers.length).toBeGreaterThanOrEqual(1);
+    const whale = callers.find((c) => c.authorName === "@whale");
+    expect(whale).toBeDefined();
+    expect(whale?.totalCalls).toBe(2);
+    expect(whale?.callsWithEntryPrice).toBe(2);
+    expect(whale?.chains).toEqual(expect.arrayContaining(["solana", "base"]));
+  });
+
   it("persists and reloads the poll offset", () => {
     expect(db.getTgOffset()).toBe(0);
     db.setTgOffset(1234);
@@ -350,6 +387,8 @@ describe("API routes /api/tg/*", () => {
     const body = await res.json() as any;
     expect(body.error).toBe("TG_NOT_CONFIGURED");
     expect(body.signals).toEqual([]);
+    const callersRes = await fetch(base + "/api/tg/callers");
+    expect(callersRes.status).toBe(503);
     const status = await (await fetch(base + "/api/tg/status")).json() as any;
     expect(status.enabled).toBe(false);
     expect(status.signals).toBe(0);
@@ -365,6 +404,7 @@ describe("API routes /api/tg/*", () => {
       chat_id: "-1003686690861", message_id: 8469, update_id: 1, token: SOL_MINT,
       chain: "solana", symbol: "BONK", author_id: "7", author_name: "@vip",
       text: `CA ${SOL_MINT}`, ts: 1700, fetched_at: 1701,
+      entry_price: 0.00042, entry_mcap: 420000,
     }]);
 
     const res = await fetch(base + "/api/tg/signals?limit=10");
@@ -372,7 +412,22 @@ describe("API routes /api/tg/*", () => {
     const body = await res.json() as any;
     expect(body.status).toBe("LIVE");
     expect(body.signals).toHaveLength(1);
-    expect(body.signals[0]).toMatchObject({ token: SOL_MINT, symbol: "BONK", chain: "solana", messageId: 8469 });
+    expect(body.signals[0]).toMatchObject({
+      token: SOL_MINT, symbol: "BONK", chain: "solana", messageId: 8469,
+      entryPrice: 0.00042, entryMcap: 420000,
+    });
+
+    // Caller filter
+    const callerRes = await (await fetch(base + "/api/tg/signals?caller=@vip")).json() as any;
+    expect(callerRes.signals).toHaveLength(1);
+    const callerMismatch = await (await fetch(base + "/api/tg/signals?caller=nobody")).json() as any;
+    expect(callerMismatch.signals).toHaveLength(0);
+
+    // Callers endpoint
+    const callersData = await (await fetch(base + "/api/tg/callers")).json() as any;
+    expect(callersData.status).toBe("LIVE");
+    expect(callersData.callers).toHaveLength(1);
+    expect(callersData.callers[0]).toMatchObject({ authorName: "@vip", totalCalls: 1, callsWithEntryPrice: 1 });
 
     const filtered = await (await fetch(base + "/api/tg/signals?chain=evm")).json() as any;
     expect(filtered.signals).toHaveLength(0);

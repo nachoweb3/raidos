@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 🗄 APP DATABASE — schema for the trading app
  * Tables: users, wallets, trades, launches, profiles, follows, calls,
  * subscriptions, ad_campaigns, revenue_events, copy_settings
@@ -649,11 +649,21 @@ export class AppDb {
         text TEXT NOT NULL DEFAULT '',
         ts INTEGER NOT NULL,
         fetched_at INTEGER NOT NULL,
+        entry_price REAL DEFAULT NULL,
+        entry_mcap REAL DEFAULT NULL,
         UNIQUE(chat_id, message_id, token)
       );
       CREATE INDEX IF NOT EXISTS idx_tg_signals_ts ON tg_signals(ts DESC);
       CREATE INDEX IF NOT EXISTS idx_tg_signals_token ON tg_signals(token);
     `);
+    for (const [col, decl] of [
+      ["entry_price", "REAL DEFAULT NULL"],
+      ["entry_mcap", "REAL DEFAULT NULL"],
+    ] as const) {
+      const has = this.db.prepare("SELECT 1 FROM pragma_table_info('tg_signals') WHERE name = ?").get(col);
+      if (!has) this.db.exec(`ALTER TABLE tg_signals ADD COLUMN ${col} ${decl}`);
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_tg_signals_author ON tg_signals(author_name, ts DESC);");
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
@@ -2043,37 +2053,119 @@ export class AppDb {
     chat_id: string; message_id: number; update_id: number; token: string;
     chain: string; symbol: string; author_id: string; author_name: string;
     text: string; ts: number; fetched_at: number;
+    entry_price?: number | null; entry_mcap?: number | null;
   }[]): number {
     if (!rows.length) return 0;
     const stmt = this.db.prepare(
-      `INSERT OR IGNORE INTO tg_signals(chat_id,message_id,update_id,token,chain,symbol,author_id,author_name,text,ts,fetched_at)
-       VALUES(@chat_id,@message_id,@update_id,@token,@chain,@symbol,@author_id,@author_name,@text,@ts,@fetched_at)`
+      `INSERT OR IGNORE INTO tg_signals(chat_id,message_id,update_id,token,chain,symbol,author_id,author_name,text,ts,fetched_at,entry_price,entry_mcap)
+       VALUES(@chat_id,@message_id,@update_id,@token,@chain,@symbol,@author_id,@author_name,@text,@ts,@fetched_at,@entry_price,@entry_mcap)`
     );
     let inserted = 0;
     this.db.transaction(() => {
-      for (const r of rows) inserted += stmt.run(r).changes;
+      for (const r of rows) {
+        inserted += stmt.run({
+          ...r,
+          entry_price: r.entry_price ?? null,
+          entry_mcap: r.entry_mcap ?? null,
+        }).changes;
+      }
     })();
     return inserted;
   }
 
+  updateTgSignalEntry(chatId: string, messageId: number, token: string, entryPrice: number, entryMcap: number | null = null): boolean {
+    const res = this.db.prepare(
+      "UPDATE tg_signals SET entry_price = ?, entry_mcap = ? WHERE chat_id = ? AND message_id = ? AND token = ?"
+    ).run(entryPrice, entryMcap, chatId, messageId, token);
+    return res.changes > 0;
+  }
+
   /** Newest calls first; optional chain filter ('evm' | 'solana' | 'unknown'
-   *  | specific network like 'bsc'/'base'). 'evm' matches any EVM-flavored
-   *  chain tag, including specific networks saved by the link parser. */
-  listTgSignals(limit = 100, chain?: string) {
+   *  | specific network like 'bsc'/'base'), caller filter (authorName or authorId),
+   *  and since filter (unix timestamp in seconds — only rows with ts >= since). */
+  listTgSignals(limit = 100, chain?: string, caller?: string, since?: number) {
+    const where: string[] = [];
+    const params: any[] = [];
+    if (since != null && Number.isFinite(since) && since > 0) {
+      where.push("ts >= ?");
+      params.push(Math.floor(since));
+    }
     if (chain === "evm") {
       // Keep in sync with EVM_CHAIN_TOKENS in telegram/source.ts.
-      return this.db.prepare(
-        `SELECT * FROM tg_signals WHERE chain IN ('evm','ethereum','eth','bsc','bnb','base','arbitrum','arb','optimism','op','polygon','matic','blast','avalanche','avax','tron','sui','ronin','abstract','berachain','hyperevm','hyperliquid','unichain','zora') ORDER BY ts DESC, id DESC LIMIT ?`
-      ).all(limit) as any[];
+      where.push(
+        `chain IN ('evm','ethereum','eth','bsc','bnb','base','arbitrum','arb','optimism','op','polygon','matic','blast','avalanche','avax','tron','sui','ronin','abstract','berachain','hyperevm','hyperliquid','unichain','zora')`
+      );
+    } else if (chain) {
+      where.push("chain = ?");
+      params.push(chain);
     }
-    if (chain) {
-      return this.db.prepare(
-        "SELECT * FROM tg_signals WHERE chain=? ORDER BY ts DESC, id DESC LIMIT ?"
-      ).all(chain, limit) as any[];
+    if (caller) {
+      const c = caller.trim();
+      const norm = c.replace(/^@/, "");
+      where.push("(LOWER(author_name) = LOWER(?) OR LOWER(author_name) = LOWER(?) OR author_id = ?)");
+      params.push(norm, "@" + norm, c);
     }
-    return this.db.prepare(
-      "SELECT * FROM tg_signals ORDER BY ts DESC, id DESC LIMIT ?"
-    ).all(limit) as any[];
+    const sql = where.length
+      ? `SELECT * FROM tg_signals WHERE ${where.join(" AND ")} ORDER BY ts DESC, id DESC LIMIT ?`
+      : `SELECT * FROM tg_signals ORDER BY ts DESC, id DESC LIMIT ?`;
+    params.push(limit);
+    return this.db.prepare(sql).all(...params) as any[];
+  }
+
+  getTgCallerStats(limit = 50): Array<{
+    authorId: string;
+    authorName: string;
+    totalCalls: number;
+    lastCallTs: number;
+    chains: string[];
+    callsWithEntryPrice: number;
+    latestTokens: Array<{ token: string; symbol: string; chain: string; ts: number; entryPrice: number | null }>;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT 
+        author_id,
+        author_name,
+        COUNT(*) as total_calls,
+        MAX(ts) as last_call_ts,
+        SUM(CASE WHEN entry_price IS NOT NULL AND entry_price > 0 THEN 1 ELSE 0 END) as calls_with_entry_price
+      FROM tg_signals
+      WHERE author_name != '' OR author_id != '0'
+      GROUP BY CASE WHEN author_name != '' THEN LOWER(author_name) ELSE author_id END
+      ORDER BY total_calls DESC, last_call_ts DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    return rows.map((r) => {
+      const tokenRows = this.db.prepare(`
+        SELECT token, symbol, chain, ts, entry_price
+        FROM tg_signals
+        WHERE (author_name != '' AND LOWER(author_name) = LOWER(?)) OR (author_id != '0' AND author_id = ?)
+        ORDER BY ts DESC, id DESC
+        LIMIT 5
+      `).all(r.author_name, r.author_id) as any[];
+
+      const chainRows = this.db.prepare(`
+        SELECT DISTINCT chain
+        FROM tg_signals
+        WHERE (author_name != '' AND LOWER(author_name) = LOWER(?)) OR (author_id != '0' AND author_id = ?)
+      `).all(r.author_name, r.author_id) as any[];
+
+      return {
+        authorId: String(r.author_id ?? "0"),
+        authorName: String(r.author_name ?? ""),
+        totalCalls: Number(r.total_calls ?? 0),
+        lastCallTs: Number(r.last_call_ts ?? 0),
+        chains: chainRows.map((c: any) => String(c.chain)).filter(Boolean),
+        callsWithEntryPrice: Number(r.calls_with_entry_price ?? 0),
+        latestTokens: tokenRows.map((t: any) => ({
+          token: String(t.token),
+          symbol: String(t.symbol ?? ""),
+          chain: String(t.chain ?? "unknown"),
+          ts: Number(t.ts),
+          entryPrice: t.entry_price != null ? Number(t.entry_price) : null,
+        })),
+      };
+    });
   }
 
   countTgSignals(): number {

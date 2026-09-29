@@ -33,6 +33,10 @@ export interface TelegramSignalCandidate {
   messageId: number;
   /** Forum topic id when the group has topics (0 = none/General). */
   threadId: number;
+  /** Price at call time in USD, if resolved. */
+  entryPrice?: number | null;
+  /** Market cap at call time in USD, if resolved. */
+  entryMcap?: number | null;
 }
 
 export interface TelegramPollResult {
