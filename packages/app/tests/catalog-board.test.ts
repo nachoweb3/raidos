@@ -3,7 +3,7 @@ import { createContext, SourceTextModule, SyntheticModule } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 async function boardWith(request: (url: string) => Promise<unknown>) {
-  const context = createContext({ URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
+  const context = createContext({ URL, URLSearchParams, AbortController, setTimeout: () => 0, clearTimeout: () => {},
     location: { href: "http://localhost/app.html" }, document: { getElementById: () => null }, window: { addEventListener() {} } });
   const module = new SourceTextModule(readFileSync(new URL("../../../site/js/catalog-board.js", import.meta.url), "utf8"), { context });
   await module.link(async (specifier) => {

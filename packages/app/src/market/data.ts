@@ -1,10 +1,13 @@
+import { rugcheckMetrics, goplusMetrics, type RiskMetrics } from "./risk-metrics.js";
 
 import { DISABLED_CHAIN_IDS, getChain } from "../chains/config.js";
+import { validChain, validAddress } from "./validate.js";
 type Provider = "dexscreener" | "geckoterminal" | "coingecko" | "rugcheck" | "goplus";
 export interface MarketSnapshot<T> {
   data: T;
   source: Provider | "mixed";
   missing?: string[];
+  pool?: string;
   status: "LIVE" | "DEGRADED";
   asOf: number;
   cacheAgeMs: number;
@@ -22,15 +25,17 @@ const NETWORKS: Record<string, string> = {
 };
 const reverseNetwork = (network: string) => Object.keys(NETWORKS).find((chain) => NETWORKS[chain] === network) ?? network;
 const addressKey = (chain: string, address: string) => /^0x/i.test(address) ? address.toLowerCase() : address;
-const validChain = (chain: string) => {
-  if (DISABLED_CHAIN_IDS.includes(chain)) throw new Error("invalid chain: network disabled");
-  if (!/^[a-z0-9_-]{1,40}$/.test(chain)) throw new Error("invalid chain");
-  return chain;
-};
-const validAddress = (address: string) => {
-  if (!/^[A-Za-z0-9:_-]{20,160}$/.test(address)) throw new Error("invalid token or pool address");
-  return address;
-};
+
+/**
+ * Tokens without real liquidity are not shown at all (operator request).
+ * A pair with no reported reserve, or below this floor, is considered
+ * untradeable noise — never a listing. References (SOL/ETH majors) can opt
+ * out via withLiquidity(..., false).
+ */
+export const MIN_LIQUIDITY_USD = 500;
+export function withLiquidity<T extends { liquidity?: { usd?: number | null } | null }>(pairs: T[], min = MIN_LIQUIDITY_USD): T[] {
+  return pairs.filter((p) => Number(p?.liquidity?.usd ?? 0) >= min);
+}
 
 /** Fixed-host data adapters, bounded shared cache, request coalescing and per-provider quotas. */
 export class MarketDataService {
@@ -62,7 +67,9 @@ export class MarketDataService {
       try {
         if (now < (this.cooldown.get(provider) ?? 0)) throw new Error("provider cooling down");
         const recent = (this.calls.get(provider) ?? []).filter((at) => now - at < 60000);
-        if (recent.length >= this.limits[provider]) throw new Error("provider quota reached");
+        const reserve = (provider === "geckoterminal" || provider === "coingecko") && !path.includes("/ohlcv/")
+          ? Math.min(2, Math.max(0, this.limits[provider] - 1)) : 0;
+        if (recent.length >= this.limits[provider] - reserve) throw new Error("provider quota reached");
         recent.push(now);
         this.calls.set(provider, recent);
         const headers: Record<string, string> = { Accept: "application/json" };
@@ -86,7 +93,7 @@ export class MarketDataService {
         this.cache.set(key, entry);
         return snapshot(entry, "LIVE");
       } catch {
-        if (cached && this.now() - cached.asOf <= 300000) return snapshot(cached, "DEGRADED");
+        if (cached && this.now() - cached.asOf <= (path.includes("/ohlcv/") ? 86400000 : 300000)) return snapshot(cached, "DEGRADED");
         throw new Error(provider + " market data unavailable");
       }
     })();
@@ -141,6 +148,7 @@ export class MarketDataService {
   private matchingAssets(pairs: any[], wanted: Set<string>, chain?: string): any[] {
     return pairs.flatMap((pair: any) => {
       if (!pair?.chainId || DISABLED_CHAIN_IDS.includes(pair.chainId) || (chain && chain !== "all" && pair.chainId !== chain)) return [];
+      if (Number(pair?.liquidity?.usd ?? 0) < MIN_LIQUIDITY_USD) return []; // sin liquidez no se muestra
       const out: any[] = [];
       if (wanted.has(addressKey(pair.chainId, pair.baseToken?.address ?? ""))) out.push(pair);
       if (wanted.has(addressKey(pair.chainId, pair.quoteToken?.address ?? ""))) {
@@ -160,9 +168,9 @@ export class MarketDataService {
     query = query.trim();
     if (chain && chain !== "all") validChain(chain);
     const exactAddress = /^(0x[0-9a-fA-F]{40,64}|[1-9A-HJ-NP-Za-km-z]{32,64}|[EU]Q[A-Za-z0-9_-]{40,64})$/.test(query);
-    const filter = (pairs: any[]) => exactAddress
+    const filter = (pairs: any[]) => withLiquidity(exactAddress
       ? this.matchingAssets(pairs, new Set([addressKey(chain ?? "", query)]), chain)
-      : pairs.filter((pair) => pair?.baseToken?.address && !DISABLED_CHAIN_IDS.includes(pair.chainId) && (!chain || chain === "all" || pair.chainId === chain));
+      : pairs.filter((pair) => pair?.baseToken?.address && !DISABLED_CHAIN_IDS.includes(pair.chainId) && (!chain || chain === "all" || pair.chainId === chain)));
     try {
       const result = await this.json("dexscreener", "/latest/dex/search?q=" + encodeURIComponent(query));
       if (!Array.isArray(result.data.pairs)) throw new Error("invalid pair search");
@@ -212,12 +220,24 @@ export class MarketDataService {
     };
   }
 
+  async profilePools(chain: string): Promise<MarketSnapshot<any[]>> {
+    validChain(chain);
+    const profiles = await this.json("dexscreener", "/token-profiles/latest/v1", 60000);
+    if (!Array.isArray(profiles.data)) throw new Error("invalid token profiles");
+    const addresses = [...new Set<string>(profiles.data
+      .filter((p: any) => p?.chainId === chain && typeof p.tokenAddress === "string")
+      .map((p: any) => p.tokenAddress as string))].slice(0, 30);
+    if (!addresses.length) return { ...profiles, data: [] };
+    const result = await this.tokens(chain, addresses);
+    return { ...result, status: profiles.status === "DEGRADED" ? "DEGRADED" : result.status };
+  }
+
   async pools(chain = "all", kind = "trending", page = 1): Promise<MarketSnapshot<any[]>> {
     validChain(chain);
     if (!["new", "trending"].includes(kind) || !Number.isInteger(page) || page < 1 || page > 10) throw new Error("invalid pool query");
     const network = chain === "all" ? "" : "/" + (NETWORKS[chain] ?? chain);
     const result = await this.onchain("/networks" + network + "/" + kind + "_pools?include=base_token,quote_token,dex&page=" + page, 60000);
-    return { ...result, data: this.geckoPairs(result.data, chain === "all" ? undefined : chain) };
+    return { ...result, data: withLiquidity(this.geckoPairs(result.data, chain === "all" ? undefined : chain)) };
   }
 
   async trades(chain: string, pool: string, token: string): Promise<MarketSnapshot<any[]>> {
@@ -248,11 +268,39 @@ export class MarketDataService {
     return { ...result, data };
   }
 
+  /** Try another indexed pool for the exact same asset when the preferred pool has no history. */
   async candles(chain: string, pool: string, token: string, aggregate = 5): Promise<MarketSnapshot<any[]>> {
     validChain(chain); validAddress(pool); validAddress(token);
-    if (![1, 5, 15].includes(aggregate)) throw new Error("invalid candle interval");
+    if (![1, 5, 15, 60, 240, 1440].includes(aggregate)) throw new Error("invalid candle interval");
+    let empty: MarketSnapshot<any[]> | undefined;
+    try {
+      const first = await this.poolCandles(chain, pool, token, aggregate);
+      if (first.data.length) return { ...first, pool };
+      empty = { ...first, pool };
+    } catch { /* Find an indexed alternative instead of displaying an empty chart immediately. */ }
+    try {
+      const pools = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) + "/tokens/" +
+        encodeURIComponent(token) + "/pools?include=base_token,quote_token,dex", 300000);
+      const wanted = new Set([addressKey(chain, token)]);
+      const pairs = this.matchingAssets(this.geckoPairs(pools.data, chain), wanted, chain)
+        .filter(p => p.pairAddress !== pool).sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0));
+      for (const candidate of pairs.slice(0, 2)) {
+        try {
+          const result = await this.poolCandles(chain, candidate.pairAddress, token, aggregate);
+          if (result.data.length) return { ...result, pool: candidate.pairAddress };
+        } catch { /* Continue within the bounded fallback list. */ }
+      }
+    } catch { /* Preserve a valid empty response if there really is no trading history. */ }
+    if (empty) return empty;
+    throw new Error("Onchain candle history temporarily unavailable");
+  }
+
+  private async poolCandles(chain: string, pool: string, token: string, aggregate = 5): Promise<MarketSnapshot<any[]>> {
+    validChain(chain); validAddress(pool); validAddress(token);
+    if (![1, 5, 15, 60, 240, 1440].includes(aggregate)) throw new Error("invalid candle interval");
     const result = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) + "/pools/" + encodeURIComponent(pool) +
-      "/ohlcv/minute?aggregate=" + aggregate + "&limit=100&currency=usd&token=" + encodeURIComponent(token), 60000);
+      "/ohlcv/" + (aggregate >= 1440 ? "day" : aggregate >= 60 ? "hour" : "minute") +
+      "?aggregate=" + (aggregate >= 1440 ? aggregate / 1440 : aggregate >= 60 ? aggregate / 60 : aggregate) + "&limit=1000&currency=usd&token=" + encodeURIComponent(token), 60000);
     const rows = result.data?.data?.attributes?.ohlcv_list;
     if (!Array.isArray(rows)) throw new Error("OHLCV data unavailable");
     const candles = new Map<number, any>();
@@ -266,7 +314,7 @@ export class MarketDataService {
   }
 
   async security(chain: string, token: string): Promise<{
-    report: { level: "good" | "warn" | "bad"; score: number | null; provider: string; label: string; title: string; detail: string } | null;
+    report: { level: "good" | "warn" | "bad"; score: number | null; provider: string; label: string; title: string; detail: string; metrics?: RiskMetrics; imageUrl?: string } | null;
     source: string; status: "LIVE" | "DEGRADED" | "UNAVAILABLE"; asOf: number | null; cacheAgeMs: number | null;
   }> {
     validChain(chain); validAddress(token);
@@ -278,9 +326,13 @@ export class MarketDataService {
       let result: MarketSnapshot<any>;
       let level: "good" | "warn" | "bad", score: number | null = null;
       let signals: string[] = [];
+      let metrics: RiskMetrics | undefined;
+      let imageUrl: string | undefined;
       if (provider === "rugcheck") {
-        result = await this.json(provider, "/v1/tokens/" + encodeURIComponent(token) + "/report/summary", 300000);
+        result = await this.json(provider, "/v1/tokens/" + encodeURIComponent(token) + "/report", 300000);
         const body = result.data;
+        metrics = rugcheckMetrics(body);
+        if (typeof body.fileMeta?.image === "string" && /^https:\/\//.test(body.fileMeta.image)) imageUrl = body.fileMeta.image;
         if (!Number.isFinite(body.score_normalised) || !Array.isArray(body.risks)) return missing;
         score = body.score_normalised;
         const danger = body.risks.some((r: any) => r.level === "danger");
@@ -292,6 +344,7 @@ export class MarketDataService {
         const body = result.data?.result?.[token.toLowerCase()];
         if (!body || !["0", "1"].includes(body.is_honeypot) || body.buy_tax == null || body.sell_tax == null ||
             !["0", "1"].includes(body.is_mintable) || !["0", "1"].includes(body.is_open_source)) return missing;
+        metrics = goplusMetrics(body);
         const buyTax = Number(body.buy_tax) * 100, sellTax = Number(body.sell_tax) * 100;
         if (![buyTax, sellTax].every((v) => Number.isFinite(v) && v >= 0)) return missing;
         if (body.is_honeypot === "1") signals.push("Honeypot");
@@ -305,7 +358,7 @@ export class MarketDataService {
       return { source: provider, status: result.status, asOf: result.asOf, cacheAgeMs: result.cacheAgeMs,
         report: { level, score, provider, label: level === "bad" ? "HIGH" : level === "warn" ? "MED" : "LOW",
           title: signals.join(" · ") || "No listed risk signals; not a security guarantee",
-          detail: signals.length + " signals" } };
+          detail: signals.length + " signals", metrics, imageUrl } };
     } catch { return missing; }
   }
 

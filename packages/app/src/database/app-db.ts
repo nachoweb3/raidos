@@ -631,6 +631,29 @@ export class AppDb {
       if (!has) this.db.exec(`ALTER TABLE copy_signals ADD COLUMN ${col} ${decl}`);
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_copy_signals_user_status ON copy_signals(user_id,status,ts DESC);");
+
+    // ── Telegram calls (read-only ingestion via bot getUpdates) ──
+    // One row per (chat, message, address) observed in the configured chat.
+    // No token configured = feature disabled; the table simply stays empty.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tg_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        update_id INTEGER NOT NULL DEFAULT 0,
+        token TEXT NOT NULL,
+        chain TEXT NOT NULL DEFAULT 'unknown',
+        symbol TEXT NOT NULL DEFAULT '',
+        author_id TEXT NOT NULL DEFAULT '0',
+        author_name TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL DEFAULT '',
+        ts INTEGER NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        UNIQUE(chat_id, message_id, token)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tg_signals_ts ON tg_signals(ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_tg_signals_token ON tg_signals(token);
+    `);
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
@@ -1999,5 +2022,71 @@ export class AppDb {
     ).get(asset.id) as { price: number } | undefined;
     const price = Number(row?.price);
     return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  // ── Telegram calls (read-only) ──────────────────────────────────────
+
+  /** True when this (token, chat, message) was already ingested. With
+   *  messageId > 0 the check is per-message; 0 falls back to per-chat. */
+  hasTgSignal(token: string, chatId: string, messageId = 0): boolean {
+    if (messageId > 0) {
+      return !!this.db.prepare(
+        "SELECT 1 FROM tg_signals WHERE token=? AND chat_id=? AND message_id=? LIMIT 1"
+      ).get(token, chatId, messageId);
+    }
+    return !!this.db.prepare(
+      "SELECT 1 FROM tg_signals WHERE token=? AND chat_id=? LIMIT 1"
+    ).get(token, chatId);
+  }
+
+  insertTgSignals(rows: {
+    chat_id: string; message_id: number; update_id: number; token: string;
+    chain: string; symbol: string; author_id: string; author_name: string;
+    text: string; ts: number; fetched_at: number;
+  }[]): number {
+    if (!rows.length) return 0;
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO tg_signals(chat_id,message_id,update_id,token,chain,symbol,author_id,author_name,text,ts,fetched_at)
+       VALUES(@chat_id,@message_id,@update_id,@token,@chain,@symbol,@author_id,@author_name,@text,@ts,@fetched_at)`
+    );
+    let inserted = 0;
+    this.db.transaction(() => {
+      for (const r of rows) inserted += stmt.run(r).changes;
+    })();
+    return inserted;
+  }
+
+  /** Newest calls first; optional chain filter ('evm' | 'solana' | 'unknown').
+   *  'evm' matches any EVM-flavored chain tag. */
+  listTgSignals(limit = 100, chain?: string) {
+    if (chain === "evm") {
+      return this.db.prepare(
+        "SELECT * FROM tg_signals WHERE chain='evm' ORDER BY ts DESC, id DESC LIMIT ?"
+      ).all(limit) as any[];
+    }
+    if (chain) {
+      return this.db.prepare(
+        "SELECT * FROM tg_signals WHERE chain=? ORDER BY ts DESC, id DESC LIMIT ?"
+      ).all(chain, limit) as any[];
+    }
+    return this.db.prepare(
+      "SELECT * FROM tg_signals ORDER BY ts DESC, id DESC LIMIT ?"
+    ).all(limit) as any[];
+  }
+
+  countTgSignals(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM tg_signals").get() as { n: number } | undefined;
+  return Number(row?.n ?? 0);
+  }
+
+  getTgOffset(): number {
+    const v = this.getAppSetting("tg_poll_offset");
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  setTgOffset(value: number): void {
+    if (!Number.isFinite(value) || value <= 0) return;
+    this.setAppSetting("tg_poll_offset", String(Math.floor(value)));
   }
 }

@@ -3,8 +3,9 @@ import { MarketCatalog, type CatalogQuery } from "./catalog.js";
 import { MarketIndexer } from "./indexer.js";
 import { MarketDataService } from "./data.js";
 import { GmgnService, GmgnUnavailableError, GMGN_CHAINS } from "./gmgn.js";
+import { HeliusRiskService, HeliusUnavailableError } from "./helius.js";
 
-export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatalog, market: MarketDataService, gmgn?: GmgnService) {
+export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatalog, market: MarketDataService, gmgn?: GmgnService, helius?: HeliusRiskService) {
   const indexer = new MarketIndexer(catalog, market);
   const gmgnService = gmgn ?? new GmgnService();
   const gmgnFail = (ctx: RequestContext, err: unknown) => {
@@ -43,6 +44,34 @@ export function registerMarketCatalogRoutes(router: Router, catalog: MarketCatal
       const result = await gmgnService.tokenSecurity(chain, address);
       sendJson(ctx.res, 200, result);
     } catch (err) { gmgnFail(ctx, err); }
+  });
+  router.publicRoute("GET", "/api/market/token-art", async (ctx) => {
+    try {
+      const chain = ctx.query.get("chain") ?? "";
+      const address = ctx.query.get("address") ?? "";
+      if (chain === "solana" && helius) {
+        try {
+          const art = await helius.artwork(address);
+          if (art.imageUrls.length) { sendJson(ctx.res, 200, { ...art, source: "helius", address }); return; }
+        } catch { /* Metadata may not be indexed; continue with the market index. */ }
+      }
+      const snapshot = await market.tokens(chain, [address]);
+      const imageUrls = [...new Set<string>(snapshot.data.map(p => p.info?.imageUrl)
+        .filter((u: unknown): u is string => typeof u === "string" && /^https:\/\//.test(u)))].slice(0, 4);
+      sendJson(ctx.res, 200, { imageUrls, address, asOf: snapshot.asOf, source: snapshot.source });
+    } catch (err) { fail(ctx, err); }
+  });
+  // On-chain bundle + creator-history analytics via Helius RPC (Solana only).
+  // Read-only; 503 HELIUS_RPC_URL_NOT_CONFIGURED until the secret is set.
+  router.publicRoute("GET", "/api/market/onchain-risk", async (ctx) => {
+    try {
+      if (!helius) throw new HeliusUnavailableError();
+      sendJson(ctx.res, 200, await helius.risk(ctx.query.get("chain") ?? "solana", ctx.query.get("address") ?? ""));
+    } catch (err) {
+      if (err instanceof HeliusUnavailableError) {
+        sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: err.message, reason: err.reason });
+      } else fail(ctx, err);
+    }
   });
   // On-chain token decimals/symbol straight from the chain RPC (keyless).
   // Sell orders route in token smallest units — decimals must be real, never guessed.

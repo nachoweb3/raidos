@@ -3,10 +3,11 @@ import { MarketDataService } from "./data.js";
 
 /** Bounded incremental ingestion. A page checkpoint is not an upstream cursor. */
 export class MarketIndexer {
+  private preferredKind: "discover" | "refresh" = "discover";
   constructor(private readonly catalog: MarketCatalog, private readonly market: MarketDataService) {}
-  seed(chains = ["solana", "base"]) {
+  seed(chains = ["solana", "ethereum", "base", "bsc"]) {
     if (chains.some((c) => !MARKET_CHAINS.includes(c))) throw new Error("invalid discovery chain");
-    for (const chain of chains) for (const kind of ["new", "trending"]) {
+    for (const chain of chains) for (const kind of ["new", "trending", "profiles"]) {
       this.catalog.enqueue(`discover:${chain}:${kind}`, "discover", { chain, kind, page: 1 });
     }
   }
@@ -21,17 +22,19 @@ export class MarketIndexer {
       tradable: false, routeStatus: "UNVERIFIED" };
   }
   async runOnce(): Promise<{ status: "idle" | "updated" | "retry" | "lease_lost"; kind?: string }> {
-    const job = this.catalog.claim();
+    const job = this.catalog.claim(60000, this.preferredKind);
     if (!job) return { status: "idle" };
+    // Give both discovery and the refresh backlog a turn, including after failures.
+    this.preferredKind = job.kind === "discover" ? "refresh" : "discover";
     try {
       const payload = JSON.parse(job.payload);
       const result = job.kind === "discover"
-        ? await this.market.pools(payload.chain, payload.kind, payload.page)
+        ? payload.kind === "profiles" ? await this.market.profilePools(payload.chain) : await this.market.pools(payload.chain, payload.kind, payload.page)
         : await this.market.tokens(payload.chain, [payload.address]);
       // A stale cache hit does not advance discovery or declare a successful refresh.
       if (result.status !== "LIVE") throw new Error("degraded provider");
       const next = job.kind === "discover"
-        ? { ...payload, page: result.data.length && payload.page < 10 ? payload.page + 1 : 1 }
+        ? { ...payload, page: payload.kind !== "profiles" && result.data.length && payload.page < 10 ? payload.page + 1 : 1 }
         : payload;
       const active = result.data.some((p) => Number(p.liquidity?.usd) > 0 && Number(p.volume?.h24) >= 50000);
       const delay = job.kind === "discover" ? (next.page === 1 ? 300000 : 15000) : active ? 60000 : result.data.length ? 900000 : 3600000;

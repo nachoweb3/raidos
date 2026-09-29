@@ -12,7 +12,10 @@ import http from "node:http";
 import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
+import { MarketIndexer } from "../market/indexer.js";
+import { MarketDiscoveryLoop } from "../market/discovery-loop.js";
 import { GmgnService } from "../market/gmgn.js";
+import { HeliusRiskService } from "../market/helius.js";
 import { SocialEngine } from "../social/engine.js";
 import { PairService, ALL_ASSETS, parsePairId, resolveAsset } from "../pairs/pair-service.js";
 import { PairPriceService } from "../pairs/pair-prices.js";
@@ -48,6 +51,7 @@ import { RewardsEngine } from "../trading/rewards.js";
 import { BalanceScanner } from "../wallets/balances.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
+import { TelegramSignalSource } from "../telegram/source.js";
 import { hashExecutionRequest } from "../trading/lifecycle.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { isUsdc as isChainUsdc, toMicroUsdc } from "../trading/pnl.js";
@@ -66,6 +70,8 @@ export interface ServerOptions {
   bootstrapSecret?: string;
   /** Explicit adapter injection for isolated integration tests. */
   marketData?: MarketDataService;
+  /** Enabled by main; explicit opt-in for integration tests. */
+  marketDiscovery?: boolean;
   /** Explicit GMGN service injection for isolated tests. Default: env-keyed read-only service. */
   gmgn?: GmgnService;
   /** Explicit receipt provider injection for isolated integration tests. */
@@ -74,6 +80,9 @@ export interface ServerOptions {
    *  (LaunchLab / factory / AMM). Default: SOLANA_RPC_URL or none. */
   solanaConnectionFactory?: () => Connection;
 }
+
+/** Networks that get a platform-generated address at login (operator request). */
+const PLATFORM_WALLET_CHAINS = ["solana", "ethereum", "base"] as const;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -138,6 +147,26 @@ export class ApiServer {
   private readonly router = new Router();
   private readonly marketData: MarketDataService;
   private readonly gmgn: GmgnService;
+  private readonly marketDiscovery?: MarketDiscoveryLoop;
+  private heliusRiskInstance?: HeliusRiskService;
+  /** Read-only Telegram call scraper (disabled without TG_BOT_TOKEN). */
+  private readonly telegramSource: TelegramSignalSource;
+  private tgTimer: NodeJS.Timeout | null = null;
+  private tgStopped = false;
+
+  /** Bundle + creator analytics (Solana). Null without HELIUS_RPC_URL → endpoint answers 503 honestly. */
+  private heliusRisk(): HeliusRiskService | undefined {
+    if (!process.env.HELIUS_RPC_URL?.trim() && !process.env.HELIUS_API_KEY?.trim()) return undefined;
+    this.heliusRiskInstance ??= new HeliusRiskService(
+      async (mint) => {
+        const result = await this.marketData.tokens("solana", [mint]);
+        const pair = (result?.data ?? []).find((p) => p?.baseToken?.address === mint);
+        if (!pair) return undefined;
+        return { liquidityUsd: Number(pair?.liquidity?.usd) > 0 ? Number(pair.liquidity.usd) : null };
+      },
+    );
+    return this.heliusRiskInstance;
+  }
   private readonly receiptProvider: ReceiptProvider | null;
   private readonly siteDir: string | null;
   private readonly bootstrapSecret?: string;
@@ -160,6 +189,11 @@ export class ApiServer {
     this.db = new AppDb(options.dbPath, this.appMode);
     this.marketData = options.marketData ?? new MarketDataService();
     this.gmgn = options.gmgn ?? new GmgnService();
+    if (options.marketDiscovery) {
+      const indexer = new MarketIndexer(this.db.marketCatalog, this.marketData);
+      indexer.seed();
+      this.marketDiscovery = new MarketDiscoveryLoop(indexer);
+    }
     this.receiptProvider = options.receiptProvider ?? null;
     this.port = options.port ?? Number(process.env.PORT ?? 8787);
     this.bootstrapSecret = options.bootstrapSecret ?? process.env.BOOTSTRAP_SECRET;
@@ -189,6 +223,15 @@ export class ApiServer {
     this.pairs = new PairService(this.pairPrices, () => null);
     this.floors = new FloorLiquidityService();
     this.teleport = new TeleportEngine({ floors: this.floors });
+    this.telegramSource = new TelegramSignalSource({
+      token: process.env.TG_BOT_TOKEN,
+      chatId: process.env.TG_CHAT_ID,
+      topicId: Number(process.env.TG_TOPIC_ID ?? 0) || 0,
+    });
+    if (this.telegramSource.enabled) {
+      this.telegramSource.setOffset(this.db.getTgOffset());
+      console.log("[telegram] signal source enabled for chat", process.env.TG_CHAT_ID, process.env.TG_TOPIC_ID ? `(topic ${process.env.TG_TOPIC_ID})` : "");
+    }
 
     this.registerRoutes();
   }
@@ -235,10 +278,48 @@ export class ApiServer {
       });
     }, 5 * 60_000);
     this.pairTimer.unref?.();
+    // Telegram scraper: one long-poll pass at a time, chained. Read-only:
+    // it only writes tg_signals rows. Errors are logged, never fatal.
+    if (this.telegramSource.enabled) {
+      this.tgStopped = false;
+      let backoffMs = 0;
+      const tgPass = async (): Promise<void> => {
+        if (this.tgStopped) return;
+        const result = await this.telegramSource.poll(
+          (candidates) => this.db.insertTgSignals(
+            candidates.map((c) => ({
+              chat_id: c.chatId, message_id: c.messageId, update_id: 0, token: c.token,
+              chain: c.chain, symbol: c.symbol, author_id: c.authorId,
+              author_name: c.authorName, text: c.text, ts: c.ts,
+              fetched_at: Math.floor(Date.now() / 1000),
+            })),
+          ),
+          (token, chatId, messageId) =>
+            messageId > 0
+              ? this.db.hasTgSignal(token, chatId, messageId)
+              : this.db.hasTgSignal(token, chatId),
+        );
+        if (result.ok && result.offset) this.db.setTgOffset(result.offset);
+        if (!result.ok && result.error !== "disabled") {
+          console.warn("[telegram] poll failed:", result.error);
+        }
+        // One long-poll pass at a time, chained. Transient network hiccups
+        // retry with backoff (the offset only advances on success, so a retry
+        // of getUpdates is safe and never re-delivers stored signals).
+        backoffMs = result.ok ? 0 : Math.min((backoffMs || 5_000) * 2, 60_000);
+        if (!this.tgStopped) {
+          this.tgTimer = setTimeout(() => { void tgPass(); }, result.ok ? 90_000 : backoffMs);
+          this.tgTimer.unref?.();
+        }
+      };
+      void tgPass();
+    }
+    this.marketDiscovery?.start();
     return this.portNumber;
   }
 
   async stop(): Promise<void> {
+    await this.marketDiscovery?.stop();
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
@@ -250,6 +331,11 @@ export class ApiServer {
     if (this.pairTimer) {
       clearInterval(this.pairTimer);
       this.pairTimer = null;
+    }
+    if (this.tgTimer) {
+      this.tgStopped = true;
+      clearTimeout(this.tgTimer);
+      this.tgTimer = null;
     }
     if (this.server) {
       await new Promise<void>((resolvePromise) => this.server!.close(() => resolvePromise()));
@@ -362,6 +448,28 @@ export class ApiServer {
     return ctx.userId;
   }
 
+  /**
+   * Platform wallets: every account gets one generated address per supported
+   * network at login — the user never has to connect an external wallet.
+   * Keys are encrypted with WALLET_ENC_SECRET (operator secret); the user can
+   * export the private key at any time via GET /api/wallets/export.
+   */
+  private ensurePlatformWallets(userId: number): void {
+    if (!process.env.WALLET_ENC_SECRET?.trim()) return; // honest: disabled, no silent fallback
+    const existing = new Set(this.wallets.listWallets(userId).map((w) => w.chain));
+    for (const chain of PLATFORM_WALLET_CHAINS) {
+      if (existing.has(chain)) continue;
+      const config = getChain(chain);
+      if (!config) continue;
+      try {
+        if (config.evm) this.wallets.createEvmWallet(userId, chain, process.env.WALLET_ENC_SECRET!, "TRENCHES");
+        else this.wallets.createSolanaWallet(userId, process.env.WALLET_ENC_SECRET!, "TRENCHES");
+      } catch (err) {
+        console.warn("[wallets] platform provisioning failed for", chain, err instanceof Error ? err.message : err);
+      }
+    }
+  }
+
   private str(ctx: RequestContext, key: string, required = true): string {
     const v = ctx.body[key];
     if (typeof v === "string" && v.length > 0) return v;
@@ -371,7 +479,7 @@ export class ApiServer {
 
   private registerRoutes(): void {
     registerTokenMetadataRoutes(this.router, this.db);
-    registerMarketCatalogRoutes(this.router, this.db.marketCatalog, this.marketData, this.gmgn);
+    registerMarketCatalogRoutes(this.router, this.db.marketCatalog, this.marketData, this.gmgn, this.heliusRisk());
     // Shared public market data; these endpoints never authorize trades.
     const marketReply = async (ctx: RequestContext, field: string, operation: () => Promise<import("../market/data.js").MarketSnapshot<any[]>>) => {
       try {
@@ -446,6 +554,7 @@ export class ApiServer {
       // Referral attribution on FIRST wallet login (immutable afterwards).
       const refRaw = typeof ctx.body?.ref === "string" ? ctx.body.ref.trim() : "";
       const login = this.auth.loginWithIdentity(chain, externalId, displayName, "", refRaw || undefined);
+      this.ensurePlatformWallets(login.userId);
       sendJson(ctx.res, 200, {
         userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
         provider: chain, displayName, mode: this.appMode,
@@ -456,6 +565,7 @@ export class ApiServer {
       const credential = this.str(ctx, "credential");
       const profile = await verifyGoogleIdToken(credential, process.env.GOOGLE_CLIENT_ID ?? "");
       const login = this.auth.loginWithIdentity("google", profile.sub, profile.name || profile.email, profile.picture);
+      this.ensurePlatformWallets(login.userId);
       sendJson(ctx.res, 200, {
         userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
         provider: "google", displayName: profile.name || profile.email, email: profile.email,
@@ -470,6 +580,7 @@ export class ApiServer {
       const profile = await verifyXCode(code, redirectUri, codeVerifier);
       if (!profile) throw new HttpError(501, "X login is not configured (set X_CLIENT_ID / X_CLIENT_SECRET)");
       const login = this.auth.loginWithIdentity("x", profile.id, profile.name || `@${profile.username}`);
+      this.ensurePlatformWallets(login.userId);
       sendJson(ctx.res, 200, {
         userId: login.userId, apiKey: login.apiKey, isNew: login.isNew,
         provider: "x", displayName: profile.name || `@${profile.username}`, username: profile.username,
@@ -718,17 +829,19 @@ export class ApiServer {
       sendJson(ctx.res, 200, { balances, scannedAt: Math.floor(Date.now() / 1000) });
     });
 
+    // Platform-generated wallet: NO user password involved. Requires the
+    // operator secret (WALLET_ENC_SECRET) both to create and to export.
     this.router.route("POST", "/api/wallets", (ctx) => {
-      if (this.appMode === "live") throw new HttpError(403, "custodial wallets are disabled in live mode; connect a wallet");
       const userId = this.requireUserId(ctx);
       const chain = this.str(ctx, "chain");
-      const password = this.str(ctx, "password");
-      const label = this.str(ctx, "label", false) || "Primary";
       const config = getChain(chain);
       if (!config) throw new HttpError(400, `unknown chain: ${chain}`);
-      const wallet = chain === "solana"
-        ? this.wallets.createSolanaWallet(userId, password, label)
-        : this.wallets.createEvmWallet(userId, chain, password, label);
+      const secret = process.env.WALLET_ENC_SECRET?.trim();
+      if (!secret) throw new HttpError(503, "platform wallets disabled: WALLET_ENC_SECRET not configured");
+      const label = this.str(ctx, "label", false) || "TRENCHES";
+      const wallet = config.evm
+        ? this.wallets.createEvmWallet(userId, chain, secret, label)
+        : this.wallets.createSolanaWallet(userId, secret, label);
       sendJson(ctx.res, 201, { wallet });
     });
 
@@ -749,14 +862,71 @@ export class ApiServer {
     });
 
     this.router.route("DELETE", "/api/wallets/:id", (ctx) => {
-      if (this.appMode === "live") throw new HttpError(403, "custodial wallets are disabled in live mode; connect a wallet");
       const userId = this.requireUserId(ctx);
       const walletId = Number(ctx.params.id);
       if (!Number.isFinite(walletId)) throw new HttpError(400, "invalid wallet id");
-      const password = this.str(ctx, "password");
-      const deleted = this.wallets.deleteWallet(userId, walletId, password);
-      if (!deleted) throw new HttpError(404, "wallet not found or wrong password");
+      const secret = process.env.WALLET_ENC_SECRET?.trim();
+      if (!secret) throw new HttpError(503, "platform wallets disabled: WALLET_ENC_SECRET not configured");
+      const deleted = this.wallets.deleteWalletWithSecret(userId, walletId, secret);
+      if (!deleted) throw new HttpError(404, "wallet not found");
       sendJson(ctx.res, 200, { deleted: true });
+    });
+
+    // Export the private key of a platform wallet. Requires the operator
+    // secret and returns it ONCE over TLS; the user stores it safely.
+    this.router.route("POST", "/api/wallets/export", (ctx) => {
+      const userId = this.requireUserId(ctx);
+      const chain = this.str(ctx, "chain");
+      const secret = process.env.WALLET_ENC_SECRET?.trim();
+      if (!secret) throw new HttpError(503, "platform wallets disabled: WALLET_ENC_SECRET not configured");
+      try {
+        const privateKey = this.wallets.exportPrivateKey(userId, chain, secret);
+        sendJson(ctx.res, 200, { chain, privateKey });
+      } catch {
+        throw new HttpError(404, `no ${chain} wallet to export`);
+      }
+    });
+
+    // ── Telegram calls (public read-only log of the configured chat) ──
+    // The scraper must be enabled server-side (TG_BOT_TOKEN + TG_CHAT_ID);
+    // otherwise the API answers 503 honestly instead of inventing data.
+    this.router.publicRoute("GET", "/api/tg/signals", (ctx) => {
+      if (!this.telegramSource.enabled) {
+        sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "TG_NOT_CONFIGURED", signals: [] });
+        return;
+      }
+      const limitRaw = Number(ctx.query.get("limit") ?? 100);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 300) : 100;
+      const chain = (ctx.query.get("chain") ?? "").trim() || undefined;
+      const signals = this.db.listTgSignals(limit, chain).map((s: any) => ({
+        id: Number(s.id),
+        chatId: String(s.chat_id),
+        messageId: Number(s.message_id),
+        token: String(s.token),
+        chain: String(s.chain ?? "unknown"),
+        symbol: String(s.symbol ?? ""),
+        authorId: String(s.author_id ?? "0"),
+        authorName: String(s.author_name ?? ""),
+        text: String(s.text ?? ""),
+        ts: Number(s.ts),
+      }));
+      sendJson(ctx.res, 200, {
+        status: "LIVE",
+        signals,
+        count: signals.length,
+        lastSuccessAt: this.telegramSource.lastSuccessAt || null,
+        lastError: this.telegramSource.lastError,
+      });
+    });
+
+    this.router.publicRoute("GET", "/api/tg/status", (ctx) => {
+      sendJson(ctx.res, 200, {
+        enabled: this.telegramSource.enabled,
+        signals: this.db.countTgSignals(),
+        lastSuccessAt: this.telegramSource.lastSuccessAt || null,
+        lastError: this.telegramSource.lastError,
+        mode: this.appMode,
+      });
     });
 
     // ── Prediction markets (public market data from Polymarket) ──
@@ -1154,11 +1324,14 @@ export class ApiServer {
       const encrypted: EncryptedPayload = typeof wallet.encrypted_key === "string"
         ? JSON.parse(wallet.encrypted_key)
         : wallet.encrypted_key;
-      if (!verifyPassword(encrypted, password)) {
+      // Platform wallets are encrypted with the operator secret; imported ones
+      // keep user-password semantics. Either must verify to decrypt.
+      const walletSecret = process.env.WALLET_ENC_SECRET?.trim() ?? "";
+      if (!verifyPassword(encrypted, password) && !(walletSecret && verifyPassword(encrypted, walletSecret))) {
         this.db.updateExecutionIntent(intentId, { status: "failed", errorMessage: "wrong wallet password" });
         throw new HttpError(401, "wrong wallet password");
       }
-      const privateKey = decrypt(encrypted, password);
+      const privateKey = verifyPassword(encrypted, password) ? decrypt(encrypted, password) : decrypt(encrypted, walletSecret);
 
       const quote = this.appMode === "mock" ? buildMockQuote(params) : await this.trading.getQuote(params);
       const chainUsdc = config.usdcAddress;

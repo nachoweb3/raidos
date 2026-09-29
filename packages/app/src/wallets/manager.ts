@@ -97,7 +97,11 @@ export class WalletManager {
   exportPrivateKey(userId: number, chain: string, password: string): string {
     const row = this.db.getWallet(userId, chain);
     if (!row) throw new Error(`No wallet found for chain "${chain}"`);
-    return decrypt(row.encrypted_key, password);
+    // SQLite stores encrypted_key as a JSON string — normalize before crypto.
+    const payload: EncryptedPayload = typeof row.encrypted_key === "string"
+      ? JSON.parse(row.encrypted_key)
+      : row.encrypted_key;
+    return decrypt(payload, password);
   }
 
   /** Export wallet as JSON keystore (EVM) or base58 (Solana). */
@@ -137,6 +141,14 @@ export class WalletManager {
     const wallet = wallets.find((w) => w.id === walletId);
     if (!wallet) return false;
     if (!verifyPasswordLocal(wallet.encrypted_key, password)) return false;
+    return this.db.deleteWallet(walletId, userId);
+  }
+
+  /** Delete a platform wallet (encrypted with the operator secret). */
+  deleteWalletWithSecret(userId: number, walletId: number, secret: string): boolean {
+    const wallet = this.db.getUserWallets(userId).find((w) => w.id === walletId);
+    if (!wallet) return false;
+    if (!verifyPasswordLocal(wallet.encrypted_key, secret)) return false;
     return this.db.deleteWallet(walletId, userId);
   }
 

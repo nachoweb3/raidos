@@ -13,6 +13,7 @@
  * Usage:  npx tsx src/api/main.ts     (dev)   |   node dist/api/main.js     (built)
  */
 
+import "./env.js";
 import { ApiServer } from "./server.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -20,6 +21,7 @@ const port = Number(process.env.PORT ?? 8787);
 const server = new ApiServer({
   dbPath: process.env.DB_PATH ?? "raidos.db",
   port,
+  marketDiscovery: process.env.MARKET_DISCOVERY_ENABLED !== "0",
 });
 
 const actualPort = await server.start();

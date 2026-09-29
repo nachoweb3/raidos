@@ -216,10 +216,10 @@ export class MarketCatalog {
       .run(key, kind, JSON.stringify(payload), dueAt);
   }
 
-  claim(leaseMs = 60000): MarketJob | undefined {
+  claim(leaseMs = 60000, preferredKind?: "discover" | "refresh"): MarketJob | undefined {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT * FROM market_jobs WHERE due_at<=? AND lease_until<=? ORDER BY due_at,job_key LIMIT 1")
-        .get(this.now(), this.now()) as MarketJob | undefined;
+      const row = this.db.prepare("SELECT * FROM market_jobs WHERE due_at<=? AND lease_until<=? ORDER BY CASE WHEN kind=? THEN 0 ELSE 1 END,due_at,job_key LIMIT 1")
+        .get(this.now(), this.now(), preferredKind ?? null) as MarketJob | undefined;
       if (!row) return undefined;
       const lease_token = randomUUID(), lease_until = this.now() + leaseMs;
       this.db.prepare("UPDATE market_jobs SET lease_token=?,lease_until=? WHERE job_key=?").run(lease_token, lease_until, row.job_key);

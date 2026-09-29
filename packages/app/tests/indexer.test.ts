@@ -13,6 +13,31 @@ function setup() {
   return { catalog, market, indexer: new MarketIndexer(catalog, market), advance: (ms: number) => { now += ms; } };
 }
 describe("durable indexer", () => {
+  it("alternates discovery and overdue refreshes without starving either queue", async () => {
+    const { catalog, market, indexer } = setup();
+    for (let i = 0; i < 100; i++) catalog.enqueue("refresh:" + i, "refresh", { chain: "base", address }, 1);
+    catalog.enqueue("discover:a", "discover", { chain: "base", kind: "new", page: 1 }, 2);
+    catalog.enqueue("discover:b", "discover", { chain: "base", kind: "new", page: 1 }, 2);
+    const snapshot = { data: [], source: "geckoterminal" as const, asOf: 1700000000000, status: "LIVE" as const, cacheAgeMs: 0 };
+    vi.spyOn(market, "pools").mockResolvedValue(snapshot);
+    vi.spyOn(market, "tokens").mockResolvedValue(snapshot);
+    const kinds = [];
+    for (let i = 0; i < 5; i++) kinds.push((await indexer.runOnce()).kind);
+    expect(kinds).toEqual(["discover", "refresh", "discover", "refresh", "refresh"]);
+  });
+  it("skips leased preferred work and yields to refresh after a discovery failure", async () => {
+    const { catalog, market, indexer } = setup();
+    catalog.enqueue("a", "discover", { chain: "base", kind: "new", page: 1 });
+    catalog.enqueue("b", "discover", { chain: "base", kind: "new", page: 1 });
+    const leased = catalog.claim(60000, "discover")!;
+    catalog.enqueue("r", "refresh", { chain: "base", address }, 1);
+    vi.spyOn(market, "pools").mockRejectedValue(new Error("offline"));
+    vi.spyOn(market, "tokens").mockResolvedValue({ data: [], source: "dexscreener", asOf: 1700000000000, status: "LIVE", cacheAgeMs: 0 });
+    expect(await indexer.runOnce()).toEqual({ status: "retry", kind: "discover" });
+    expect(await indexer.runOnce()).toEqual({ status: "updated", kind: "refresh" });
+    expect(catalog.complete(leased, () => {}, {}, 1000)).toBe(true);
+  });
+
   it("checkpoints successful pages, retries failures with backoff, and resumes after restart", async () => {
     const { catalog, market, indexer, advance } = setup();
     catalog.enqueue("one", "discover", { chain: "base", kind: "new", page: 1 });

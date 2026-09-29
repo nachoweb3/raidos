@@ -4,10 +4,10 @@ import { MarketDataService } from "../src/market/data.js";
 const mint = "AjtWmyesJDvhnUk79jct4W8cVs4sHRuXktTTH2nVpump";
 const pair = {
   chainId: "solana", pairAddress: "pool", baseToken: { address: mint, symbol: "NEW", name: "New token" },
-  quoteToken: { address: "USDC" }, priceUsd: "0.25", liquidity: { usd: 10 },
+  quoteToken: { address: "USDC" }, priceUsd: "0.25", liquidity: { usd: 5000 }, // >= MIN_LIQUIDITY_USD (sin liquidez no se muestra)
 };
 const gecko = {
-  data: [{ id: "solana_pool", attributes: { address: "pool", base_token_price_usd: "0.2", reserve_in_usd: "100", volume_usd: { h24: "12" } },
+  data: [{ id: "solana_pool", attributes: { address: "pool", base_token_price_usd: "0.2", reserve_in_usd: "8000", volume_usd: { h24: "12" } },
     relationships: { base_token: { data: { id: "solana_" + mint } }, quote_token: { data: { id: "solana_USDC" } }, dex: { data: { id: "pumpswap" } } } }],
   included: [{ id: "solana_" + mint, attributes: { address: mint, symbol: "NEW", name: "New token", decimals: 6 } },
     { id: "solana_USDC", attributes: { address: "USDC", symbol: "USDC", decimals: 6 } }],
@@ -29,7 +29,7 @@ describe("shared market data", () => {
   it("resolves a requested quote token without assigning the base token's price or market cap", async () => {
     const quote = "0x" + "b".repeat(40);
     const service = new MarketDataService({ fetcher: async () => response([
-      { chainId: "base", pairAddress: "0x" + "c".repeat(40),
+      { chainId: "base", pairAddress: "0x" + "c".repeat(40), liquidity: { usd: 5000 },
         baseToken: { address: "0x" + "a".repeat(40), symbol: "OTHER" },
         quoteToken: { address: quote, symbol: "TARGET" }, priceUsd: "10", priceNative: "2",
         marketCap: 100000, priceChange: { h24: 20 } },
