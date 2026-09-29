@@ -308,111 +308,28 @@
       font-weight: 600;
     }
 
-    /* ═══════════ The Relic — rotating metallic artifact ═══════════ */
-    .relic-stage {
+    /* Military gold wordmark */
+    .hero-wordmark {
       position: relative;
-      width: min(340px, 74vw);
-      height: min(340px, 74vw);
-      margin: 0 auto 46px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      width: min(920px, 100%);
+      margin: 14px auto 46px;
+      padding: 22px 0;
     }
 
-    .relic-ring {
-      position: absolute;
-      inset: 0;
-      border-radius: 50%;
-      background: conic-gradient(from 0deg,
-        #6b5220 0%, #d4af6a 8%, #f7e7bb 16%, #a5823f 24%, #4a3a14 32%,
-        #e8cf95 41%, #8a6c30 50%, #f2ddab 58%, #5c4819 66%, #d4af6a 74%,
-        #faf0d2 83%, #7a5f28 92%, #6b5220 100%);
-      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 15px), #000 calc(100% - 14px));
-      mask: radial-gradient(farthest-side, transparent calc(100% - 15px), #000 calc(100% - 14px));
-      filter: saturate(1.05) brightness(0.9);
-      animation: relic-spin 26s linear infinite;
+    .hero-wordmark svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      filter: drop-shadow(0 5px 0 #000);
     }
 
-    .relic-ring.r2 {
-      inset: 11%;
-      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
-      mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
-      filter: saturate(1.1) brightness(1.05);
-      animation: relic-spin-rev 18s linear infinite;
-    }
-
-    .relic-ring.r3 {
-      inset: 21%;
-      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
-      mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
-      filter: brightness(0.85);
-      animation: relic-spin 34s linear infinite;
-    }
-
-    .relic-orbit {
-      position: absolute;
-      inset: 4.5%;
-      border-radius: 50%;
-      border: 1px dashed rgba(212, 175, 106, 0.28);
-      animation: relic-spin 60s linear infinite;
-    }
-
-    .relic-orbit.o2 {
-      inset: 16%;
-      border-color: rgba(212, 175, 106, 0.16);
-      animation: relic-spin-rev 44s linear infinite;
-    }
-
-    .relic-orbit .orbit-mote {
-      position: absolute;
-      top: -3.5px;
-      left: 50%;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--gold-bright);
-      box-shadow: 0 0 12px rgba(240, 217, 160, 0.95);
-    }
-
-    .relic-core {
-      position: relative;
-      width: 31%;
-      aspect-ratio: 1;
-      border-radius: 50%;
-      background:
-        radial-gradient(circle at 32% 28%, rgba(255, 250, 230, 0.95) 0%, rgba(240, 217, 160, 0.75) 18%, rgba(212, 175, 106, 0.55) 42%, #3d2f10 78%, #241b06 100%);
-      box-shadow:
-        0 0 0 1px rgba(212, 175, 106, 0.35),
-        0 0 44px rgba(212, 175, 106, 0.28),
-        0 0 120px rgba(212, 175, 106, 0.14),
-        inset 0 -8px 22px rgba(0, 0, 0, 0.55);
-      animation: relic-breathe 6s ease-in-out infinite;
-    }
-
-    .relic-core::after {
-      content: "";
-      position: absolute;
-      inset: 18%;
-      border-radius: 50%;
-      border: 1px solid rgba(255, 245, 220, 0.28);
-      filter: blur(0.4px);
-    }
-
-    @keyframes relic-spin {
-      to { transform: rotate(360deg); }
-    }
-
-    @keyframes relic-spin-rev {
-      to { transform: rotate(-360deg); }
-    }
-
-    @keyframes relic-breathe {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(212,175,106,.35), 0 0 44px rgba(212,175,106,.28), 0 0 120px rgba(212,175,106,.14), inset 0 -8px 22px rgba(0,0,0,.55); }
-      50% { box-shadow: 0 0 0 1px rgba(212,175,106,.5), 0 0 64px rgba(212,175,106,.42), 0 0 150px rgba(212,175,106,.2), inset 0 -8px 22px rgba(0,0,0,.55); }
+    @media (max-width: 600px) {
+      .hero-wordmark { margin: 4px auto 28px; padding: 16px 0; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .relic-ring, .relic-orbit, .relic-core, .status-dot { animation: none !important; }
+      .status-dot { animation: none !important; }
     }
 
     /* ═══════════ Numbers band ═══════════ */
@@ -1106,14 +1023,33 @@
       <span>LANZAMIENTO PÚBLICO · REGISTRO ABIERTO</span>
     </div>
 
-    <!-- Abstract metallic relic -->
-    <div class="relic-stage" aria-hidden="true">
-      <div class="relic-orbit"><div class="orbit-mote"></div></div>
-      <div class="relic-orbit o2"></div>
-      <div class="relic-ring"></div>
-      <div class="relic-ring r2"></div>
-      <div class="relic-ring r3"></div>
-      <div class="relic-core"></div>
+    <!-- Military stencil wordmark -->
+    <div class="hero-wordmark">
+      <svg viewBox="-2 0 596 106" role="img" aria-label="TRENCHES" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="wordmark-gold" x1="0" y1="0" x2="0.3" y2="1">
+            <stop offset="0" stop-color="#f0d9a0"/>
+            <stop offset="0.42" stop-color="#d4af6a"/>
+            <stop offset="0.48" stop-color="#ae803a"/>
+            <stop offset="0.52" stop-color="#e0bd78"/>
+            <stop offset="1" stop-color="#8f6b2e"/>
+          </linearGradient>
+          <mask id="wordmark-stencil" maskUnits="userSpaceOnUse" x="-2" y="0" width="596" height="106">
+            <rect x="-2" width="596" height="106" fill="white"/>
+            <path d="M-2 51H594" stroke="black" stroke-width="4"/>
+          </mask>
+        </defs>
+        <g fill="url(#wordmark-gold)" fill-rule="evenodd" mask="url(#wordmark-stencil)">
+          <path transform="translate(0 8)" d="M0 0H60V17H40V88H20V17H0Z"/>
+          <path transform="translate(76 8)" d="M0 0H44L60 15V39L46 52L62 88H40L26 55H20V88H0Z M20 17V38H37L40 35V21L36 17Z"/>
+          <path transform="translate(152 8)" d="M0 0H60V17H20V35H53V52H20V71H60V88H0Z"/>
+          <path transform="translate(228 8)" d="M0 88V0H19L41 48V0H60V88H41L19 40V88Z"/>
+          <path transform="translate(304 8)" d="M16 0H60V18H25L20 23V65L25 70H60V88H16L0 72V16Z"/>
+          <path transform="translate(380 8)" d="M0 0H20V35H40V0H60V88H40V53H20V88H0Z"/>
+          <path transform="translate(456 8)" d="M0 0H60V17H20V35H53V52H20V71H60V88H0Z"/>
+          <path transform="translate(532 8)" d="M15 0H60V18H23L20 21V32L24 36H46L60 50V73L45 88H0V70H37L40 67V56L36 52H14L0 38V15Z"/>
+        </g>
+      </svg>
     </div>
 
     <h1 class="hero-title">

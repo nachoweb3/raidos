@@ -738,10 +738,15 @@ export const PortfolioEngine = {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
         <h3 style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-tertiary); margin:0">Mis Billeteras</h3>
         <div style="display:flex; gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="window.PortfolioEngine.promptCreateWallet()">+ Generar</button>
           <button class="btn btn-secondary btn-sm" onclick="window.PortfolioEngine.promptImportWallet()">+ Importar</button>
           <button class="btn btn-ghost btn-sm" onclick="window.PortfolioEngine.promptDeleteWallet()">🗑</button>
         </div>
-      </div>`;
+      </div>
+      <p style="font-size:10.5px; color:var(--text-tertiary); margin:0 0 10px">
+        Wallets generadas por TRENCHES: una dirección por red, listas para recibir y operar.
+        Puedes exportar la clave privada cuando quieras — se muestra una sola vez, guárdala segura.
+      </p>`;
     const list = document.createElement("div");
     list.style.cssText = "display:flex; flex-direction:column; gap:8px";
     if (this.wallets.length === 0) {
@@ -756,6 +761,10 @@ export const PortfolioEngine = {
           <div>
             <div style="font-weight:800; font-size:13px">${w.label || "Wallet"} <span style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase">· ${w.chain}</span></div>
             <div class="mono" style="font-size:11px; color:var(--text-tertiary)">${short}</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center">
+            <button class="btn btn-ghost btn-sm" title="Copiar dirección" onclick="navigator.clipboard.writeText('${escHtml(w.address)}').then(()=>{this.textContent='✓'; setTimeout(()=>{this.textContent='⧉';},1200)})">⧉</button>
+            <button class="btn btn-secondary btn-sm" title="Exportar clave privada" onclick="window.PortfolioEngine.promptExportKey('${w.chain}')">🔑</button>
           </div>`;
         list.appendChild(row);
       }
@@ -825,16 +834,55 @@ export const PortfolioEngine = {
     const n = Number(idx);
     if (!n || n < 1 || n > this.wallets.length) return;
     const w = this.wallets[n - 1];
-    if (!confirm(`¿Eliminar ${w.label || "Wallet"} (${w.chain})? Esta acción no se puede deshacer.`)) return;
-    // The server decrypts with this password before allowing deletion.
-    const password = prompt("Contraseña de la wallet para confirmar la eliminación:");
-    if (!password) return;
+    if (!confirm(`¿Eliminar ${w.label || "Wallet"} (${w.chain})? Esta acción no se puede deshacer.\nSi tiene fondos, traslúdalos antes.`)) return;
+    // Platform wallets need no password; imported ones keep password semantics.
+    const imported = (w.label || "").toLowerCase() === "imported";
+    const password = imported ? prompt("Contraseña de la wallet para confirmar la eliminación:") : "";
+    if (imported && !password) return;
     this.doDeleteWallet(w.id, password);
+  },
+
+  /** Genera una wallet de plataforma adicional para una red. */
+  promptCreateWallet() {
+    const chain = prompt("Red de la nueva wallet (solana, ethereum, base, bsc, robinhood, arc):");
+    if (!chain) return;
+    this.doCreateWallet(chain.trim().toLowerCase());
+  },
+
+  async doCreateWallet(chain) {
+    try {
+      await ApiClient.createPlatformWallet(chain);
+      alert("✅ Wallet generada para " + chain + ". Ya aparece en tu lista.");
+      this.load();
+    } catch (e) {
+      alert("No se pudo generar la wallet: " + (e?.message || "error"));
+    }
+  },
+
+  /** Exporta la private key de una wallet de plataforma (se muestra UNA vez). */
+  async promptExportKey(chain) {
+    if (!confirm("Vas a exportar la clave privada de tu wallet " + chain + ".\n\nCualquiera con esta clave controla los fondos. ¿Mostrarla ahora?")) return;
+    try {
+      const { privateKey } = await ApiClient.exportWalletKey(chain);
+      const short = privateKey.length > 24 ? privateKey.slice(0, 10) + "…" + privateKey.slice(-6) : privateKey;
+      const copy = confirm("Clave privada de " + chain + ":\n\n" + short + "\n\n(Abre la consola del navegador y usa la variable __tgKey para la clave completa, o pulsa OK para copiarla al portapapeles)");
+      // Full key available for copy without rendering it long-lived in the DOM:
+      window.__tgKey = privateKey;
+      if (copy) {
+        await navigator.clipboard.writeText(privateKey);
+        alert("📋 Clave copiada al portapapeles. Guárdala en un gestor de contraseñas — NO la compartas.");
+      }
+      console.log("[TRENCHES] Clave privada (se borra al recargar): usa copy(__tgKey)");
+      setTimeout(() => { try { delete window.__tgKey; } catch {} }, 5 * 60 * 1000);
+    } catch (e) {
+      alert("No se pudo exportar: " + (e?.message || "error"));
+    }
   },
 
   async doDeleteWallet(id, password) {
     try {
-      await ApiClient.deleteWallet(id, password);
+      if (password) await ApiClient.deleteWallet(id, password);
+      else await ApiClient.deletePlatformWallet(id);
       alert("Wallet eliminada.");
       this.load();
     } catch (e) {

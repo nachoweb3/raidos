@@ -3,10 +3,10 @@
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed } from "./dexfeed.js?v=20260926-9";
-import { ChartTools } from "./chart-tools.js";
+import { DexFeed } from "./dexfeed.js?v=20260928-6";
+import { ChartTools } from "./chart-tools.js?v=20260928-6";
 import { PoolActivity } from "./pool-activity.js";
-import { publicPoolData } from "./public-market.js";
+import { publicPoolData } from "./public-market.js?v=20260928-6";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -337,14 +337,15 @@ export const TradingEngine = {
     const container = document.getElementById("tvChartContainer");
     if (!container || typeof window.LightweightCharts === "undefined") return;
     if (this.chart) {
-      this.chart.applyOptions({ width: container.clientWidth || 600 });
+      this.chart.applyOptions({ width: container.clientWidth || 600, height: container.clientHeight || 380 });
+      this.chartTools?.drawingWorkspace?.sync();
       return;
     }
 
     container.innerHTML = "";
     this.chart = window.LightweightCharts.createChart(container, {
       width: container.clientWidth || 600,
-      height: 380,
+      height: container.clientHeight || 380,
       layout: {
         background: { color: "transparent" },
         textColor: "#71717a",
@@ -379,11 +380,15 @@ export const TradingEngine = {
 
     this.chartTools = new ChartTools(this.chart, this.candleSeries, window.LightweightCharts);
     this.poolActivity = new PoolActivity(this.chartTools);
-    this.generateCandleData();
+    this._chartResizeObserver = new ResizeObserver(() => {
+      if (container.clientWidth && container.clientHeight) this.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+    });
+    this._chartResizeObserver.observe(container);
+    // setAsset loads the selected token when the terminal opens.
 
     window.addEventListener("resize", () => {
       if (this.chart && container) {
-        this.chart.applyOptions({ width: container.clientWidth });
+        this.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 380 });
       }
     });
   },
@@ -428,6 +433,10 @@ export const TradingEngine = {
       }
       if (!result) throw new Error("No indexed pool history");
       if (request !== this._candleRequest) return [];
+      if (result.pool && pair && result.pool !== pair.pairAddress) {
+        pair = { ...pair, pairAddress: result.pool };
+        this.poolActivity?.start(chain, result.pool, token, this.chartInterval);
+      }
       const data = result.candles ?? [];
       if (!data.length) throw new Error("No real candles");
       this.setChartData(data);
@@ -440,7 +449,13 @@ export const TradingEngine = {
     } catch {
       if (request === this._candleRequest) {
         if (!refresh) this.setChartData([]);
-        if (label) label.textContent = "Historial no disponible para este token";
+        if (label) {
+          label.replaceChildren(document.createTextNode(refresh ? "Actualizacion pendiente; se conserva el historial. " : "No llega historial de la pool. "));
+          const retry = document.createElement("button");
+          retry.type = "button"; retry.textContent = "Reintentar";
+          retry.className = "chart-retry"; retry.onclick = () => this.fetchRealCandles(refresh);
+          label.append(retry);
+        }
       }
       return [];
     }
@@ -458,7 +473,7 @@ export const TradingEngine = {
 
   setCandleInterval(minutes) {
     const value = Number(minutes);
-    if (![1, 5, 15].includes(value)) return;
+    if (![1, 5, 15, 60, 240, 1440].includes(value)) return;
     this.chartInterval = value * 60;
     return this.fetchRealCandles();
   },

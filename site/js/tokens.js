@@ -118,6 +118,28 @@ export const TokenMeta = {
   },
 
   /** Best image URL for a symbol, or null when only the initials badge applies. */
+  failedUrls: new Set(),
+
+  imageUrl(value) {
+    if (typeof value !== "string") return null;
+    if (value.startsWith("ipfs://")) value = "https://ipfs.io/ipfs/" + value.slice(7).replace(/^ipfs\//, "");
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+    } catch { return null; }
+  },
+
+  nextLogo(img) {
+    const failed = img.getAttribute("src");
+    if (this.failedUrls.size >= 500) this.failedUrls.delete(this.failedUrls.values().next().value);
+    if (failed) this.failedUrls.add(failed);
+    let remaining = [];
+    try { remaining = JSON.parse(img.dataset.logoFallbacks || "[]"); } catch {}
+    const next = remaining.shift();
+    if (next) { img.dataset.logoFallbacks = JSON.stringify(remaining); img.src = next; }
+    else { img.remove(); window.TrenchesEngine?.scheduleRiskLoad?.(); }
+  },
+
   imageFor(symbol, explicit = null) {
     const sym = String(symbol || "").toUpperCase();
     if (explicit) return explicit;
@@ -166,12 +188,14 @@ export const TokenMeta = {
     const sym = String(symbol || "?").toUpperCase();
     const size = opts.size ?? 32;
     const radius = opts.round === false ? "12px" : "50%";
-    const url = this.imageFor(sym, opts.imageUrl);
+    const urls = [...new Set([opts.imageUrl, ...(opts.imageUrls || []), this.imageFor(sym)]
+      .map(value => this.imageUrl(value)).filter(url => url && !this.failedUrls.has(url)))];
+    const url = urls.shift();
     const initials = esc(sym.slice(0, 4));
     const fontPx = Math.max(8, Math.round(size / 2.7));
     const badge = `<div style="position:absolute;inset:0;border-radius:${radius};background:${this.colorFor(sym)};border:1px solid var(--border-subtle, rgba(255,255,255,0.08));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${fontPx}px;color:#fff;letter-spacing:-0.02em;overflow:hidden">${initials}</div>`;
     const img = url
-      ? `<img src="${esc(url)}" alt="${esc(sym)}" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;border-radius:${radius};object-fit:cover;background:rgba(255,255,255,0.04)" onerror="this.remove()">`
+      ? `<img src="${esc(url)}" alt="${esc(sym)}" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;border-radius:${radius};object-fit:cover;background:rgba(255,255,255,0.04)" data-logo-fallbacks="${esc(JSON.stringify(urls))}" onerror="window.TokenMeta.nextLogo(this)">`
       : "";
     return `<div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0" title="${esc(opts.title || this.nameFor(sym))}">${badge}${img}</div>`;
   },

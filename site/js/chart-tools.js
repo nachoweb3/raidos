@@ -65,6 +65,12 @@ export class ChartTools {
       };
     }
     this.render();
+    import("../vendor/opencharts/workspace.js?v=20260928-6").then(({ OpenChartsWorkspace }) => {
+      this.drawingWorkspace = new OpenChartsWorkspace(this);
+    }).catch(() => {
+      const label = this.controls?.querySelector("[data-indicator-status]");
+      if (label) label.textContent += " - Herramientas de dibujo no disponibles";
+    });
   }
   fill() {
     for (const element of this.controls.querySelectorAll("[name]")) {
@@ -108,6 +114,7 @@ export class ChartTools {
       series.setData(name === "candles" || name === "bars" ? this.data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })) : this.points(closes));
     }
     this.renderMarkers();
+    this.drawingWorkspace?.sync();
     this.chart.priceScale("right").applyOptions({ mode: p.scale === "log" ? 1 : 0, scaleMargins: { top: .08, bottom: p.volume ? .22 : .08 }, minimumWidth: 70 });
     const calculated = { sma: sma(closes, p.period), ema: ema(closes, p.period), ...bollinger(closes, p.period) };
     for (const [name, series] of Object.entries(this.overlays)) {

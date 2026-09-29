@@ -28,7 +28,7 @@ export function normalizePoolCandles(body) {
   const rows = body?.data?.attributes?.ohlcv_list;
   if (!Array.isArray(rows)) throw Error("Historial no disponible");
   const candles = new Map();
-  for (const row of rows.slice(0, 100)) {
+  for (const row of rows.slice(0, 1000)) {
     if (!Array.isArray(row) || row.length < 6 || !row.slice(0, 6).every(v => typeof v === "number" && Number.isFinite(v))) continue;
     const [time, open, high, low, close, volume] = row;
     if (!Number.isInteger(time) || time <= 0 || low < 0 || high < Math.max(open, close) || low > Math.min(open, close) || volume < 0) continue;
@@ -38,9 +38,9 @@ export function normalizePoolCandles(body) {
 }
 export async function publicPoolData(kind, chain, pool, token, aggregate = 5) {
   if (!networks[chain] || ![pool, token].every(value => typeof value === "string" && /^[A-Za-z0-9:_-]{20,160}$/.test(value)) ||
-      !["trades", "candles"].includes(kind) || ![1, 5, 15].includes(aggregate)) throw Error("Pool no compatible");
+      !["trades", "candles"].includes(kind) || ![1, 5, 15, 60, 240, 1440].includes(aggregate)) throw Error("Pool no compatible");
   const path = `/networks/${networks[chain]}/pools/${encodeURIComponent(pool)}/` + (kind === "trades" ? "trades" :
-    `ohlcv/minute?aggregate=${aggregate}&limit=100&currency=usd&token=${encodeURIComponent(token)}`);
+    `ohlcv/${aggregate >= 1440 ? "day" : aggregate >= 60 ? "hour" : "minute"}?aggregate=${aggregate >= 1440 ? aggregate / 1440 : aggregate >= 60 ? aggregate / 60 : aggregate}&limit=1000&currency=usd&token=${encodeURIComponent(token)}`);
   const key = path + ":" + token, cached = cache.get(key), ttl = kind === "trades" ? 30000 : 60000;
   if (cached && Date.now() - cached.asOf < ttl) return cached;
   if (pending.has(key)) return pending.get(key);

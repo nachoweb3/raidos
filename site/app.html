@@ -28,38 +28,41 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script defer src="vendor/lightweight-charts/lightweight-charts.js?v=4.2.0"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260928-6">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260928-6">
+  <link rel="stylesheet" href="css/catalog.css?v=20260929-1">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-1">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
+  <script type="module" src="js/tg-signals.js?v=20260929-1"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260928-6",
-      "./js/app.js": "./js/app.js?v=20260928-6",
-      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260928-6",
-      "./js/copy.js": "./js/copy.js?v=20260928-6",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260928-6",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260928-6",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260928-6",
-      "./js/discover.js": "./js/discover.js?v=20260928-6",
-      "./js/feed.js": "./js/feed.js?v=20260928-6",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260928-6",
-      "./js/markets.js": "./js/markets.js?v=20260928-6",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260928-6",
-      "./js/rails.js": "./js/rails.js?v=20260928-6",
-      "./js/premium.js": "./js/premium.js?v=20260928-6",
-      "./js/rewards.js": "./js/rewards.js?v=20260928-6",
-      "./js/social.js": "./js/social.js?v=20260928-6",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260928-6",
-      "./js/tokens.js": "./js/tokens.js?v=20260928-6",
-      "./js/trading.js": "./js/trading.js?v=20260928-6",
-      "./js/trenches.js": "./js/trenches.js?v=20260928-6",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260928-6",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260928-6",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260928-6",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260928-6",
-      "./js/install.js": "./js/install.js?v=20260928-6",
-      "./js/public-market.js": "./js/public-market.js?v=20260928-6",
-      "./js/pairs.js": "./js/pairs.js?v=20260928-6"
+      "./js/api.js": "./js/api.js?v=20260929-1",
+      "./js/app.js": "./js/app.js?v=20260929-1",
+      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-1",
+      "./js/copy.js": "./js/copy.js?v=20260929-1",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-1",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-1",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-1",
+      "./js/discover.js": "./js/discover.js?v=20260929-1",
+      "./js/feed.js": "./js/feed.js?v=20260929-1",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260929-1",
+      "./js/markets.js": "./js/markets.js?v=20260929-1",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260929-1",
+      "./js/rails.js": "./js/rails.js?v=20260929-1",
+      "./js/premium.js": "./js/premium.js?v=20260929-1",
+      "./js/rewards.js": "./js/rewards.js?v=20260929-1",
+      "./js/social.js": "./js/social.js?v=20260929-1",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-1",
+      "./js/tokens.js": "./js/tokens.js?v=20260929-1",
+      "./js/trading.js": "./js/trading.js?v=20260929-1",
+      "./js/trenches.js": "./js/trenches.js?v=20260929-1",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-1",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-1",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-1",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-1",
+      "./js/install.js": "./js/install.js?v=20260929-1",
+      "./js/public-market.js": "./js/public-market.js?v=20260929-1",
+      "./js/pairs.js": "./js/pairs.js?v=20260929-1",
+      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-1",
+      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-1"
     } }
   </script>
 
@@ -352,6 +355,39 @@
     }
     .pill-tabs-bar::-webkit-scrollbar { display: none; }
 
+    /* ── 📡 TG Signals (Señales TG) ── */
+    .tg-toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .tg-loading { text-align: center; padding: 40px 0; color: var(--text-tertiary); font-size: 13px; }
+    .tg-row-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tg-sym { font-weight: 800; font-size: 14px; color: #fff; }
+    .tg-token {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px; color: var(--text-secondary); margin-top: 4px;
+      word-break: break-all;
+    }
+    .tg-text {
+      font-size: 12px; color: var(--text-tertiary); margin-top: 6px;
+      max-height: 3.6em; overflow: hidden;
+    }
+    .tg-row-actions {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-top: 10px; flex-wrap: wrap;
+    }
+    .tg-author { font-size: 11px; color: var(--text-tertiary); }
+    .tg-ago { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+    .tg-chip {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+      border-radius: var(--radius-full); font-size: 10.5px; font-weight: 700;
+      border: 1px solid var(--border-subtle);
+    }
+    .tg-sol { color: #9ff5b8; border-color: rgba(57,255,20,0.35); background: rgba(57,255,20,0.08); }
+    .tg-evm { color: #9fc3ff; border-color: rgba(80,140,255,0.35); background: rgba(80,140,255,0.08); }
+    .tg-unk { color: var(--text-tertiary); }
+    .tg-link { color: var(--text-secondary); text-decoration: none; }
+
     .pill-tab {
       background: rgba(255, 255, 255, 0.035);
       border: 1px solid var(--border-subtle);
@@ -611,7 +647,7 @@
       .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
     }
   </style>
-<link rel="stylesheet" href="css/workstation.css?v=20260928-6">
+<link rel="stylesheet" href="css/workstation.css?v=20260929-1">
 </head>
 <body>
   <!-- ── Bottom ticker tape (FOMO-style, desktop only) ── -->
@@ -636,6 +672,7 @@
         <button class="nav-tab-btn" data-nav="leaderboard">Leaderboard</button>
         <button class="nav-tab-btn" data-nav="rewards">🎁 Rewards</button>
         <button class="nav-tab-btn" data-nav="copy">🧬 Copy</button>
+        <button class="nav-tab-btn" data-nav="tg">📡 Señales TG</button>
         <button class="nav-tab-btn" data-nav="profile">Portfolio</button>
       </nav>
 
@@ -1034,6 +1071,10 @@
         </div>
       </section>
 
+      <!-- ════ VIEW: SEÑALES TG (llamadas scrapeadas del canal VIP) ════ -->
+      <!-- TgSignalsEngine.render() pinta aquí la toolbar + lista de llamadas. -->
+      <section id="view-tg" class="view-panel" style="display:none; max-width:900px; margin:0 auto; padding:16px 14px 40px"></section>
+
     </main>
 
     <!-- ── MOBILE BOTTOM NAVIGATION BAR ── -->
@@ -1068,6 +1109,11 @@
         <span>Rewards</span>
       </button>
 
+      <button class="mobile-nav-item" data-nav="tg">
+        <svg viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+        <span>Señales</span>
+      </button>
+
       <button class="mobile-nav-item" data-nav="profile">
         <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         <span>Perfil</span>
@@ -1089,6 +1135,9 @@
       </p>
 
       <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px">
+        <button class="btn btn-secondary btn-lg" onclick="window.App.connectGoogle()" style="justify-content:flex-start">
+          <span style="font-weight:800">G</span> Continuar con Google
+        </button>
         <button class="btn btn-secondary btn-lg" onclick="window.App.connectPhantom()" style="justify-content:flex-start">
           <span>◎</span> Phantom (Solana)
         </button>
@@ -1099,6 +1148,8 @@
           Vincular otra wallet a esta cuenta (para operar)
         </button>
       </div>
+
+      <script src="https://accounts.google.com/gsi/client" async defer></script>
 
       <div style="text-align:center; margin:16px 0; font-size:11px; color:var(--text-tertiary)">— O INGRESA CON CLAVE API —</div>
       <input type="password" id="apiKeyManualInput" placeholder="trenches_key..." style="width:100%; margin-bottom:10px">
@@ -1342,7 +1393,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260928-6"></script>
+  <script type="module" src="js/app.js?v=20260929-1"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1608,6 +1659,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260928-6"></script>
+  <script type="module" src="js/install.js?v=20260929-1"></script>
 </body>
 </html>

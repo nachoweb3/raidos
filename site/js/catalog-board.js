@@ -1,12 +1,11 @@
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20260926-9";
-import { GmgnBoard } from "./gmgn-board.js?v=20260926-9";
+import { DexFeed } from "./dexfeed.js?v=20260928-6";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const definitions = [
   { id: "new", title: "Nuevas Creaciones", description: "Pools creados en las últimas 48 horas", defaults: { sort: "newest", maxAgeHours: 48 } },
-  { id: "soon", title: "Completando", description: "Pools por liquidez observada", defaults: { sort: "liquidity" } },
-  { id: "migrated", title: "Completado", description: "Actividad según volumen de 24 horas", defaults: { sort: "volume" } },
+  { id: "soon", title: "Mayor liquidez", description: "Pools por liquidez observada", defaults: { sort: "liquidity" } },
+  { id: "migrated", title: "Mayor volumen", description: "Actividad según volumen de 24 horas", defaults: { sort: "volume" } },
 ];
 const fields = [["minPrice", "Precio mínimo"], ["maxPrice", "Precio máximo"], ["minMarketCap", "Market cap mínimo"],
   ["maxMarketCap", "Market cap máximo"], ["minLiquidity", "Liquidez mínima"], ["maxLiquidity", "Liquidez máxima"],
@@ -26,6 +25,7 @@ export class CatalogBoard {
     this.engine = engine;
     this.columns = definitions.map((d) => ({ ...d, filters: { ...d.defaults }, rows: [], total: 0, cursor: null, loading: false, sequence: 0, error: "" }));
     this.restore();
+    window.addEventListener("online", () => this.refresh());
     window.addEventListener("popstate", () => {
       const before = JSON.stringify([this.engine.search, this.engine.activeChain, this.columns.map((c) => c.filters)]);
       this.restore();
@@ -53,11 +53,13 @@ export class CatalogBoard {
   async refresh() { await Promise.all(this.columns.map((c) => this.load(c))); }
   async load(c, more = false) {
     if (more && (c.loading || !c.cursor)) return;
-    const query = new URLSearchParams({ chain: this.engine.activeChain, ...c.filters, q: this.engine.search, limit: "40" });
+    clearTimeout(c.retryTimer);
+    const query = new URLSearchParams({ chain: this.engine.activeChain, ...c.filters, q: this.engine.search, limit: "80" });
     const queryKey = query.toString();
     const changed = c.queryKey !== queryKey;
     const pages = more || changed ? 1 : Math.max(1, c.pages || 1);
     if (changed) {
+      c.retryCount = 0;
       c.rows = []; c.cursor = null; c.total = 0; c.pages = 0; c.queryKey = queryKey;
       const scroller = this.engine.target()?.querySelector(`[data-catalog-column="${c.id}"] [data-rows]`);
       if (scroller) scroller.scrollTop = 0;
@@ -76,15 +78,25 @@ export class CatalogBoard {
         loaded++;
         if (response.nextCursor) query.set("cursor", response.nextCursor);
       } while (loaded < pages && response.nextCursor);
+      c.retryCount = 0;
       c.rows = [...merged.values()]; c.total = response.total; c.cursor = response.nextCursor;
       c.pages = more ? (c.pages || 0) + loaded : loaded;
       c.asOf = c.rows.length ? Math.min(...c.rows.map((r) => r.dex._updatedAt)) : null;
       this.engine.market = [...new Map(this.columns.flatMap((col) => col.rows).map((r) => [r.id, r])).values()];
       // GMGN parity: catalog rows carry security badges too (RugCheck/GoPlus).
-      this.engine.loadSecurity?.();
+      this.engine.scheduleRiskLoad?.();
     } catch (err) {
-      if (sequence === c.sequence && err.name !== "AbortError") c.error = "No se pudo cargar esta columna. " + err.message;
-    } finally { if (sequence === c.sequence) { c.loading = false; this.render(); } }
+      if (sequence === c.sequence && err.name !== "AbortError") {
+        c.error = "No se pudo cargar esta columna. " + err.message;
+        if (!more && (c.retryCount || 0) < 2) {
+          c.retryCount = (c.retryCount || 0) + 1;
+          c.error += " Reintentando...";
+          c.retryTimer = setTimeout(() => {
+            if (sequence === c.sequence) void this.load(c);
+          }, c.retryCount * 2000);
+        }
+      }
+    } finally { if (sequence === c.sequence) { c.loading = false; this.render(); this.engine.scheduleRiskLoad?.(); } }
   }
   async discover() {
     const chain = this.engine.activeChain;
@@ -97,9 +109,6 @@ export class CatalogBoard {
   }
   render() {
     const target = this.engine.target(); if (!target) return;
-    // GMGN owns the board while LIVE/LOADING — painting catalog columns over
-    // it is exactly the race that made chain-switches snap back to catalog.
-    if (GmgnBoard.active) return;
     if (!target.querySelector("[data-catalog-column]")) {
       target.innerHTML = this.columns.map((c) => `<section class="trenches-col catalog-column" data-catalog-column="${c.id}" aria-label="${c.title}">
         <header><div class="catalog-head-row">
@@ -116,7 +125,12 @@ export class CatalogBoard {
         el.querySelector("[data-reset]").onclick = () => { c.filters = { ...c.defaults }; this.persist(); this.load(c); };
         el.querySelector("[data-refresh]").onclick = () => this.load(c);
         el.querySelector("[data-more]").onclick = () => this.load(c, true);
-        el.querySelector("[data-rows]").addEventListener("scroll", () => this.renderRows(c));
+        el.querySelector("[data-rows]").addEventListener("scroll", () => {
+          this.renderRows(c);
+          this.engine.scheduleRiskLoad?.();
+          const list = el.querySelector("[data-rows]");
+          if (list.scrollTop + list.clientHeight >= list.scrollHeight - 248) void this.load(c, true);
+        });
       }
       target.querySelector("[data-discover]").onclick = () => this.discover();
     }
@@ -132,16 +146,13 @@ export class CatalogBoard {
     }
     const count = document.getElementById("trenchesCount"); if (count) count.textContent = `${this.engine.market.length} cargados`;
     const badge = document.getElementById("trenchesLiveBadge"); if (badge) badge.textContent = "Catálogo";
-    // Honest degradation: when GMGN is down/disabled, keep its banner visible
-    // above the catalog columns (single source of truth for the status).
-    if (GmgnBoard.status === "UNAVAILABLE" || GmgnBoard.status === "DISABLED") GmgnBoard.renderFallbackBanner(target);
   }
   renderRows(c) {
     const el = this.engine.target()?.querySelector(`[data-catalog-column="${c.id}"] [data-rows]`); if (!el) return;
     const top = el.scrollTop;
-    const height = 112, start = Math.max(0, Math.floor(top / height) - 3);
+    const height = 148, start = Math.max(0, Math.floor(top / height) - 3);
     const end = Math.min(c.rows.length, start + Math.ceil((el.clientHeight || 420) / height) + 7);
-    const range = `${start}:${end}:${c.sequence}:${c.rows.length}:${c.loading}:${c.error}:${this.engine.selected?.id}`;
+    const range = `${start}:${end}:${c.sequence}:${c.rows.length}:${c.loading}:${c.error}:${this.engine.selected?.id}:${this.engine._secVersion || 0}:${this.engine._riskVersion || 0}`;
     if (el.dataset.range === range) return;
     el.dataset.range = range;
     const focusedAction = el.contains(document.activeElement) ? document.activeElement.getAttribute("onclick") : null;
@@ -150,6 +161,7 @@ export class CatalogBoard {
       `<div style="height:${Math.max(0, c.rows.length - end) * height}px" aria-hidden="true"></div>` :
       `<p class="catalog-empty">${c.loading ? "Consultando catálogo…" : c.error ? "Error de consulta. Pulsa Actualizar." : "Sin resultados. Ajusta los filtros o descubre pools recientes."}</p>`;
     el.scrollTop = top;
+    this.engine.scheduleRiskLoad?.();
     if (focusedAction) [...el.querySelectorAll("button")].find((button) => button.getAttribute("onclick") === focusedAction)?.focus({ preventScroll: true });
   }
   openFilters(c) {

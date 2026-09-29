@@ -18,14 +18,13 @@
 
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20260926-9";
-import { CatalogBoard } from "./catalog-board.js?v=20260926-9";
-import { GmgnBoard } from "./gmgn-board.js?v=20260926-9";
+import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20260928-6";
+import { CatalogBoard } from "./catalog-board.js?v=20260928-6";
 
 const COLUMNS = [
   { id: "new", title: "Nuevas Creaciones", icon: "+", hint: "Pools de menos de 48 h" },
-  { id: "soon", title: "Completando", icon: "~", hint: "Mayor liquidez indexada" },
-  { id: "migrated", title: "Completado", icon: "/", hint: "Volumen de 24 h" },
+  { id: "soon", title: "Mayor liquidez", icon: "~", hint: "Mayor liquidez indexada" },
+  { id: "migrated", title: "Mayor volumen", icon: "/", hint: "Volumen de 24 h" },
 ];
 
 /** Chain aliases for the market columns (DexScreener chainIds). */
@@ -73,20 +72,20 @@ export const TrenchesEngine = {
     if (this._initialized) return;
     this._initialized = true;
     this._board = new CatalogBoard(this);
-    GmgnBoard.init(this);
     this.load();
     this.loadMarket();
     this.loadTraders();
     this.connectStream();
-    // GMGN board: primary source when the server has a key; the catalog board
-    // stays as the honest fallback. Poll refresh keeps the board breathing.
-    GmgnBoard.load(this.activeChain)
-      .then(() => { this.render(); GmgnBoard.startPolling(() => this.activeChain); })
-      .catch(() => { /* catalog board already rendered */ });
+    // Bundle + creator analytics for visible rows (server returns 503 without
+    // HELIUS_RPC_URL; the chips stay honest N/D and we back off).
+    this.loadOnchainRisk().catch(() => {});
     // Market refresh every 2 minutes (boosts feed changes constantly).
     setInterval(() => { if (document.visibilityState === "visible") this.loadMarket(true); }, 120_000);
     // Security badges re-fetch every ~5 min so 🛡️ labels track RugCheck/GoPlus.
-    setInterval(() => { if (document.visibilityState === "visible") this.loadSecurity(); }, 300_000);
+    setInterval(() => { if (document.visibilityState === "visible") this.scheduleRiskLoad(); }, 30_000);
+    // Bundle/creator analytics for rows that appeared after init (bounded: 3
+    // tokens per pass, 5-min server cache; a 503 backs off inside the loader).
+    setInterval(() => { if (document.visibilityState === "visible") this.loadOnchainRisk().catch(() => {}); }, 300_000);
     // ⏱ LIVE TICKING: re-render deltas every 5s from cached pair data and
     // re-pull pairs every 60s — rows breathe without hammering the API.
     setInterval(() => {
@@ -117,12 +116,18 @@ export const TrenchesEngine = {
     }
     // GMGN-style row ticking: patch price/mcap in place so catalog columns
     // breathe every 5s without a full re-render (selection and scroll survive).
-    if (!GmgnBoard.active && this._board) {
+    if (this._board) {
       const root = this.target();
       if (root) {
         for (const el of root.querySelectorAll(".trench-row[data-token-id]")) {
           const t = this.allTokens().find((x) => String(x.id) === el.getAttribute("data-token-id"));
           if (!t) continue;
+          const logo = el.querySelector(".tr-logo");
+          if (logo) {
+            const trend = this.logoTrend(t);
+            for (const cls of ["trend-up", "trend-down", "trend-flat"]) logo.classList.toggle(cls, cls === trend);
+            logo.title = this.logoTrendTitle(t);
+          }
           if (t.priceUsd > 0) {
             const priceEl = el.querySelector(".tr-price");
             const txt = "$" + (t.priceUsd < 0.02 ? t.priceUsd.toFixed(6) : t.priceUsd.toPrecision(4));
@@ -216,7 +221,7 @@ export const TrenchesEngine = {
     this.market = [...merged.values()];
     this._marketPage = page;
     this._marketAt = rows.length ? Math.min(...rows.map((r) => r._updatedAt)) : Date.now();
-    if (this.loadedOnce) { this.render(); this.loadSecurity(); }
+    if (this.loadedOnce) { this.render(); this.loadSecurity(); this.loadOnchainRisk().catch(() => {}); }
   },
 
   async loadMoreMarket() {
@@ -242,29 +247,172 @@ export const TrenchesEngine = {
     this.render();
   },
 
-  /** 🛡️ Security checks (RugCheck/GoPlus) for every known address. */
+  /** Only enrich rows currently inside their column viewport. */
+  visibleRiskTokens() {
+    const visible = new Set();
+    for (const el of document.querySelectorAll(".trench-row[data-token-id]")) {
+      const box = el.getBoundingClientRect();
+      const viewport = el.closest("[data-rows]")?.getBoundingClientRect();
+      if (box.width > 0 && box.bottom > Math.max(0, viewport?.top ?? 0) &&
+          box.top < Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight)) visible.add(el.dataset.tokenId);
+    }
+    const seen = new Set();
+    return this.allTokens().filter(t => {
+      const key = t.chain + ":" + t.tokenAddress;
+      if (!t.tokenAddress || !visible.has(String(t.id)) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  },
+
+  scheduleRiskLoad() {
+    clearTimeout(this._riskLoadTimer);
+    this._riskLoadTimer = setTimeout(() => {
+      if (document.visibilityState !== "visible") return;
+      this.loadArtwork().catch(() => {});
+      this.loadSecurity().catch(() => {});
+      this.loadOnchainRisk().catch(() => {});
+    }, 200);
+  },
+
   async loadSecurity() {
-    const seen = new Map();
-    for (const t of this.allTokens()) {
-      if (!t.tokenAddress || seen.has(t.chain + ":" + t.tokenAddress)) continue;
-      seen.set(t.chain + ":" + t.tokenAddress, { address: t.tokenAddress, chain: t.chain });
+    if (this._securityLoading) return;
+    this._securityRetryAt ||= new Map();
+    const targets = this.visibleRiskTokens().filter(t => {
+      const address = /^0x/i.test(t.tokenAddress) ? t.tokenAddress.toLowerCase() : t.tokenAddress;
+      const hit = SecurityFeed.cache[t.chain + ":" + address];
+      return (this._securityRetryAt.get(t.chain + ":" + address) || 0) <= Date.now() &&
+        (!hit || Date.now() - hit._at >= SecurityFeed.ttlMs);
+    }).slice(0, 4);
+    if (!targets.length) return;
+    this._securityLoading = true;
+    try {
+      await Promise.allSettled(targets.map(async t => {
+        const address = /^0x/i.test(t.tokenAddress) ? t.tokenAddress.toLowerCase() : t.tokenAddress;
+        const key = t.chain + ":" + address;
+        if (this._securityRetryAt.size >= 200 && !this._securityRetryAt.has(key)) this._securityRetryAt.delete(this._securityRetryAt.keys().next().value);
+        // Provider timestamps can be old even when the request just finished.
+        this._securityRetryAt.set(key, Date.now() + 60_000);
+        await SecurityFeed.fetch(t.tokenAddress, t.chain);
+        this._secVersion = (this._secVersion || 0) + 1;
+        this.render();
+      }));
+    } finally {
+      this._securityLoading = false;
+      this.scheduleRiskLoad();
     }
-    if (!seen.size) return;
-    const results = await SecurityFeed.fetchMany([...seen.values()]).catch(() => ({}));
-    let any = false;
-    for (const t of this.allTokens()) {
-      const sec = SecurityFeed.get(t.tokenAddress, t.chain);
-      if (sec && sec !== t.security) { t.security = sec; any = true; }
+  },
+
+  /** Bounded sequential RPC work; one failed mint does not block every row. */
+  async loadOnchainRisk() {
+    if (this._riskLoading) return;
+    this._riskCache ||= new Map();
+    this._riskRetryAt ||= new Map();
+    const targets = this.visibleRiskTokens().filter(t => {
+      const key = t.chain + ":" + t.tokenAddress;
+      return t.chain === "solana" && (this._riskCache.get(key)?.expires || 0) <= Date.now() &&
+        (this._riskRetryAt.get(key) || 0) <= Date.now();
+    }).slice(0, 3);
+    if (!targets.length) return;
+    this._riskLoading = true;
+    try {
+      for (const t of targets) {
+        const key = t.chain + ":" + t.tokenAddress;
+        try {
+          const r = await ApiClient.request("/api/market/onchain-risk?chain=solana&address=" + encodeURIComponent(t.tokenAddress));
+          if (!r?.bundle || !r?.creator) throw new Error("Risk data unavailable");
+          if (this._riskCache.size >= 200 && !this._riskCache.has(key)) this._riskCache.delete(this._riskCache.keys().next().value);
+          this._riskCache.set(key, { value: r, expires: Date.now() + 300_000 });
+          this._riskRetryAt.delete(key);
+          this._riskVersion = (this._riskVersion || 0) + 1;
+          this.render();
+        } catch {
+          if (this._riskRetryAt.size >= 200 && !this._riskRetryAt.has(key)) this._riskRetryAt.delete(this._riskRetryAt.keys().next().value);
+          this._riskRetryAt.set(key, Date.now() + 30_000);
+        }
+      }
+    } finally {
+      this._riskLoading = false;
+      this.scheduleRiskLoad();
     }
-    // Cache TTL is 5 min: a periodic re-check must repaint even when the cached
-    // verdict object is identical, so bump a version on every completed scan.
-    this._secVersion = (this._secVersion || 0) + 1;
-    if (any || this._board) this.render();
+  },
+
+  async loadArtwork() {
+    if (this._artLoading) return;
+    this._artCache ||= new Map();
+    const targets = this.visibleRiskTokens().filter(t => {
+      const key = t.chain + ":" + t.tokenAddress;
+      return !this.riskImage(t) && (!this._artCache.has(key) || this._artCache.get(key).expires <= Date.now());
+    }).slice(0, 2);
+    if (!targets.length) return;
+    this._artLoading = true;
+    try {
+      for (const t of targets) {
+        const key = t.chain + ":" + t.tokenAddress;
+        try {
+          const art = await ApiClient.request("/api/market/token-art?chain=" + encodeURIComponent(t.chain) + "&address=" + encodeURIComponent(t.tokenAddress));
+          if (this._artCache.size >= 300) this._artCache.delete(this._artCache.keys().next().value);
+          this._artCache.set(key, { urls: art.imageUrls || [], expires: Date.now() + 3600000 });
+          this._secVersion = (this._secVersion || 0) + 1;
+          this.render();
+        } catch {
+          this._artCache.set(key, { urls: [], expires: Date.now() + 60000 });
+        }
+      }
+    } finally { this._artLoading = false; this.scheduleRiskLoad(); }
+  },
+
+  riskImages(t) {
+    const cached = this._riskCache?.get(t.chain + ":" + t.tokenAddress);
+    return [t.imageUrl, (SecurityFeed.get(t.tokenAddress, t.chain) || t.security)?.imageUrl,
+      ...(this._artCache?.get(t.chain + ":" + t.tokenAddress)?.urls || []),
+      cached && cached.expires > Date.now() ? cached.value.imageUrl : null]
+      .filter(Boolean).map(url => TokenMeta.imageUrl ? TokenMeta.imageUrl(url) : url)
+      .filter(url => url && !TokenMeta.failedUrls?.has(url));
+  },
+
+  logoTrend(t) {
+    const change = t.dex?.change5m;
+    return typeof change === "number" && Number.isFinite(change) && change !== 0
+      ? change > 0 ? "trend-up" : "trend-down" : "trend-flat";
+  },
+
+  logoTrendTitle(t) {
+    const trend = this.logoTrend(t);
+    return trend === "trend-flat" ? "Sin tendencia de precio confirmada en 5 min"
+      : (trend === "trend-up" ? "Alcista" : "Bajista") + " en 5 min: " + (t.dex.change5m > 0 ? "+" : "") + t.dex.change5m.toFixed(2) + "%";
+  },
+
+  riskImage(t) {
+    return this.riskImages(t)[0] || null;
+  },
+
+  riskStrip(t) {
+    const m = (SecurityFeed.get(t.tokenAddress, t.chain) || t.security)?.metrics || {};
+    const cached = this._riskCache?.get(t.chain + ":" + t.tokenAddress);
+    const risk = cached && cached.expires > Date.now() ? cached.value : null;
+    void this._riskVersion; // re-renders re-evaluate after loadOnchainRisk() bumps it
+    const chip = (name, value, title, tone = "") => '<span class="risk-chip '+tone+'" title="'+esc(title)+'">'+name+' <b>'+esc(value == null ? "N/D" : value)+'</b></span>';
+    const bundles = chip("Bundles", null, "Sin evidencia confirmada de agrupacion; un tip Jito no demuestra un bundle.");
+    const tips = risk ? chip("Tips Jito", risk.bundle.tippedTransactions == null ? null : risk.bundle.tippedTransactions + "/" + risk.bundle.sampleSize + " tx", risk.bundle.note + (risk.bundle.complete === false ? " Muestra incompleta." : "")) : "";
+    const deployer = risk?.creator?.creator;
+    const creator = deployer || m.creatorAddress;
+    const dev = chip(deployer ? "Despliegue" : "Creador", creator ? creator.slice(0, 4) + "..." + creator.slice(-4) : null,
+      deployer ? risk.creator.note + " Lanzamientos observados: " + (risk.creator.tokensLaunched ?? "N/D") + " en " + risk.creator.sampleSize + " tx."
+      : creator ? "Creador reportado por el proveedor de seguridad: " + creator : "Creador aun no verificado");
+    return '<div class="risk-strip" aria-label="Riesgo del token">' +
+      bundles + tips + dev +
+      chip("Top 10", m.top10Pct == null ? null : Number(m.top10Pct).toFixed(1) + "%", "Porcentaje de las diez mayores cuentas reportadas. Puede incluir pools y custodios.", m.top10Pct >= 40 ? "risk-high" : m.top10Pct >= 20 ? "risk-warn" : "") +
+      chip("Holders", m.holders, "Holders reportados por el proveedor de seguridad") +
+      chip("Rugs dev", m.creatorRugs == null ? null : m.creatorRugs + "/" + m.creatorTokensObserved, "Rugs detectados entre los tokens reportados del creador. Muestra, no historial completo.", m.creatorRugs > 0 ? "risk-high" : "") +
+      chip("Insiders", m.insiderDetections, "Detecciones de insiders en el grafo de RugCheck; no es porcentaje de supply") +
+      chip("Mint", m.mintActive == null ? null : m.mintActive ? "Activo" : "Revocado", "Autoridad de emision", m.mintActive ? "risk-warn" : "") +
+      chip("Freeze", m.freezeActive == null ? null : m.freezeActive ? "Activo" : "Revocado", "Autoridad de congelacion", m.freezeActive ? "risk-warn" : "") + '</div>';
   },
 
   /** Badge html for a token's security verdict (empty when unknown). */
   securityBadge(t) {
-    const s = t.security;
+    const s = SecurityFeed.get(t.tokenAddress, t.chain) || t.security;
     void this._secVersion; // re-renders re-evaluate after loadSecurity() bumps it
     if (!s) return '<span title="Sin evaluación disponible" style="font-size:9px;color:var(--text-tertiary)">N/D</span>';
     const color = s.level === "good" ? "var(--delta-green)" : s.level === "warn" ? "#fde047" : "var(--delta-red)";
@@ -415,7 +563,7 @@ export const TrenchesEngine = {
   /** ⚡ quick sell: abre el terminal en SELL con el saldo real del token. */
   async quickSell(symbol, id, event) {
     event?.stopPropagation();
-    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (!t) return;
     await window.TradingEngine?.quickMarketSell?.(t);
   },
@@ -423,7 +571,7 @@ export const TrenchesEngine = {
   /** ⚡ quick buy: 0.1 USDC — bonding curve for launches, DEX swap for market. */
   async quickBuy(symbol, id, event) {
     event?.stopPropagation();
-    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (!t) return;
     if (!ApiClient.isAuthenticated?.()) {
       window.App?.openWalletModal?.();
@@ -503,9 +651,6 @@ export const TrenchesEngine = {
   },
 
   render() {
-    // GMGN board takes priority when its feed is live or loading; the
-    // catalog board is the honest fallback (no invented analytics).
-    if (GmgnBoard.active) return GmgnBoard.render();
     if (this._board) return this._board.render();
     const el = this.target();
     if (!el) return;
@@ -557,11 +702,11 @@ export const TrenchesEngine = {
     const chg1h = dex?.change1h ?? null;
     const chg6h = dex?.change6h ?? null;
     const chg5m = dex?.change5m ?? null;
-    const pctChip = (v) => {
-      if (v == null || !Number.isFinite(Number(v))) return `<span class="tr-chip">0%</span>`;
+    const pctChip = (v, period) => {
+      if (v == null || !Number.isFinite(Number(v))) return `<span class="tr-chip" title="Sin datos">—</span>`;
       const n = Number(v);
       const cls = n > 0 ? "up" : n < 0 ? "down" : "";
-      return `<span class="tr-chip ${cls}">${n > 0 ? "+" : ""}${n.toFixed(2)}%</span>`;
+      return `<span class="tr-chip ${cls}" title="Variación ${period}">${period} ${n > 0 ? "+" : ""}${n.toFixed(2)}%</span>`;
     };
     const price = t.priceUsd > 0
       ? (t.priceUsd < 0.02 ? "$" + t.priceUsd.toFixed(6) : "$" + t.priceUsd.toPrecision(4))
@@ -574,9 +719,9 @@ export const TrenchesEngine = {
     // Pair age: DexScreener pairCreatedAt for market rows, launch timestamp otherwise.
     const ageSrcMs = Number(t.dex?.createdAtMs || 0) || (t.createdAt ? t.createdAt * 1000 : 0);
     const age = ageSrcMs ? this.ageLabel(Math.floor(ageSrcMs / 1000)) : "";
-    const buys = Number(t.buyers ?? 0);
+    const buys = dex?.buys24h != null ? Number(dex.buys24h) : null;
     const sells = dex?.sells24h != null ? Number(dex.sells24h) : null;
-    const pressure = buys > 0 && sells > 0 ? Math.round((buys / (buys + sells)) * 100) : null;
+    const pressure = buys != null && sells != null && buys + sells > 0 ? Math.round((buys / (buys + sells)) * 100) : null;
     const txns = dex?.txns24h != null ? Number(dex.txns24h) : null;
     const liq = dex?.liqUsd > 0 ? fmtUsd(dex.liqUsd) : "—";
     const vol = dex?.vol24h > 0 ? fmtUsd(dex.vol24h) : "—";
@@ -590,7 +735,7 @@ export const TrenchesEngine = {
     return `
       <div class="trench-row gman-row ${isSel ? "selected" : ""}" data-token-id="${esc(String(t.id))}" onclick="window.TrenchesEngine.selectById(${symAttr}, ${idAttr})">
         ${progress}
-        <div class="tr-logo">${TokenMeta.logoHtml(t.symbol, { size: 38, round: false, imageUrl: t.imageUrl })}</div>
+        <div class="tr-logo ${this.logoTrend(t)}" title="${esc(this.logoTrendTitle(t))}">${TokenMeta.logoHtml(t.symbol, { size: 38, round: false, imageUrl: this.riskImage(t), imageUrls: this.riskImages(t) })}</div>
         <div class="tr-body">
           <div class="tr-titleline">
             <strong class="tr-sym" title="${esc(t.name)}">${esc(t.symbol)}</strong>
@@ -605,19 +750,20 @@ export const TrenchesEngine = {
             ${sells != null ? `<span title="Ventas 24h">▼ ${sells.toLocaleString("en-US")}</span>` : ""}
             ${pressure != null ? `<span title="Compras sobre el total 24h" style="color:${pressure >= 55 ? "var(--delta-green)" : pressure <= 45 ? "var(--delta-red)" : "inherit"}">↑${pressure}%</span>` : ""}
             ${txns != null ? `<span title="Transacciones 24h">⊘ ${txns.toLocaleString("en-US")}</span>` : ""}
-            ${GmgnBoard.metaExtras(t)}
+
             ${t.dex?.pairUrl ? `<a class="tr-social" href="${esc(t.dex.pairUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Ver par en DexScreener">↗</a>` : ""}
           </div>
+          ${this.riskStrip(t)}
           <div class="tr-chips">
-            ${pctChip(chg5m)}
-            ${pctChip(chg1h)}
-            ${pctChip(chg6h)}
-            ${pctChip(chg24h)}
+            ${pctChip(chg5m, "5m")}
+            ${pctChip(chg1h, "1h")}
+            ${pctChip(chg6h, "6h")}
+            ${pctChip(chg24h, "24h")}
             <span class="tr-chip tr-liq" title="Liquidez">💧 ${esc(liq)}</span>
           </div>
           ${t.priceUsd > 0 ? `<div class="tr-price">${esc(price)}</div>` : ""}
           ${t.progress > 0 ? `<div class="tr-raise">Recaudado ${fmtUsd(t.raisedUsd)} · ${Math.min(100, t.progress)}%</div>` : ""}
-          ${GmgnBoard.badges(t)}
+
         </div>
         <div class="tr-right">
           <div class="tr-mc">MC <b>${fmtUsd(t.mcapUsd)}</b></div>
@@ -632,7 +778,7 @@ export const TrenchesEngine = {
 
   selectById(symbol, id) {
     // GMGN rows live outside allTokens(); the board resolves them first.
-    const t = GmgnBoard.rowFor(symbol, id) || this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
+    const t = this.allTokens().find((x) => x.symbol === symbol && String(x.id) === String(id));
     if (t) this.select(t);
   },
 
@@ -652,7 +798,7 @@ export const TrenchesEngine = {
       chain: t.chain,
       price: t.priceUsd,
       launchId: !t.isMarket && t.status !== "graduated" ? t.id : undefined,
-      imageUrl: t.imageUrl,
+      imageUrl: this.riskImage(t),
     });
   },
 
@@ -675,13 +821,13 @@ export const TrenchesEngine = {
       chip.classList.toggle("active", chip.getAttribute("data-chain") === chain);
     });
     this.render();
-    // GMGN columns refresh for the new chain; on failure the catalog covers it.
-    GmgnBoard.load(chain, true).then(() => this.render()).catch(() => {});
     return this.loadMarket(true);
   },
 
   setSearch(q) {
     this.search = q.trim();
+    const searchSequence = this._searchSequence = (this._searchSequence || 0) + 1;
+    clearTimeout(this._addrTimer);
     this._board?.persist();
     clearTimeout(this._searchTimer);
     this._searchTimer = setTimeout(() => this._board ? this._board.refresh() : this.render(), 300);
@@ -694,11 +840,13 @@ export const TrenchesEngine = {
       this._addrTimer = setTimeout(async () => {
         try {
           const rows = await DexFeed.search(addr, "");
-          const norm = addr.startsWith("0x") ? addr.toLowerCase() : addr;
-          const row = rows.find((r) => String(r.address).toLowerCase() === norm);
+          if (searchSequence !== this._searchSequence) return;
+          const key = (value) => String(value).startsWith("0x") ? String(value).toLowerCase() : String(value);
+          const norm = key(addr);
+          const row = rows.find((r) => key(r.address) === norm);
           if (!row) return;
           this._board?.refresh();
-          const indexed = this.market.some((t) => String(t.tokenAddress).toLowerCase() === norm);
+          const indexed = this.market.some((t) => key(t.tokenAddress) === norm);
           if (!indexed) this.select(this.normalizeMarket(row));
         } catch { /* search stays catalog-only on failure */ }
       }, 450);

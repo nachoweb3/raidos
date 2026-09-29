@@ -1,0 +1,10 @@
+.terminal-bubblemaps { margin-top:12px; padding:10px 12px; border:1px solid #363048; border-radius:5px; background:#191525; min-width:0; }
+.terminal-bubblemaps .bubblemaps-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:12px; }
+.terminal-bubblemaps strong { color:#dcc3ff; font-size:13px; }
+.terminal-bubblemaps .bubblemaps-heading span { color:#aca3ba; margin-right:auto; }
+.terminal-bubblemaps a,.terminal-bubblemaps button { display:inline-flex; align-items:center; min-height:32px; padding:4px 9px; border:1px solid #685087; border-radius:4px; background:#30233f; color:#eddbff; font:inherit; text-decoration:none; cursor:pointer; box-sizing:border-box; }
+.terminal-bubblemaps [hidden] { display:none !important; }
+.terminal-bubblemaps a:focus-visible,.terminal-bubblemaps button:focus-visible { outline:2px solid #eddbff; outline-offset:3px; }
+.terminal-bubblemaps p { margin:7px 0 0; color:#aba3b9; font-size:11px; line-height:1.5; }
+.terminal-bubblemaps iframe { display:block; width:100%; height:700px; border:0; margin-top:12px; background:#111; }
+@media(max-width:700px) { .terminal-bubblemaps a,.terminal-bubblemaps button { min-height:44px; }.terminal-bubblemaps iframe { height:600px; } }

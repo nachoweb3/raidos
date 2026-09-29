@@ -1,0 +1,22 @@
+.terminal-risk-detail{margin-top:12px;padding:12px;border:1px solid #303946;border-radius:5px;background:#111821;min-width:0;color:#c5ced9;font-size:12px}
+.terminal-risk-detail .risk-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.terminal-risk-detail .risk-detail-heading>strong{font-size:14px;color:#edf3fa}
+.terminal-risk-detail button{border:1px solid #3c5269;background:#1a2938;color:#e1ecf6;padding:6px 10px;border-radius:4px;min-height:34px;cursor:pointer;font:inherit}
+.terminal-risk-detail button:disabled{opacity:.45;cursor:wait}
+.terminal-risk-detail h4{font-size:12px;margin:14px 0 8px;color:#b2c7dc;font-weight:600}
+.terminal-risk-detail p{margin:7px 0;color:#92a5b8;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.terminal-risk-detail .risk-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#273342;border:1px solid #273342;border-radius:4px;overflow:hidden}
+.terminal-risk-detail .risk-detail-metric{background:#141e29;padding:10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.terminal-risk-detail .risk-detail-metric>span{font-size:10px;color:#91a6ba}
+.terminal-risk-detail .risk-detail-metric>strong{font-size:16px;font-variant-numeric:tabular-nums;color:#e7eff7;overflow-wrap:anywhere}
+.terminal-risk-detail small{font-size:10px;line-height:1.4;color:#8597a9}
+.terminal-risk-detail a{color:#86c4f5;text-decoration:none}
+.terminal-risk-detail a:hover{text-decoration:underline}
+.terminal-risk-detail .risk-detail-source{color:#7e92a6;font-size:10px}
+.terminal-risk-detail .risk-detail-error{color:#e9ac7c}
+.terminal-risk-detail details{margin-top:10px;border-top:1px solid #293545;padding-top:8px}
+.terminal-risk-detail summary{cursor:pointer;min-height:28px;color:#bdd8ee}
+.terminal-risk-detail .risk-detail-launches{padding:0;list-style:none;max-height:180px;overflow:auto}
+.terminal-risk-detail li{display:flex;flex-wrap:wrap;gap:8px 16px;border-bottom:1px solid #25313e;padding:7px 0;font-size:11px}
+.terminal-risk-detail :is(a,button,summary):focus-visible{outline:2px solid #86c4f5;outline-offset:3px}
+@media(max-width:700px){.terminal-risk-detail .risk-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-risk-detail button{min-height:44px}}

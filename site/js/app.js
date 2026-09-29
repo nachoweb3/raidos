@@ -6,19 +6,20 @@
 import { ApiClient } from "./api.js";
 import { FeedEngine } from "./feed.js";
 import { DiscoverEngine, PriceFeed } from "./discover.js";
-import { TradingEngine } from "./trading.js?v=20260926-9";
+import { TradingEngine } from "./trading.js?v=20260928-6";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
-import { TrenchesEngine } from "./trenches.js?v=20260926-9";
+import { TrenchesEngine } from "./trenches.js?v=20260928-6";
 import { RewardsEngine } from "./rewards.js";
 import { CopyEngine } from "./copy.js";
 import { PremiumEngine } from "./premium.js";
-import { DexFeed } from "./dexfeed.js?v=20260926-9";
+import { DexFeed } from "./dexfeed.js?v=20260928-6";
 import { MarketsEngine } from "./markets.js";
 import { PairsEngine } from "./pairs.js";
 import { TokenMeta } from "./tokens.js";
-import { TerminalView } from "./terminal-view.js";
+import { TerminalView } from "./terminal-view.js?v=20260928-6";
 import { FomoRails } from "./rails.js";
+import { TgSignalsEngine } from "./tg-signals.js?v=20260929-1";
 
 export const App = {
   currentView: "feed",
@@ -78,6 +79,12 @@ export const App = {
       const pairId = decodeURIComponent(pairsHash[1]);
       this.switchView("pairs");
       safeInit("Pairs deep link", () => PairsEngine.openPair(pairId));
+    }
+
+    // 8. TG signals deep link: #tg=<address> → terminal with that contract.
+    const tgHash = location.hash.match(/^#tg=([1-9A-HJ-NP-Za-km-z]{32,44}|0x[0-9a-fA-F]{40})$/);
+    if (tgHash) {
+      safeInit("TG deep link", () => TgSignalsEngine.openSignal(decodeURIComponent(tgHash[1])));
     }
   },
 
@@ -153,8 +160,8 @@ export const App = {
     // Refresh the active trading terminal price + candles every 60 seconds.
     setInterval(() => {
       try {
-        TradingEngine.refreshPrice();
-        TradingEngine.fetchRealCandles();
+        if (document.getElementById("tokenTerminal")?.open && !document.hidden) TradingEngine.refreshPrice();
+        // TerminalView owns the candle refresh timer.
       } catch (e) {
         console.warn("[App] trading refresh failed:", e);
       }
@@ -218,6 +225,8 @@ export const App = {
       RewardsEngine.load();
     } else if (viewName === "copy") {
       CopyEngine.load();
+    } else if (viewName === "tg") {
+      TgSignalsEngine.load();
     } else if (viewName === "markets") {
       MarketsEngine.render();
     } else if (viewName === "pairs") {
@@ -331,6 +340,66 @@ export const App = {
     // signature-verified wallet attached to THIS account before trading.
     const linkBtn = document.getElementById("linkWalletBtn");
     if (linkBtn) linkBtn.style.display = ApiClient.isAuthenticated() ? "flex" : "none";
+  },
+
+  /** Google Sign-In (GIS): popup con One Tap/cliente OAuth y callback JWT. */
+  async connectGoogle() {
+    try {
+      const cfg = await ApiClient.request("/api/auth/providers");
+      if (!cfg?.google) {
+        alert("El login con Google no está configurado todavía en el servidor (falta GOOGLE_CLIENT_ID). Usa wallet o clave API.");
+        return;
+      }
+      const credential = await new Promise((resolve, reject) => {
+        if (!window.google?.accounts?.id) { reject(new Error("Google no disponible (¿bloqueador o red?)")); return; }
+        window.google.accounts.id.initialize({
+          client_id: cfg.google,
+          callback: (response) => response?.credential ? resolve(response.credential) : reject(new Error("Sin credencial de Google")),
+        });
+        window.google.accounts.id.renderButton(
+          Object.assign(document.createElement("div"), { style: "position:fixed; left:-9999px; top:0" }),
+          { type: "standard", size: "large" }
+        );
+        window.google.accounts.id.prompt();
+        // Fallback: si prompt() no muestra nada (One Tap ya descartado), abre popup.
+        setTimeout(() => {
+          try { window.google.accounts.id.cancel(); } catch {}
+          resolve(this.googlePopupFlow(cfg.google));
+        }, 1500);
+      });
+      const session = await ApiClient.loginGoogle(credential);
+      this.closeWalletModal();
+      await this.checkUserAuth();
+      alert(session.isNew ? "✅ Cuenta creada con Google. Ya tienes wallets generadas por TRENCHES (Solana + EVM)." : "✅ Sesión iniciada con Google.");
+      try { window.PortfolioEngine?.load(); } catch {}
+    } catch (err) {
+      alert("❌ No se pudo iniciar sesión con Google: " + String(err?.message || err));
+    }
+  },
+
+  /** Popup OAuth alternativo (OAuth 2.0 implicit, response_type=id_token). */
+  googlePopupFlow(clientId) {
+    return new Promise((resolve, reject) => {
+      const redirectUri = location.origin + location.pathname;
+      const state = Math.random().toString(36).slice(2);
+      sessionStorage.setItem("trenches_gsi_state", state);
+      const w = window.open(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id=" + encodeURIComponent(clientId) +
+        "&response_type=id_token&scope=openid%20email%20profile&redirect_uri=" + encodeURIComponent(redirectUri) +
+        "&nonce=" + Date.now() + "&state=" + state,
+        "trenches-google", "width=420,height=580"
+      );
+      if (!w) { reject(new Error("El navegador bloqueó la ventana de Google")); return; }
+      const handler = (event) => {
+        try {
+          const u = new URL(event.data?.u || "", location.href);
+          const hash = new URLSearchParams(u.hash.slice(1));
+          const cred = hash.get("id_token");
+          if (cred) { window.removeEventListener("message", handler); resolve(cred); }
+        } catch {}
+      };
+      window.addEventListener("message", handler);
+    });
   },
 
   closeWalletModal() {
@@ -643,6 +712,7 @@ window.TrenchesEngine = TrenchesEngine;
 window.RewardsEngine = RewardsEngine;
 window.CopyEngine = CopyEngine;
 window.FomoRails = FomoRails;
+window.TgSignalsEngine = TgSignalsEngine;
 
 document.addEventListener("DOMContentLoaded", () => {
   App.init();
