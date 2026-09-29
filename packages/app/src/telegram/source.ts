@@ -56,6 +56,45 @@ const EVM_RE = /\b0x[0-9a-fA-F]{40}\b/g;
 /** $TICKER (1-12 alphanumerics) or CA:/Contract: labels. */
 const TICKER_RE = /\$([A-Za-z][A-Za-z0-9]{0,11})/;
 
+/** Bare URLs in text (Telegram already strips nothing — links may also arrive
+ *  separately via message entities, see updateToInputs). */
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/gi;
+
+/** EVM-flavored chain names that appear in link paths/queries of dexscreener,
+ *  gmgn, birdeye, fomo, etc. Anything else Solana-ish maps to "solana". */
+const EVM_CHAIN_TOKENS = new Set([
+  "ethereum", "eth", "bsc", "bnb", "base", "arbitrum", "arb", "optimism", "op",
+  "polygon", "matic", "blast", "avalanche", "avax", "tron", "sui", "ronin",
+  "abstract", "berachain", "hyperevm", "hyperliquid", "unichain", "zora",
+]);
+
+/** Sites that are Solana-only by design (used when the URL names no chain). */
+const SOLANA_ONLY_SITES = /pump\.fun|letsbonk\.fun|photon-sol\.tinyastro|rugcheck\.xyz|raydium\.io/i;
+/** Sites that are EVM-only by design. */
+const EVM_ONLY_SITES = /four\.meme|pancakeswap\.finance/i;
+
+/** Canonical chain ("solana" | "evm") inferred from a link URL — path segments
+ *  like /solana/<addr> or /base/<addr>, query params like ?chain=sol, or the
+ *  site's known chain scope. Returns null when the URL gives no hint. */
+export function chainFromUrl(url: string): string | null {
+  const queryChain = url.match(/[?&](?:chain|net|network)=([a-z0-9_-]+)/i)?.[1]?.toLowerCase();
+  const segments = [...url.matchAll(/\/(?:[a-z]{2,4}\.)?[a-z0-9-]+\.[a-z]{2,}\/([a-z0-9_-]{2,16})(?:\/|$)/gi)].map((m) => (m[1] ?? "").toLowerCase());
+  const plainSegments = [...url.matchAll(/[?&](?:chain|net|network)=([a-z0-9_-]+)/gi)].map((m) => (m[1] ?? "").toLowerCase());
+  for (const seg of [queryChain, ...segments, ...plainSegments]) {
+    if (!seg) continue;
+    if (seg === "solana" || seg === "sol") return "solana";
+    if (EVM_CHAIN_TOKENS.has(seg)) return "evm";
+  }
+  if (SOLANA_ONLY_SITES.test(url)) return "solana";
+  if (EVM_ONLY_SITES.test(url)) return "evm";
+  return null;
+}
+
+/** All bare URLs present in a text body. */
+export function extractUrlsFromText(text: string): string[] {
+  return [...text.matchAll(URL_RE)].map((m) => m[0]);
+}
+
 /** Well-known non-Solana base58 strings that would otherwise false-positive. */
 const BASE58_FALSE_POSITIVES = new Set([
   "So11111111111111111111111111111111111111112", // wrapped SOL mint (it IS valid base58, but it's a quote mint, not a call)
@@ -96,6 +135,9 @@ export function extractTicker(text: string, address: string): string {
  *  Addresses are scanned over the FULL text; only the stored copy is truncated. */
 export function parseMessage(input: {
   text: string;
+  /** URLs carried by Telegram entities (hyperlinked words) — they never
+   *  appear in the plain text, so they must be scanned separately. */
+  urls?: string[];
   authorId?: string;
   authorName?: string;
   ts: number;
@@ -104,26 +146,50 @@ export function parseMessage(input: {
   threadId?: number;
 }): TelegramSignalCandidate[] {
   const full = input.text ?? "";
-  if (!full.trim()) return [];
+  if (!full.trim() && !input.urls?.length) return [];
   const text = full.slice(0, MAX_TEXT);
   const seen = new Set<string>();
   const out: TelegramSignalCandidate[] = [];
+  // 1) Links first: dexscreener/fomo/gmgn/pump URLs carry the CA plus a chain
+  //    hint (path segment or ?chain=). Entity URLs are scanned too.
+  const urls = [...extractUrlsFromText(full), ...(input.urls ?? [])];
+  for (const url of urls) {
+    const hint = chainFromUrl(url);
+    // Hex addresses are unambiguous (always EVM); the link's chain hint only
+    // disambiguates base58-shaped addresses found in the same URL.
+    const addrChain = (address: string) =>
+      looksLikeEvmAddress(address) ? "evm" : (hint ?? guessChain(address));
+    for (const m of url.matchAll(SOLANA_RE)) {
+      if (!looksLikeSolanaAddress(m[0]) || seen.has(m[0])) continue;
+      seen.add(m[0]);
+      out.push(mk(m[0], addrChain(m[0])));
+    }
+    for (const m of url.matchAll(EVM_RE)) {
+      const key = m[0].toLowerCase(); // EVM addresses are case-insensitive: normalize
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(mk(key, addrChain(key)));
+    }
+  }
+  // 2) Plain-text scan (covers bare CAs and CAs already inside scanned URLs —
+  //    the seen set dedups those).
   for (const m of full.matchAll(SOLANA_RE)) {
     if (!looksLikeSolanaAddress(m[0]) || seen.has(m[0])) continue;
     seen.add(m[0]);
     out.push(mk(m[0]));
   }
   for (const m of full.matchAll(EVM_RE)) {
-    if (seen.has(m[0].toLowerCase())) continue;
-    seen.add(m[0].toLowerCase());
-    out.push(mk(m[0]));
+    const key = m[0].toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(mk(key));
   }
   return out;
 
-  function mk(address: string): TelegramSignalCandidate {
+  function mk(address: string, chainOverride?: string): TelegramSignalCandidate {
     return {
       token: address,
-      chain: guessChain(address),
+      chain: chainOverride ?? guessChain(address),
       symbol: extractTicker(text, address),
       authorId: input.authorId ?? "0",
       authorName: input.authorName ?? "",
@@ -136,12 +202,17 @@ export function parseMessage(input: {
   }
 }
 
-/** Flatten a Telegram update into message inputs (channel posts included). */
+/** Flatten a Telegram update into message inputs (channel posts included).
+ *  Hyperlinked words carry their URL in entities — those URLs are collected
+ *  so the CA inside a dexscreener/fomo/pump link is never missed. */
 export function updateToInputs(update: any): { input: Parameters<typeof parseMessage>[0]; updateId: number } | null {
   const msg = update.channel_post ?? update.message;
   if (!msg) return null;
   const text = msg.text ?? msg.caption ?? "";
-  if (!text) return null;
+  const entityUrls: string[] = [...(msg.entities ?? []), ...(msg.caption_entities ?? [])]
+    .filter((e: any) => (e?.type === "url" || e?.type === "text_link") && e?.url)
+    .map((e: any) => String(e.url));
+  if (!text && !entityUrls.length) return null;
   const from = msg.from ?? null;
   const senderChat = msg.sender_chat ?? null;
   const authorId = from?.id != null ? String(from.id) : senderChat?.id != null ? String(senderChat.id) : "0";
@@ -158,7 +229,7 @@ export function updateToInputs(update: any): { input: Parameters<typeof parseMes
   const threadId = Number(msg.message_thread_id ?? 0);
   return {
     updateId: Number(update.update_id),
-    input: { text, authorId, authorName, ts, chatId, messageId, threadId },
+    input: { text, urls: entityUrls, authorId, authorName, ts, chatId, messageId, threadId },
   };
 }
 

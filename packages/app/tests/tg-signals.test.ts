@@ -5,7 +5,9 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  chainFromUrl,
   extractTicker,
+  extractUrlsFromText,
   guessChain,
   looksLikeEvmAddress,
   looksLikeSolanaAddress,
@@ -69,7 +71,7 @@ describe("message → candidates", () => {
       token: SOL_MINT, chain: "solana", symbol: "BONK",
       chatId: "-1003686690861", messageId: 8469, authorName: "@caller",
     });
-    expect(cands[1]).toMatchObject({ token: EVM_ADDR, chain: "evm" });
+    expect(cands[1]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "evm" });
   });
 
   it("dedups repeated addresses inside one message", () => {
@@ -82,6 +84,80 @@ describe("message → candidates", () => {
     const cands = parseMessage({ text: long, ts: 1, chatId: "-1" });
     expect(cands).toHaveLength(1);
     expect(cands[0].text.length).toBeLessThanOrEqual(1200);
+  });
+});
+
+describe("CA extraction from links (fomo/dexscreener/pump/gmgn)", () => {
+  it("extracts the CA from a plain dexscreener link with chain hint", () => {
+    const text = `entra aqui https://dexscreener.com/solana/${SOL_MINT} pronto`;
+    const cands = parseMessage({ text, ts: 1, chatId: "-1" });
+    expect(cands).toHaveLength(1);
+    expect(cands[0]).toMatchObject({ token: SOL_MINT, chain: "solana" });
+  });
+
+  it("uses the URL chain hint even for ambiguous base58-looking addresses", () => {
+    // EVM hex address in a base-named path: hex shape wins via guessChain anyway,
+    // but a solana-looking address under /base/ must be tagged evm by the link.
+    const url = `https://dexscreener.com/base/${EVM_ADDR}`;
+    expect(chainFromUrl(url)).toBe("evm");
+    const cands = parseMessage({ text: `check ${url}`, ts: 1, chatId: "-1" });
+    expect(cands[0]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "evm" });
+  });
+
+  it("reads chain from query params (?chain=bsc) and evm-only sites", () => {
+    expect(chainFromUrl(`https://four.meme/token/${EVM_ADDR}`)).toBe("evm");
+    expect(chainFromUrl(`https://gmgn.ai/?chain=bsc`)).toBe("evm");
+    expect(chainFromUrl(`https://pump.fun/coin/${SOL_MINT}`)).toBe("solana");
+    expect(chainFromUrl("https://example.com/something")).toBeNull();
+  });
+
+  it("captures hyperlinked-entity URLs that never appear in plain text", () => {
+    // Telegram strips the URL from text when it is the href of a text_link entity.
+    const cands = parseMessage({
+      text: "mirad este chart 🔥",
+      urls: [`https://dexscreener.com/solana/${SOL_MINT}?maker=${EVM_ADDR}`],
+      ts: 1, chatId: "-1",
+    });
+    expect(cands).toHaveLength(2);
+    expect(cands[0]).toMatchObject({ token: SOL_MINT, chain: "solana" });
+    expect(cands[1]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "evm" });
+  });
+
+  it("updateToInputs collects url and text_link entities", () => {
+    const flat = updateToInputs({
+      update_id: 50,
+      message: {
+        message_id: 9, date: 1705, text: "CA aquí y link",
+        chat: { id: -1003686690861 },
+        entities: [
+          { type: "url", url: `https://dexscreener.com/solana/${SOL_MINT}` },
+          { type: "text_link", url: `https://fomo.example/${EVM_ADDR}` },
+          { type: "bold" },
+        ],
+        from: { id: 3, first_name: "L" },
+      },
+    });
+    expect(flat?.input.urls).toHaveLength(2);
+    const cands = parseMessage(flat!.input);
+    expect(cands.map((c) => c.token)).toContain(SOL_MINT);
+  });
+
+  it("does not double-report an address present both in URL and plain text", () => {
+    const cands = parseMessage({
+      text: `https://pump.fun/coin/${SOL_MINT} ca: ${SOL_MINT}`,
+      urls: [`https://pump.fun/coin/${SOL_MINT}`],
+      ts: 1, chatId: "-1",
+    });
+    expect(cands).toHaveLength(1);
+  });
+
+  it("extractUrlsFromText finds bare URLs and stops at delimiters", () => {
+    const urls = extractUrlsFromText(`mira https://dexscreener.com/solana/abc y (https://pump.fun/x) fin`);
+    expect(urls).toEqual(["https://dexscreener.com/solana/abc", "https://pump.fun/x"]);
+  });
+
+  it("a message with only hyperlinked URLs still yields signals", () => {
+    expect(parseMessage({ text: "", urls: [`https://pump.fun/coin/${SOL_MINT}`], ts: 1, chatId: "-1" })).toHaveLength(1);
   });
 });
 
