@@ -216,6 +216,22 @@ describe("TelegramSignalSource.poll", () => {
     expect(source.lastError).toBeNull();
   });
 
+  it("captures every chat when no chatId filter is set (all-chats mode)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: [
+      { update_id: 300, channel_post: { message_id: 1, date: 1701, text: `vip ${SOL_MINT}`, chat: { id: -1003686690861 } } },
+      { update_id: 301, message: { message_id: 2, date: 1702, text: `otro grupo ${EVM_ADDR}`, chat: { id: -42 }, from: { id: 8, first_name: "X" } } },
+    ] }), { status: 200 }));
+    const source = new TelegramSignalSource({ token: "t", pollSeconds: 0, fetchImpl }); // NO chatId
+    const inserted: string[] = [];
+    const res = await source.poll(
+      (cands) => { inserted.push(...cands.map((c) => c.token)); return cands.length; },
+      () => false,
+    );
+    expect(res.ok).toBe(true);
+    expect(inserted).toEqual([SOL_MINT, EVM_ADDR.toLowerCase()]); // both chats
+    expect(res.offset).toBe(302);
+  });
+
   it("filters by forum topic when configured (t.me/c/<chat>/<topic>/...)", async () => {
     const mk = (updateId: number, threadId: number | undefined, text: string) => ({
       update_id: updateId,

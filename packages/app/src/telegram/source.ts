@@ -236,9 +236,11 @@ export function updateToInputs(update: any): { input: Parameters<typeof parseMes
 export interface TelegramSourceOptions {
   /** Bot token from BotFather. Empty/undefined = disabled (never fabricated). */
   token?: string;
-  /** Chat to scrape: negative id for groups/channels (e.g. -1003686690861). */
+  /** Optional chat filter. UNSET = ALL CHATS the bot can see (operator
+   *  request: capture every call from every channel where the bot is a
+   *  member, present or future). */
   chatId?: string;
-  /** Optional forum topic filter (t.me/c/<chat>/<topic>/...). 0/absent = all. */
+  /** Optional forum topic filter. 0/absent = all topics. */
   topicId?: number;
   /** Long-poll seconds. Default 25 (Telegram max ~50). */
   pollSeconds?: number;
@@ -271,7 +273,7 @@ export class TelegramSignalSource {
   }
 
   get enabled(): boolean {
-    return this.token.length > 0 && this.chatId.length > 0;
+    return this.token.length > 0;
   }
 
   /** Re-seed the offset after restart (persisted in app_settings). */
@@ -308,9 +310,8 @@ export class TelegramSignalSource {
   ): Promise<TelegramPollResult> {
     if (!this.enabled) return { ok: false, inserted: 0, error: "disabled" };
     try {
-      const allowed: any = this.chatId
-        ? { allowed_updates: ["message", "channel_post"] }
-        : {};
+      // All-chats mode: no allowed_updates filtering needed beyond message shapes.
+      const allowed = { allowed_updates: ["message", "channel_post"] };
       const updates: any[] = (await this.call("getUpdates", {
         offset: this.offset || undefined,
         timeout: this.pollSeconds,
@@ -323,6 +324,8 @@ export class TelegramSignalSource {
         const parsed = updateToInputs(update);
         if (!parsed) continue;
         if (parsed.updateId > highest) highest = parsed.updateId;
+        // Filters are OPTIONAL now: with no TG_CHAT_ID/TG_TOPIC_ID everything
+        // the bot can see is captured (operator: "mira todos los canales").
         if (this.chatId && parsed.input.chatId !== this.chatId) continue;
         if (this.topicId && Number(parsed.input.threadId ?? 0) !== this.topicId) continue;
         for (const c of parseMessage(parsed.input)) {

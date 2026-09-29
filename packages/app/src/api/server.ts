@@ -225,12 +225,18 @@ export class ApiServer {
     this.teleport = new TeleportEngine({ floors: this.floors });
     this.telegramSource = new TelegramSignalSource({
       token: process.env.TG_BOT_TOKEN,
+      // All-chats mode by operator request: capture every call from every chat
+      // the bot can see. TG_CHAT_ID/TG_TOPIC_ID remain as OPTIONAL filters.
       chatId: process.env.TG_CHAT_ID,
       topicId: Number(process.env.TG_TOPIC_ID ?? 0) || 0,
     });
     if (this.telegramSource.enabled) {
       this.telegramSource.setOffset(this.db.getTgOffset());
-      console.log("[telegram] signal source enabled for chat", process.env.TG_CHAT_ID, process.env.TG_TOPIC_ID ? `(topic ${process.env.TG_TOPIC_ID})` : "");
+      console.log(
+        process.env.TG_CHAT_ID
+          ? `[telegram] signal source enabled for chat ${process.env.TG_CHAT_ID}${process.env.TG_TOPIC_ID ? ` (topic ${process.env.TG_TOPIC_ID})` : ""}`
+          : "[telegram] signal source enabled for ALL chats visible to the bot",
+      );
     }
 
     this.registerRoutes();
