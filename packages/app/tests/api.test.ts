@@ -1,7 +1,9 @@
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
 import { join } from "node:path";
+import bs58 from "bs58";
 import { ApiServer } from "../src/api/server.js";
 
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // Solana USDC
@@ -179,11 +181,21 @@ describe("trades (mock execution)", () => {
     expect(pnl.json.pnl.totalTrades).toBe(1);
   });
 
-  it("rejects execution with a wrong wallet password", async () => {
+  it("rejects execution with a wrong password on an imported (user-password) wallet", async () => {
+    // Platform wallets decrypt with the operator secret — no user password.
+    // Only imported wallets keep password semantics, so import one on an EVM
+    // chain that gets no platform provisioning (bsc) to exercise that path.
+    const created = await api("POST", "/api/wallets/import", {
+      chain: "bsc", privateKey: "0x" + "11".repeat(32), password: "pw123456", label: "Test",
+    }, firstUserKey);
+    expect(created.status).toBe(201);
+
+    // One USDC leg required (BSC USDC address) — password is verified before
+    // quoting, so the wrong-password 401 fires first.
     const r = await api(
       "POST",
       "/api/trades/execute",
-      { fromChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", password: "WRONG" },
+      { fromChain: "bsc", sellToken: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", buyToken: "0x" + "8".repeat(40), amount: "1000000", password: "WRONG" },
       firstUserKey,
       { "Idempotency-Key": "test-trade-0002" },
     );
@@ -204,7 +216,7 @@ describe("trades (mock execution)", () => {
     expect([401, 404]).toContain(r.status);
   });
 
-  it("blocks custodial execution and wallet creation in live mode", async () => {
+  it("blocks custodial import and execution in live mode; platform wallets still provision", async () => {
     const liveDir = mkdtempSync(join(tmpdir(), "raidos-live-test-"));
     const liveServer = new ApiServer({ dbPath: join(liveDir, "live.db"), port: 0, siteDir: null, appMode: "live" });
     const livePort = await liveServer.start();
@@ -214,10 +226,32 @@ describe("trades (mock execution)", () => {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "Idempotency-Key": "live-test-0001" },
       body: JSON.stringify(body),
     });
-    const register = await fetch(`${liveBase}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    const registered = await register.json();
-    const wallet = await post("/api/wallets", { chain: "solana", password: "pw123456" }, registered.apiKey);
-    expect(wallet.status).toBe(403);
+    // Register a real wallet identity: login provisions platform wallets
+    // (WALLET_ENC_SECRET is set for the suite). Raw ed25519 via node:crypto
+    // (verify-login expects hex + last-32 bytes of SPKI).
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const address = bs58.encode(publicKey.export({ type: "spki", format: "der" }).subarray(-32));
+    const challenge = await fetch(`${liveBase}/api/auth/challenge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chain: "solana" }) });
+    const { nonce, message } = await challenge.json();
+    const signature = cryptoSign(null, Buffer.from(message, "utf8"), privateKey).toString("hex");
+    const login = await fetch(`${liveBase}/api/auth/wallet`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chain: "solana", address, nonce, message, signature }),
+    });
+    expect(login.status).toBe(200);
+    const registered = await login.json();
+
+    // Importing an external key under a user password stays disabled in live.
+    const imported = await post("/api/wallets/import", { chain: "bsc", privateKey: "0x" + "11".repeat(32), password: "pw123456" }, registered.apiKey);
+    expect(imported.status).toBe(403);
+
+    // Platform wallet generation keeps working in live (bsc is not
+    // auto-provisioned — one generated address per PLATFORM_WALLET_CHAINS).
+    const wallet = await post("/api/wallets", { chain: "bsc" }, registered.apiKey);
+    expect(wallet.status).toBe(201);
+    expect((await wallet.json()).wallet.chain).toBe("bsc");
+
+    // Custodial execution is still refused in live mode.
     const execute = await post("/api/trades/execute", { fromChain: "solana", toChain: "solana", sellToken: USDC, buyToken: MOON, amount: "1000000", type: "swap" }, registered.apiKey);
     expect(execute.status).toBe(403);
     await liveServer.stop();
@@ -419,9 +453,11 @@ describe("positions, feed & leaderboard periods (fomo-style)", () => {
     const after = await api("GET", "/api/positions", undefined, key());
     const closed = after.json.positions.find((p: any) => p.token === MOON && p.status === "closed");
     expect(closed).toBeTruthy();
-    // Mock 1:1 with net-of-fee accounting. Earlier idempotency coverage
-    // leaves one additional 1 USDC MOON buy, so this closes 21 USDC total:
-    // costs = 21.063, proceeds = 20.937 → realized PnL = −0.126 USDC.
+    // Mock 1:1 with net-of-fee accounting. Earlier coverage leaves one
+    // additional 1 USDC MOON buy (the idempotency reuse-test, which also
+    // executes with the platform wallet — no user password), so this closes
+    // 21 USDC total: costs = 21.063, proceeds = 20.937 →
+    // realized PnL = −0.126 USDC.
     expect(closed.realized_pnl_usdc).toBe("-126000");
   });
 

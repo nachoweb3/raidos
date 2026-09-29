@@ -40,9 +40,17 @@ describe("all financial endpoints fail closed", () => {
 
 describe("market provenance", () => {
   it("rejects disabled networks before contacting providers and omits them from global search", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ pairs:
-      ["base", "polygon", "arbitrum", "monad"].map((chainId) => ({ chainId, baseToken: { address: "0x" + "a".repeat(40) } }))
-    })));
+    // GeckoTerminal onchain endpoints return { data: [...] } — an empty index is valid.
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const href = typeof url === "string" ? url : url instanceof Request ? url.url : url.href;
+      if (href.includes("geckoterminal")) return new Response(JSON.stringify({ data: [] }));
+      return new Response(JSON.stringify({ pairs: [
+        { chainId: "base", baseToken: { address: "0x" + "a".repeat(40) }, liquidity: { usd: 25000 } },
+        // Sub-floor liquidity never reaches a listing (operator request).
+        { chainId: "base", baseToken: { address: "0x" + "c".repeat(40) }, liquidity: { usd: 50 } },
+        ...["polygon", "arbitrum", "monad"].map((chainId) => ({ chainId, baseToken: { address: "0x" + "a".repeat(40) }, liquidity: { usd: 25000 } })),
+      ] }));
+    });
     const market = new MarketDataService({ fetcher });
     for (const chain of ["polygon", "arbitrum", "monad"]) {
       await expect(market.pools(chain)).rejects.toThrow(/network disabled/);
@@ -55,13 +63,18 @@ describe("market provenance", () => {
   it("keeps acquisition timestamps and degraded state on returned pairs", async () => {
     let now = 1_700_000_000_000;
     let available = true;
-    const service = new MarketDataService({ now: () => now, fetcher: async () => {
+    const service = new MarketDataService({ now: () => now, fetcher: async (url: string | URL | Request) => {
       if (!available) throw new Error("offline");
+      const href = typeof url === "string" ? url : url instanceof Request ? url.url : url.href;
+      if (href.includes("geckoterminal")) return new Response(JSON.stringify({ data: [] }));
       return new Response(JSON.stringify({ pairs: [{ chainId: "base", pairAddress: "0x" + "b".repeat(40),
         baseToken: { address: "0x" + "a".repeat(40) }, liquidity: { usd: 10 } }] }));
     } });
     await service.search("example");
     now += 31_000; available = false;
+    // Primary provider down → its stale cache is skipped (sub-floor liquidity),
+    // fallback index also down → the fallback's own cached envelope survives as
+    // DEGRADED with the original acquisition timestamp, never Date.now().
     const result = await service.search("example");
     expect(result.status).toBe("DEGRADED");
     // The envelope must be propagated by the consumer, never Date.now().
