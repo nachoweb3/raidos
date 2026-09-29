@@ -2056,12 +2056,14 @@ export class AppDb {
     return inserted;
   }
 
-  /** Newest calls first; optional chain filter ('evm' | 'solana' | 'unknown').
-   *  'evm' matches any EVM-flavored chain tag. */
+  /** Newest calls first; optional chain filter ('evm' | 'solana' | 'unknown'
+   *  | specific network like 'bsc'/'base'). 'evm' matches any EVM-flavored
+   *  chain tag, including specific networks saved by the link parser. */
   listTgSignals(limit = 100, chain?: string) {
     if (chain === "evm") {
+      // Keep in sync with EVM_CHAIN_TOKENS in telegram/source.ts.
       return this.db.prepare(
-        "SELECT * FROM tg_signals WHERE chain='evm' ORDER BY ts DESC, id DESC LIMIT ?"
+        `SELECT * FROM tg_signals WHERE chain IN ('evm','ethereum','eth','bsc','bnb','base','arbitrum','arb','optimism','op','polygon','matic','blast','avalanche','avax','tron','sui','ronin','abstract','berachain','hyperevm','hyperliquid','unichain','zora') ORDER BY ts DESC, id DESC LIMIT ?`
       ).all(limit) as any[];
     }
     if (chain) {

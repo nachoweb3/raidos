@@ -29,8 +29,11 @@ function timeAgo(ts) {
 }
 
 function chainChip(chain) {
-  if (chain === "solana") return `<span class="tg-chip tg-sol">◎ Solana</span>`;
-  if (chain === "evm") return `<span class="tg-chip tg-evm">EVM</span>`;
+  const c = String(chain ?? "");
+  const specific = { bsc: ["🟡 BSC", "tg-evm"], base: ["🔵 Base", "tg-evm"], ethereum: ["Ξ Ethereum", "tg-evm"], arbitrum: ["Arbitrum", "tg-evm"], polygon: ["Polygon", "tg-evm"], avalanche: ["Avalanche", "tg-evm"] }[c];
+  if (specific) return `<span class="tg-chip ${specific[1]}">${specific[0]}</span>`;
+  if (c === "evm") return `<span class="tg-chip tg-evm">EVM</span>`;
+  if (c === "solana") return `<span class="tg-chip tg-sol">◎ Solana</span>`;
   return `<span class="tg-chip tg-unk">¿Cadena?</span>`;
 }
 
@@ -156,9 +159,14 @@ export const TgSignalsEngine = {
     // La cadena se infiere de la FORMA de la dirección (el scrape guarda la
     // geometría, no la red exacta): base58 → solana; 0x… → ethereum (mejor
     // esfuerzo EVM; el terminal muestra error honesto si el pool no está ahí).
+    // La chain específica del link (bsc/base/ethereum…) tiene prioridad: el
+    // terminal abre el pool en la red correcta al primer intento.
     const inferred = /^0x[0-9a-fA-F]{40}$/.test(token) ? "ethereum"
       : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token) ? "solana" : "unknown";
-    const chainId = chain === "solana" || chain === "evm" || chain === "unknown" ? inferred : (chain || inferred);
+    // La chain específica del link (bsc/base/ethereum…) manda; para el resto
+    // (solana/evm/unknown/vacío) la shape de la dirección decide.
+    const specificEvm = !!chain && isEvmFamily(chain) && chain !== "evm";
+    const chainId = specificEvm ? chain : inferred;
     const sym = symbol || "TOKEN";
     if (typeof window.App?.openTradeForToken === "function") {
       window.App.openTradeForToken(sym, chainId, 0, token);
@@ -169,3 +177,9 @@ export const TgSignalsEngine = {
 };
 
 window.TgSignalsEngine = TgSignalsEngine;
+
+/** EVM family check mirrored from the backend (telegram/source.ts):
+ *  "evm" plus every specific network tag the link parser can emit. */
+function isEvmFamily(chain) {
+  return ["evm", "ethereum", "eth", "bsc", "bnb", "base", "arbitrum", "arb", "optimism", "op", "polygon", "matic", "blast", "avalanche", "avax", "tron", "sui", "ronin", "abstract", "berachain", "hyperevm", "hyperliquid", "unichain", "zora"].includes(chain);
+}

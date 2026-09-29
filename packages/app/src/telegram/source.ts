@@ -70,12 +70,16 @@ const EVM_CHAIN_TOKENS = new Set([
 
 /** Sites that are Solana-only by design (used when the URL names no chain). */
 const SOLANA_ONLY_SITES = /pump\.fun|letsbonk\.fun|photon-sol\.tinyastro|rugcheck\.xyz|raydium\.io/i;
-/** Sites that are EVM-only by design. */
-const EVM_ONLY_SITES = /four\.meme|pancakeswap\.finance/i;
+/** Sites that are EVM-only by design, with their SPECIFIC chain where known. */
+const EVM_SITE_CHAINS: Array<[RegExp, string]> = [
+  [/four\.meme/i, "bsc"],
+  [/pancakeswap\.finance/i, "bsc"],
+];
 
-/** Canonical chain ("solana" | "evm") inferred from a link URL — path segments
- *  like /solana/<addr> or /base/<addr>, query params like ?chain=sol, or the
- *  site's known chain scope. Returns null when the URL gives no hint. */
+/** Canonical chain tag from a link URL: the SPECIFIC network when the URL
+ *  names one ("bsc", "base", "ethereum"...), else the family ("solana",
+ *  "evm"). Returns null when the URL gives no hint. Specific EVM chains let
+ *  the terminal open the pool on the right network on the first try. */
 export function chainFromUrl(url: string): string | null {
   const queryChain = url.match(/[?&](?:chain|net|network)=([a-z0-9_-]+)/i)?.[1]?.toLowerCase();
   const segments = [...url.matchAll(/\/(?:[a-z]{2,4}\.)?[a-z0-9-]+\.[a-z]{2,}\/([a-z0-9_-]{2,16})(?:\/|$)/gi)].map((m) => (m[1] ?? "").toLowerCase());
@@ -83,10 +87,10 @@ export function chainFromUrl(url: string): string | null {
   for (const seg of [queryChain, ...segments, ...plainSegments]) {
     if (!seg) continue;
     if (seg === "solana" || seg === "sol") return "solana";
-    if (EVM_CHAIN_TOKENS.has(seg)) return "evm";
+    if (EVM_CHAIN_TOKENS.has(seg)) return seg === "eth" ? "ethereum" : seg;
   }
   if (SOLANA_ONLY_SITES.test(url)) return "solana";
-  if (EVM_ONLY_SITES.test(url)) return "evm";
+  for (const [re, chain] of EVM_SITE_CHAINS) if (re.test(url)) return chain;
   return null;
 }
 
@@ -116,6 +120,12 @@ export function guessChain(address: string): string {
   if (looksLikeEvmAddress(address)) return "evm";
   if (looksLikeSolanaAddress(address)) return "solana";
   return "unknown";
+}
+
+/** True when a chain tag belongs to the EVM family ("evm" or a specific
+ *  network like "bsc"/"base"/"ethereum"). */
+export function isEvmChain(chain: string): boolean {
+  return chain === "evm" || EVM_CHAIN_TOKENS.has(chain);
 }
 
 /** Extract the first $TICKER from a message, preferring one near the address. */
@@ -155,10 +165,13 @@ export function parseMessage(input: {
   const urls = [...extractUrlsFromText(full), ...(input.urls ?? [])];
   for (const url of urls) {
     const hint = chainFromUrl(url);
-    // Hex addresses are unambiguous (always EVM); the link's chain hint only
-    // disambiguates base58-shaped addresses found in the same URL.
+    // Hex addresses are unambiguous (always EVM): keep the SPECIFIC chain when
+    // the link names one (bsc/base/ethereum), else the generic "evm". The hint
+    // only disambiguates base58-shaped addresses found in the same URL.
     const addrChain = (address: string) =>
-      looksLikeEvmAddress(address) ? "evm" : (hint ?? guessChain(address));
+      looksLikeEvmAddress(address)
+        ? (isEvmChain(hint ?? "") ? hint! : "evm")
+        : (hint ?? guessChain(address));
     for (const m of url.matchAll(SOLANA_RE)) {
       if (!looksLikeSolanaAddress(m[0]) || seen.has(m[0])) continue;
       seen.add(m[0]);

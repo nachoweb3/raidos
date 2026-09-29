@@ -9,6 +9,7 @@ import {
   extractTicker,
   extractUrlsFromText,
   guessChain,
+  isEvmChain,
   looksLikeEvmAddress,
   looksLikeSolanaAddress,
   parseMessage,
@@ -95,20 +96,32 @@ describe("CA extraction from links (fomo/dexscreener/pump/gmgn)", () => {
     expect(cands[0]).toMatchObject({ token: SOL_MINT, chain: "solana" });
   });
 
-  it("uses the URL chain hint even for ambiguous base58-looking addresses", () => {
-    // EVM hex address in a base-named path: hex shape wins via guessChain anyway,
-    // but a solana-looking address under /base/ must be tagged evm by the link.
+  it("keeps the SPECIFIC EVM chain from the URL (bsc/base) for hex addresses", () => {
     const url = `https://dexscreener.com/base/${EVM_ADDR}`;
-    expect(chainFromUrl(url)).toBe("evm");
+    expect(chainFromUrl(url)).toBe("base");
     const cands = parseMessage({ text: `check ${url}`, ts: 1, chatId: "-1" });
-    expect(cands[0]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "evm" });
+    expect(cands[0]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "base" });
   });
 
-  it("reads chain from query params (?chain=bsc) and evm-only sites", () => {
-    expect(chainFromUrl(`https://four.meme/token/${EVM_ADDR}`)).toBe("evm");
-    expect(chainFromUrl(`https://gmgn.ai/?chain=bsc`)).toBe("evm");
+  it("reads chain from query params and site scope (four.meme → bsc)", () => {
+    expect(chainFromUrl(`https://four.meme/token/${EVM_ADDR}`)).toBe("bsc");
+    expect(chainFromUrl(`https://gmgn.ai/?chain=bsc`)).toBe("bsc");
+    expect(chainFromUrl(`https://dexscreener.com/ethereum/${EVM_ADDR}`)).toBe("ethereum");
     expect(chainFromUrl(`https://pump.fun/coin/${SOL_MINT}`)).toBe("solana");
     expect(chainFromUrl("https://example.com/something")).toBeNull();
+    expect(isEvmChain("bsc")).toBe(true);
+    expect(isEvmChain("base")).toBe(true);
+    expect(isEvmChain("evm")).toBe(true);
+    expect(isEvmChain("solana")).toBe(false);
+  });
+
+  it("hex in a non-EVM-hint URL stays generic evm", () => {
+    const cands = parseMessage({
+      text: "mirad este chart 🔥",
+      urls: [`https://dexscreener.com/solana/${SOL_MINT}?maker=${EVM_ADDR}`],
+      ts: 1, chatId: "-1",
+    });
+    expect(cands[1]).toMatchObject({ token: EVM_ADDR.toLowerCase(), chain: "evm" });
   });
 
   it("captures hyperlinked-entity URLs that never appear in plain text", () => {
