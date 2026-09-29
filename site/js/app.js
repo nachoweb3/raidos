@@ -238,6 +238,13 @@ export const App = {
     TerminalView.open(symbol, chain, price, tokenAddress);
   },
 
+  /** Trenches selection mirror: keeps the board's side panel in sync when the
+   *  terminal opens from rails, search, or the panel CTA itself. */
+  mirrorSelection(token) {
+    const t = token || null;
+    window.TrenchesEngine?.selectFromMirror?.(t);
+  },
+
   /* ── 🔎 Universal token search (header) ─────────────────────────────── */
 
   /**

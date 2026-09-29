@@ -83,6 +83,7 @@ export class CatalogBoard {
       c.pages = more ? (c.pages || 0) + loaded : loaded;
       c.asOf = c.rows.length ? Math.min(...c.rows.map((r) => r.dex._updatedAt)) : null;
       this.engine.market = [...new Map(this.columns.flatMap((col) => col.rows).map((r) => [r.id, r])).values()];
+      this.applyLaunchOverlay();
       // GMGN parity: catalog rows carry security badges too (RugCheck/GoPlus).
       this.engine.scheduleRiskLoad?.();
     } catch (err) {
@@ -149,20 +150,37 @@ export class CatalogBoard {
   }
   renderRows(c) {
     const el = this.engine.target()?.querySelector(`[data-catalog-column="${c.id}"] [data-rows]`); if (!el) return;
+    // Launchpad rows join the newest column with their REAL curve progress
+    // (never inferred from liquidity); graduated ones surface via the market
+    // rows that share their mint (see applyLaunchOverlay).
+    const seen = new Set(c.rows.map((r) => r.tokenAddress));
+    const launches = c.id === "new" ? (this.engine.tokens || []).filter((t) => !t.graduatedOnChain && (!t.tokenAddress || !seen.has(t.tokenAddress))) : [];
+    const rows = [...launches, ...c.rows];
     const top = el.scrollTop;
     const height = 148, start = Math.max(0, Math.floor(top / height) - 3);
-    const end = Math.min(c.rows.length, start + Math.ceil((el.clientHeight || 420) / height) + 7);
-    const range = `${start}:${end}:${c.sequence}:${c.rows.length}:${c.loading}:${c.error}:${this.engine.selected?.id}:${this.engine._secVersion || 0}:${this.engine._riskVersion || 0}`;
+    const end = Math.min(rows.length, start + Math.ceil((el.clientHeight || 420) / height) + 7);
+    const range = `${start}:${end}:${c.sequence}:${rows.length}:${c.loading}:${c.error}:${this.engine.selected?.id}:${this.engine._secVersion || 0}:${this.engine._riskVersion || 0}`;
     if (el.dataset.range === range) return;
     el.dataset.range = range;
     const focusedAction = el.contains(document.activeElement) ? document.activeElement.getAttribute("onclick") : null;
-    el.innerHTML = c.rows.length ? `<div style="height:${start * height}px" aria-hidden="true"></div>` +
-      c.rows.slice(start, end).map((row) => `<div class="catalog-row" style="height:${height}px">${this.engine.renderRow(row)}<small title="${esc(row.dex.source)} · ${esc(row.dex.status)} · ${new Date(row.dex._updatedAt).toLocaleTimeString()}">${esc(row.dex.source)}</small></div>`).join("") +
-      `<div style="height:${Math.max(0, c.rows.length - end) * height}px" aria-hidden="true"></div>` :
+    el.innerHTML = rows.length ? `<div style="height:${start * height}px" aria-hidden="true"></div>` +
+      rows.slice(start, end).map((row) => `<div class="catalog-row" style="height:${height}px">${this.engine.renderRow(row)}${row.dex ? `<small title="${esc(row.dex.source)} · ${esc(row.dex.status)} · ${new Date(row.dex._updatedAt).toLocaleTimeString()}">${esc(row.dex.source)}</small>` : `<small title="Curva de bonding de la plataforma">Curva</small>`}</div>`).join("") +
+      `<div style="height:${Math.max(0, rows.length - end) * height}px" aria-hidden="true"></div>` :
       `<p class="catalog-empty">${c.loading ? "Consultando catálogo…" : c.error ? "Error de consulta. Pulsa Actualizar." : "Sin resultados. Ajusta los filtros o descubre pools recientes."}</p>`;
     el.scrollTop = top;
     this.engine.scheduleRiskLoad?.();
     if (focusedAction) [...el.querySelectorAll("button")].find((button) => button.getAttribute("onclick") === focusedAction)?.focus({ preventScroll: true });
+  }
+  /** Stamp REAL graduation onto market rows whose address matches a launch
+   *  mint — the on-chain factory flag, never inferred from liquidity. */
+  applyLaunchOverlay() {
+    const launches = (this.engine.tokens || []).filter((t) => t.tokenAddress);
+    if (!launches.length) return;
+    for (const row of this.engine.market) {
+      if (row.graduatedOnChain) continue;
+      const l = launches.find((t) => t.tokenAddress === row.tokenAddress);
+      if (l) { row.graduatedOnChain = l.graduatedOnChain; if (l.mintAddress) row.mintAddress = l.mintAddress; }
+    }
   }
   openFilters(c) {
     document.getElementById("catalogFilters")?.remove();

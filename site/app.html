@@ -28,41 +28,41 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script defer src="vendor/lightweight-charts/lightweight-charts.js?v=4.2.0"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260929-1">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-1">
+  <link rel="stylesheet" href="css/catalog.css?v=20260929-2">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-2">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
-  <script type="module" src="js/tg-signals.js?v=20260929-1"></script>
+  <script type="module" src="js/tg-signals.js?v=20260929-2"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260929-1",
-      "./js/app.js": "./js/app.js?v=20260929-1",
-      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-1",
-      "./js/copy.js": "./js/copy.js?v=20260929-1",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-1",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-1",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-1",
-      "./js/discover.js": "./js/discover.js?v=20260929-1",
-      "./js/feed.js": "./js/feed.js?v=20260929-1",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260929-1",
-      "./js/markets.js": "./js/markets.js?v=20260929-1",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260929-1",
-      "./js/rails.js": "./js/rails.js?v=20260929-1",
-      "./js/premium.js": "./js/premium.js?v=20260929-1",
-      "./js/rewards.js": "./js/rewards.js?v=20260929-1",
-      "./js/social.js": "./js/social.js?v=20260929-1",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-1",
-      "./js/tokens.js": "./js/tokens.js?v=20260929-1",
-      "./js/trading.js": "./js/trading.js?v=20260929-1",
-      "./js/trenches.js": "./js/trenches.js?v=20260929-1",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-1",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-1",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-1",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-1",
-      "./js/install.js": "./js/install.js?v=20260929-1",
-      "./js/public-market.js": "./js/public-market.js?v=20260929-1",
-      "./js/pairs.js": "./js/pairs.js?v=20260929-1",
-      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-1",
-      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-1"
+      "./js/api.js": "./js/api.js?v=20260929-2",
+      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-2",
+      "./js/copy.js": "./js/copy.js?v=20260929-2",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-2",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-2",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-2",
+      "./js/discover.js": "./js/discover.js?v=20260929-2",
+      "./js/feed.js": "./js/feed.js?v=20260929-2",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260929-2",
+      "./js/markets.js": "./js/markets.js?v=20260929-2",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260929-2",
+      "./js/rails.js": "./js/rails.js?v=20260929-2",
+      "./js/premium.js": "./js/premium.js?v=20260929-2",
+      "./js/rewards.js": "./js/rewards.js?v=20260929-2",
+      "./js/social.js": "./js/social.js?v=20260929-2",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-2",
+      "./js/app.js": "./js/app.js?v=20260929-2",
+      "./js/trenches.js": "./js/trenches.js?v=20260929-2",
+      "./js/tokens.js": "./js/tokens.js?v=20260929-2",
+      "./js/trading.js": "./js/trading.js?v=20260929-2",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-2",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-2",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-2",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-2",
+      "./js/install.js": "./js/install.js?v=20260929-2",
+      "./js/public-market.js": "./js/public-market.js?v=20260929-2",
+      "./js/pairs.js": "./js/pairs.js?v=20260929-2",
+      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-2",
+      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-2"
     } }
   </script>
 
@@ -293,7 +293,16 @@
       transition: background 0.12s ease;
     }
     .trench-row:hover { background: rgba(255,255,255,0.045); }
-    .trench-row.selected { background: rgba(255,255,255,0.07); box-shadow: inset 2px 0 0 #fff; }
+    .trench-row.selected { background: rgba(255,255,255,0.07); box-shadow: inset 2px 0 0 var(--gold, #d4af6a); }
+    /* GMGN-style persistent side panel */
+    #trenchesSidePanel {
+      position: sticky; top: 76px;
+      max-height: calc(100vh - 92px); overflow-y: auto;
+      font-size: 12px;
+    }
+    #trenchesSidePanel::-webkit-scrollbar { width: 6px; }
+    #trenchesSidePanel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    @media (max-width: 1099px) { #trenchesSidePanel { display: none; } }
     .trench-row img { border-radius: 6px; }
     .trench-stats {
       display: flex;
@@ -647,7 +656,7 @@
       .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
     }
   </style>
-<link rel="stylesheet" href="css/workstation.css?v=20260929-1">
+<link rel="stylesheet" href="css/workstation.css?v=20260929-2">
 </head>
 <body>
   <!-- ── Bottom ticker tape (FOMO-style, desktop only) ── -->
@@ -890,6 +899,14 @@
         <div style="display:grid; grid-template-columns:minmax(0,1fr); gap:14px; align-items:start" class="trenches-layout">
           <!-- Scan Columns (New / Soon / Migrated) -->
           <div class="trenches-grid" id="trenchesColumns"></div>
+
+          <!-- GMGN-style persistent side panel (desktop ≥1100px; hidden below) -->
+          <aside id="trenchesSidePanel" class="glass-panel side-panel" aria-label="Panel de detalle del token seleccionado">
+            <div style="padding:18px 14px; color:var(--text-tertiary); font-size:12px; line-height:1.6">
+              <div style="font-weight:800; font-size:12.5px; color:var(--text-secondary); margin-bottom:6px">Panel de ejecución</div>
+              Selecciona un token del board para ver su detalle vivo aquí. El terminal solo se abre cuando tú lo pides.
+            </div>
+          </aside>
 
           <!-- Execution Sidebar -->
           <dialog id="tokenTerminal" class="token-terminal" aria-labelledby="terminalSymbol">
@@ -1393,7 +1410,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260929-1"></script>
+  <script type="module" src="js/app.js?v=20260929-2"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1659,6 +1676,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260929-1"></script>
+  <script type="module" src="js/install.js?v=20260929-2"></script>
 </body>
 </html>

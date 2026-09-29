@@ -143,6 +143,8 @@ export const TrenchesEngine = {
         }
       }
     }
+    // Side panel refreshes with live numbers too (cheap re-render, hidden-aware).
+    this.updateSidePanel();
     if (changed) this.render();
   },
 
@@ -489,6 +491,10 @@ export const TrenchesEngine = {
       },
       tokenAddress: l.tokenAddress ?? null,
       createdAt: Number(l.createdAt ?? 0),
+      // Real graduation only: the on-chain factory flips this flag when the
+      // mint exists on-chain. Never inferred from liquidity or volume.
+      graduatedOnChain: l.graduatedOnChain === true,
+      mintAddress: l.mintAddress ?? null,
       dex: null,
     };
   },
@@ -557,7 +563,112 @@ export const TrenchesEngine = {
 
   select(t) {
     this.selected = t;
-    window.App?.openTradeForToken(t.symbol, t.chain, t.priceUsd || 0, t.tokenAddress);
+    // GMGN-parity: on wide viewports selection fills the persistent side
+    // panel; the execution terminal only opens on explicit action (⚡ buttons
+    // / panel CTA). Narrow viewports keep the direct terminal behavior.
+    this.renderSidePanel();
+    const wide = window.matchMedia ? window.matchMedia("(min-width: 1100px)").matches : false;
+    if (!wide) window.App?.openTradeForToken?.(t.symbol, t.chain, t.priceUsd || 0, t.tokenAddress);
+  },
+
+  /** Entry point used by app.js/trading.js deep links: opens the terminal and
+   *  mirrors the selection into the side panel, highlighting the row. */
+  openTradeForToken(symbol, chain, price, tokenAddress) {
+    const t = this.allTokens().find((x) => x.symbol === symbol &&
+      (!tokenAddress || x.tokenAddress === tokenAddress) && (!chain || x.chain === chain)) ||
+      this.allTokens().find((x) => x.symbol === symbol && x.chain === chain);
+    if (t) {
+      this.selected = t;
+      this.renderSidePanel();
+    }
+    window.App?.__openTradeForToken?.(symbol, chain, price, tokenAddress);
+  },
+
+  /** Terminal-side mirror: app.js calls mirrorSelection(t) after opening the
+   *  terminal from any surface (rails, search, ticker) → panel + row focus. */
+  selectFromMirror(t) {
+    if (!t) return;
+    const row = this.poolRowFor(t);
+    if (row) {
+      this.selected = row;
+      this.renderSidePanel();
+    }
+  },
+  /** Row currently rendered for the selected token (for highlight focus). */
+  poolRowFor(t) {
+    if (!t) return null;
+    return this.allTokens().find((x) => String(x.id) === String(t.id) && x.chain === t.chain) || null;
+  },
+
+  /** Persistent side panel (desktop ≥1100px): live detail of the selection
+   *  without leaving the board. Hidden on narrower viewports. */
+  renderSidePanel() {
+    const el = document.getElementById("trenchesSidePanel");
+    if (!el) return;
+    const t = this.poolRowFor(this.selected);
+    if (!t) {
+      el.innerHTML = `<div style="padding:18px 14px; color:var(--text-tertiary); font-size:12px; line-height:1.6">
+        <div style="font-weight:800; font-size:12.5px; color:var(--text-secondary); margin-bottom:6px">Panel de ejecución</div>
+        Selecciona un token del board para ver su detalle vivo aquí. El terminal solo se abre cuando tú lo pides.
+      </div>`;
+      return;
+    }
+    const dex = t.dex ?? null;
+    // Merge real launchpad state (curve progress / on-chain graduation flag)
+    // when the selection entered through the token's market pool.
+    const launch = (this.tokens || []).find((x) => (t.tokenAddress && x.tokenAddress && x.tokenAddress === t.tokenAddress) || String(x.id) === String(t.id));
+    const gradFlag = t.graduatedOnChain === true || launch?.graduatedOnChain === true;
+    const progress = Math.max(Number(t.progress || 0), Number(launch?.progress || 0));
+    const raised = Math.max(Number(t.raisedUsd || 0), Number(launch?.raisedUsd || 0));
+    const chg = (v, period) => {
+      if (v == null || !Number.isFinite(Number(v))) return `<span class="tr-chip" title="Sin datos">—</span>`;
+      const n = Number(v);
+      return `<span class="tr-chip ${n > 0 ? "up" : n < 0 ? "down" : ""}">${period} ${n > 0 ? "+" : ""}${n.toFixed(2)}%</span>`;
+    };
+    const price = t.priceUsd > 0 ? (t.priceUsd < 0.02 ? "$" + t.priceUsd.toFixed(6) : "$" + t.priceUsd.toPrecision(4)) : "—";
+    const liq = dex?.liqUsd > 0 ? fmtUsd(dex.liqUsd) : "—";
+    const vol = dex?.vol24h > 0 ? fmtUsd(dex.vol24h) : "—";
+    const grad = gradFlag
+      ? `<span title="El mint existe on-chain (factory verificada)" style="color:var(--delta-green); font-weight:700">🎓 Graduado on-chain</span>`
+      : progress > 0
+        ? `<span title="Progreso real de la curva de bonding">Curva: ${Math.min(100, progress)}% · recaudado ${fmtUsd(raised)}</span>`
+        : "";
+    const addrHtml = t.tokenAddress
+      ? `<div style="margin-top:8px; font-family:var(--font-mono); font-size:10px; color:var(--text-tertiary); word-break:break-all">${esc(t.tokenAddress)}
+           <a class="tr-copy" title="Copiar contrato" onclick="event.stopPropagation(); navigator.clipboard?.writeText('${esc(t.tokenAddress)}').catch(() => {})">⧉</a>
+           ${t.mintAddress || (t.tokenAddress && t.graduatedOnChain) ? `<a href="https://solscan.io/token/${esc(t.mintAddress || t.tokenAddress)}" target="_blank" rel="noopener noreferrer" title="Ver en Solscan" class="tr-social">↗</a>` : ""}
+         </div>`
+      : "";
+    const idAttr = esc(JSON.stringify(String(t.id)));
+    const symAttr = esc(JSON.stringify(t.symbol));
+    el.innerHTML = `
+      <div style="padding:12px 14px; border-bottom:1px solid var(--border-subtle); display:flex; align-items:center; gap:10px">
+        <div class="tr-logo ${this.logoTrend(t)}">${TokenMeta?.logoHtml ? TokenMeta.logoHtml(t.symbol, { size: 38, round: false, imageUrl: this.riskImage(t), imageUrls: this.riskImages(t) }) : ""}</div>
+        <div style="min-width:0">
+          <div style="font-weight:800; font-size:14px; display:flex; align-items:center; gap:6px">${esc(t.symbol)} ${this.securityBadge(t)}</div>
+          <div style="font-size:11px; color:var(--text-tertiary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(t.name)}</div>
+          <div style="font-size:13px; font-weight:700; margin-top:2px">${esc(price)} <span style="font-size:10px; color:var(--text-tertiary); font-weight:400">MC ${fmtUsd(t.mcapUsd)} · L ${esc(liq)} · V ${esc(vol)}</span></div>
+        </div>
+      </div>
+      <div style="padding:10px 14px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border-subtle)">
+        ${chg(dex?.change5m, "5m")}${chg(dex?.change1h, "1h")}${chg(dex?.change6h, "6h")}${chg(dex?.change24h, "24h")}
+      </div>
+      ${progress > 0 && !gradFlag ? `<div style="padding:10px 14px 0"><div class="tr-progress" aria-hidden="true"><div style="width:${Math.min(100, progress)}%"></div></div>
+        <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:4px">${grad}</div></div>` : grad ? `<div style="padding:10px 14px 0; font-size:10.5px; color:var(--text-tertiary)">${grad}</div>` : ""}
+      <div style="padding:10px 14px">${this.riskStrip(t)}</div>
+      ${addrHtml}
+      <div style="padding:12px 14px; display:flex; gap:8px">
+        <button class="trench-buy-btn" style="flex:1" onclick="window.TrenchesEngine.quickBuy(${symAttr}, ${idAttr}, event)">⚡ Comprar 0.1</button>
+        ${t.isMarket && t.tokenAddress ? `<button class="trench-thesis-btn" style="flex:1" onclick="window.TrenchesEngine.quickSell(${symAttr}, ${idAttr}, event)">⚡ Vender saldo</button>` : `<button class="trench-thesis-btn" style="flex:1" onclick="window.TrenchesEngine.openTradeForToken(${symAttr}, '${esc(t.chain)}', ${t.priceUsd || 0}, ${t.tokenAddress ? "'" + esc(t.tokenAddress) + "'" : "null"})">Abrir terminal</button>`}
+      </div>`;
+  },
+
+  /** Cheap in-place refresh of the side panel numbers (called from _tick). */
+  updateSidePanel() {
+    if (!this.selected) return;
+    const el = document.getElementById("trenchesSidePanel");
+    if (!el || el.offsetParent === null) return; // hidden → nothing to patch
+    this.renderSidePanel();
   },
 
   /** ⚡ quick sell: abre el terminal en SELL con el saldo real del token. */
@@ -686,6 +797,7 @@ export const TrenchesEngine = {
       <button class="btn btn-secondary btn-sm" onclick="window.TrenchesEngine.loadMoreMarket()" ${(this._marketPage || 1) >= 10 ? "disabled" : ""}>Cargar más pools</button>
       <span>Busca cualquier contrato arriba.</span>
     </div>`;
+    this.renderSidePanel();
   },
 
   /** Force the catalog board render, bypassing the GMGN priority — used by
@@ -740,6 +852,7 @@ export const TrenchesEngine = {
           <div class="tr-titleline">
             <strong class="tr-sym" title="${esc(t.name)}">${esc(t.symbol)}</strong>
             ${this.securityBadge(t)}
+            ${t.graduatedOnChain ? `<span title="Graduado on-chain: mint real verificado por la factory" style="font-size:9px">🎓</span>` : ""}
             <span class="tr-name">${esc(String(t.name).slice(0, 16))}</span>
             <a class="tr-copy" title="Copiar contrato" onclick="event.stopPropagation(); navigator.clipboard?.writeText('${esc(addr)}').catch(() => {})">⧉</a>
             ${socialIcons}

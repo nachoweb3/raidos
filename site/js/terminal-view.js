@@ -45,6 +45,8 @@ export const TerminalView = {
     this.dialog.querySelector("[data-terminal-message]").textContent = address ? "" : "Referencia por símbolo: selecciona un contrato para identificar el activo.";
     window.TradingEngine?.setAsset(symbol, chain, price, { tokenAddress: address });
     BubbleMaps.setToken(chain, address);
+    // Keep the trenches side panel in sync when the terminal opens from any surface.
+    window.TrenchesEngine?.selectFromMirror?.({ symbol, chain, tokenAddress: address || null });
   },
   async restore() {
     const url = new URL(location.href), address = url.searchParams.get("token"), reference = url.searchParams.get("reference"), chain = url.searchParams.get("tokenChain");
