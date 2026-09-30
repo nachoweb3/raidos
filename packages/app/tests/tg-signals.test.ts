@@ -598,3 +598,111 @@ describe("entry backfill — signals without entry snapshot", () => {
     expect(sig.entry_price).toBe(0.0123);
   });
 });
+
+// ─── Frontend UI safety (tg-signals.js) ─────────────────────────────────────
+
+/**
+ * The gated 📡 tab must never leak the source channel: the backend stores
+ * chat_id/message_id so the ingest can dedupe, but the rendered page must not
+ * link out to t.me (the gate 24h would otherwise be bypassable via the
+ * message link). These tests run the REAL frontend module in a VM context.
+ */
+describe("tg-signals frontend (privacy + performance UI)", () => {
+  async function loadTgSignals() {
+    const { readFileSync } = await import("node:fs");
+    const { SourceTextModule, SyntheticModule, createContext } = await import("node:vm");
+    const { fileURLToPath } = await import("node:url");
+    const context = createContext({
+      document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] },
+      window: {},
+      localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+      navigator: { clipboard: { writeText: async () => {} } },
+      queueMicrotask,
+      requestAnimationFrame: (fn: FrameRequestCallback) => 0,
+      CSS: { escape: (s: string) => s },
+    });
+    const module = new SourceTextModule(
+      readFileSync(fileURLToPath(new URL("../../../site/js/tg-signals.js", import.meta.url)), "utf8"),
+      { context },
+    );
+    const market = { priceUsd: 0.02, mcap: 500_000, pairAddress: "pool1" };
+    const exports: Record<string, Record<string, unknown>> = {
+      "./api.js": { ApiClient: { request: async () => ({ signals: [] }), isAuthenticated: () => false } },
+      "./dexfeed.js": { DexFeed: { get: () => market, cache: {}, _key: (c: string, t: string) => c + ":" + t, ensureTokens: async () => {} } },
+      "./public-market.js": { publicPoolData: async () => ({ candles: [] }) },
+      "./gate-state.js": {
+        gateStorage: () => null, gateSetState: () => {}, gateHeaders: () => ({}), gateCountdown: () => "00:00:00",
+      },
+    };
+    await module.link(async (specifier) => {
+      const values = exports[specifier.replace(/\?v=\d{8}-\d+$/, "")];
+      if (!values) throw new Error(`unexpected import: ${specifier}`);
+      return new SyntheticModule(Object.keys(values), function () {
+        for (const [name, value] of Object.entries(values)) this.setExport(name, value);
+      }, { context });
+    });
+    await module.evaluate();
+    return { engine: (module.namespace as any).TgSignalsEngine, namespace: module.namespace as any };
+  }
+
+  it("never renders a link to the source Telegram message (channel privacy)", async () => {
+    const { engine } = await loadTgSignals();
+    const html = engine._renderCard({
+      token: "MoMuVWx5cYCGXcDjQ5M6Z6Bs6c3T7eTTC6PxC1gVaaa", symbol: "TEST", chain: "solana",
+      ts: Math.floor(Date.now() / 1000) - 60, chatId: "-1003686690861", messageId: 42,
+      authorName: "nacho", text: "call de prueba", entryPrice: 0.001, entryMcap: null,
+    });
+    expect(html).not.toContain("t.me");
+    expect(html).not.toContain("<a ");
+    expect(html).toContain("tg-call-meta"); // moment shown as plain text instead
+  });
+
+  it("computes honest call performance: only priced+live rows count, unpriced never dilute", async () => {
+    const { namespace } = await loadTgSignals();
+    const mk = (over: Record<string, unknown>) => ({
+      token: "MoMuVWx5cYCGXcDjQ5M6Z6Bs6c3T7eTTC6PxC1gVaaa", chain: "solana", ts: 100,
+      entryPrice: 0.001, authorName: "nacho", ...over,
+    });
+    // The DexFeed stub returns priceUsd 0.02 for every mint it is asked about.
+    const perf = namespace.computeCallPerformance([
+      mk({ token: "TokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", symbol: "WIN", entryPrice: 0.001 }), // 0.02/0.001 = 20x
+      mk({ token: "TokenBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", symbol: "LOSE", entryPrice: 0.05 }), // 0.02/0.05 = 0.4x
+      mk({ token: "TokenCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", symbol: "NOPRICE", entryPrice: null }), // no entry → excluded
+      mk({ token: "TokenDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", symbol: "NOENTRY", entryPrice: 0 }), // zero entry → excluded
+    ]);
+    expect(perf.evaluated).toBe(2);
+    expect(perf.unpriced).toBe(2);
+    expect(perf.winners).toBe(1);
+    expect(perf.winRate).toBeCloseTo(50, 6);
+    expect(perf.best?.symbol).toBe("WIN");
+    expect(perf.best?.mult).toBeCloseTo(20, 6);
+    expect(perf.avgWinnerX).toBeCloseTo(20, 6);
+    expect(perf.avgPct).toBeCloseTo((1900 + (-60)) / 2, 6);
+  });
+
+  it("ranks callers with achievements derived only from visible metrics", async () => {
+    const { namespace } = await loadTgSignals();
+    const call = (author: string, entry: number | null) => ({
+      token: "TokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", chain: "solana", ts: 100,
+      entryPrice: entry, authorName: author,
+    });
+    const perf = namespace.computeCallPerformance([
+      call("alpha", 0.001), // 20x winner
+      call("alpha", 0.01),  // 2x winner
+      call("beta", 0.05),   // 0.4x loser
+      call("beta", null),   // excluded
+    ]);
+    expect(perf.callerStats[0]?.author).toBe("alpha");
+    const alpha = perf.callerStats[0];
+    expect(alpha.calls).toBe(2);
+    expect(alpha.winners).toBe(2);
+    expect(alpha.winRate).toBe(100);
+    expect(alpha.bestMult).toBeCloseTo(20, 6);
+    expect(alpha.achievements.map((a: any) => a.icon)).toContain("🚀"); // best 20x ≥ 10
+    expect(alpha.achievements.map((a: any) => a.icon)).toContain("💎"); // 100% acierto
+    const beta = perf.callerStats.find((c: any) => c.author === "beta");
+    expect(beta.calls).toBe(1); // the unpriced call never counts
+    expect(beta.winners).toBe(0);
+    expect(beta.achievements).toEqual([]); // nothing invented for a losing caller
+  });
+});
