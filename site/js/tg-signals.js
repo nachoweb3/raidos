@@ -8,10 +8,13 @@
  * llamada. Cada fila abre el terminal self-custody con el contrato: TÚ firmas cada operación.
  *
  * v2 — Filtros de tiempo (1h/6h/12h/24h/7d/30d), logos de tokens, avatares de callers.
+ * v3 — Sparkline por call (velas reales 15m del pool vía GeckoTerminal público, marcador
+ *      de entrada 📍 y multiple-x desde la entrada) + botón grande de copiar CA.
  */
 
 import { ApiClient } from "./api.js";
 import { DexFeed } from "./dexfeed.js?v=20260928-6";
+import { publicPoolData } from "./public-market.js?v=20260929-5";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -54,6 +57,111 @@ function formatPrice(p) {
   if (n < 0.01) return "$" + n.toFixed(6);
   if (n < 1) return "$" + n.toFixed(4);
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ─── Sparkline por call: velas reales del pool (GeckoTerminal público) ──────
+
+const _sparkCache = new Map(); // tokenKey → { candles }
+
+function sparkTokenKey(chain, token) {
+  return (chain || "") + ":" + (/^0x/i.test(token) ? token.toLowerCase() : token);
+}
+
+function sparkSet(chain, token, candles) {
+  if (_sparkCache.size >= 60) _sparkCache.delete(_sparkCache.keys().next().value);
+  _sparkCache.set(sparkTokenKey(chain, token), { candles });
+}
+
+const SPARK_NETWORKS = { solana: "solana", bsc: "bsc", base: "base", ethereum: "eth" };
+
+/** Normaliza la lista de velas del API propio ({time,open,high,low,close,volume}). */
+function normalizeApiCandles(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((c) => c && Number.isFinite(Number(c.time)) && Number(c.time) > 0 && Number.isFinite(Number(c.close)) && Number(c.close) > 0)
+    .map((c) => ({ time: Math.floor(Number(c.time)), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), volume: Number(c.volume ?? 0) }))
+    .sort((a, b) => a.time - b.time);
+}
+
+/**
+ * Pide velas 15m del pool real del token y dibuja su sparkline in-place.
+ * Doble vía honesta: 1) API propio (/api/market/candles, GeckoTerminal server-side)
+ * 2) fallback GeckoTerminal público desde el navegador. Sin datos → estado "—".
+ */
+async function loadSparkline(chain, token, entryTs, entryPrice, stateId) {
+  const host = document.getElementById(stateId)?.parentElement;
+  if (!host) return;
+  try {
+    if (!SPARK_NETWORKS[chain]) { host?.classList.add("tg-spark-none"); return; }
+    const market = DexFeed.get(token, chain || undefined);
+    const pool = market?.pairAddress;
+    if (!pool) { host?.classList.add("tg-spark-none"); return; }
+    let candles = _sparkCache.get(sparkTokenKey(chain, token))?.candles;
+    if (!candles) {
+      try {
+        const api = await ApiClient.request("/api/market/candles?chain=" + encodeURIComponent(chain) +
+          "&pool=" + encodeURIComponent(pool) + "&token=" + encodeURIComponent(token) + "&aggregate=15");
+        candles = normalizeApiCandles(api?.candles);
+      } catch {}
+      if (!candles.length) {
+        const result = await publicPoolData("candles", SPARK_NETWORKS[chain], pool, token, 15);
+        candles = result?.candles ?? [];
+      }
+      if (candles.length) sparkSet(chain, token, candles);
+    }
+    if (!candles.length) { host?.classList.add("tg-spark-none"); return; }
+    drawSparkline(host, candles, entryTs, entryPrice);
+  } catch {
+    host?.classList.add("tg-spark-none");
+  }
+}
+
+/**
+ * Dibuja la serie de cierre REAL con SVG puro:
+ * - línea desde la entrada cuando el histórico la cubre (jamás inventa tendencia previa)
+ * - marcador 📍 en la vela de la entrada
+ * - multiple-x = precio REAL actual / precio de entrada registrado
+ */
+function drawSparkline(host, candles, entryTs, entryPrice) {
+  if (!host) return;
+  const W = host.clientWidth || 116, H = host.clientHeight || 40;
+  let win = candles;
+  if (entryTs > 0) {
+    const from = candles.filter((c) => c.time >= entryTs - 900);
+    if (from.length >= 6) win = from;
+  }
+  const pts = win.slice(-160);
+  if (pts.length < 2) { host.classList.add("tg-spark-none"); return; }
+  const closes = pts.map((c) => c.close);
+  const min = Math.min(...closes), max = Math.max(...closes);
+  const span = max - min || max || 1;
+  const x = (i) => +(i / (pts.length - 1) * W).toFixed(2);
+  const y = (v) => +(H - 3 - ((v - min) / span) * (H - 6)).toFixed(2);
+  const path = pts.map((c, i) => (i ? "L" : "M") + x(i) + "," + y(c.close)).join(" ");
+  const up = closes[closes.length - 1] >= closes[0];
+  const stroke = up ? "#10b981" : "#ef4444";
+
+  let dotX = null, dotY = null;
+  if (entryTs > 0) {
+    let idx = pts.findIndex((c) => c.time >= entryTs);
+    if (idx < 0 && entryTs >= pts[0].time) idx = pts.length - 1;
+    if (idx >= 0) { dotX = x(idx); dotY = y(pts[idx].close); }
+  }
+
+  let multText = "";
+  const last = closes[closes.length - 1];
+  if (entryPrice > 0 && last > 0) {
+    const mult = last / entryPrice;
+    multText = (mult >= 10 ? String(Math.round(mult)) : (Math.round(mult * 100) / 100).toFixed(2)) + "x";
+  }
+
+  host.innerHTML = `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución del precio desde la entrada">
+      <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/>
+      ${dotX != null ? `<line x1="${dotX}" y1="2" x2="${dotX}" y2="${H - 2}" stroke="${stroke}" stroke-width="1" stroke-dasharray="2 3" opacity="0.45"/><circle cx="${dotX}" cy="${dotY}" r="2.5" fill="${stroke}"/>` : ""}
+    </svg>
+    ${multText ? `<span class="tg-spark-mult ${up ? "pos" : "neg"}" title="Desde la entrada">${multText}</span>` : ""}`;
+  host.classList.add("tg-spark-done");
 }
 
 function formatMcap(m) {
@@ -329,23 +437,34 @@ export const TgSignalsEngine = {
 
     const isActiveAuthor = this.caller && (this.caller === s.authorName || this.caller === s.authorId);
 
+    // Sparkline: velas reales del pool; se resuelve async tras el render
+    const sparkChain = s.chain && !["unknown", "evm"].includes(String(s.chain)) ? String(s.chain) : "";
+    const sparkStateId = `tg-spark-state-${token}-${Number(s.messageId) || 0}`;
+    const sparkTs = Number(s.ts) > 0 ? Number(s.ts) : 0;
+    queueMicrotask(() => loadSparkline(sparkChain, s.token, sparkTs, entryPrice, sparkStateId));
+
     return `
     <div class="tg-card glass-panel-interactive" data-token="${token}">
       <div class="tg-card-header">
-        <div class="tg-card-left">
-          ${avatarHtml}
-          <div class="tg-card-title">
-            <div class="tg-card-sym-row">
-              ${logoHtml}
-              <span class="tg-sym">$${sym}</span>
-              ${chainChip(String(s.chain ?? "unknown"))}
+        <div class="tg-card-main">
+          <div class="tg-card-left">
+            ${avatarHtml}
+            <div class="tg-card-title">
+              <div class="tg-card-sym-row">
+                ${logoHtml}
+                <span class="tg-sym">$${sym}</span>
+                ${chainChip(String(s.chain ?? "unknown"))}
+              </div>
+              ${authorDisplay ? `
+                <span
+                  class="tg-author-pill ${isActiveAuthor ? "active" : ""}"
+                  onclick="window.TgSignalsEngine.setCaller('${esc(author)}')"
+                  title="Filtrar por este caller"
+                >👤 ${authorDisplay}</span>` : ""}
             </div>
-            ${authorDisplay ? `
-              <span
-                class="tg-author-pill ${isActiveAuthor ? "active" : ""}"
-                onclick="window.TgSignalsEngine.setCaller('${esc(author)}')"
-                title="Filtrar por este caller"
-              >👤 ${authorDisplay}</span>` : ""}
+          </div>
+          <div class="tg-spark" title="Velas reales del pool (15m) · 📍 marca la entrada">
+            <i class="tg-spark-state" id="${sparkStateId}"></i>
           </div>
         </div>
         <div class="tg-card-right">
@@ -367,8 +486,8 @@ export const TgSignalsEngine = {
           ${msgLink ? `<a class="tg-chip tg-link" href="${esc(msgLink)}" target="_blank" rel="noopener noreferrer">↗ t.me</a>` : ""}
         </div>
         <div style="display:flex; gap:6px; align-items:center">
-          <button class="btn btn-ghost btn-sm" title="Copiar contrato"
-            onclick="navigator.clipboard.writeText('${token}').then(()=>{this.textContent='✓';setTimeout(()=>{this.textContent='⧉';},1200)})">⧉</button>
+          <button class="tg-copy-btn" title="Copiar contrato"
+            onclick="navigator.clipboard.writeText('${token}').then(()=>{this.classList.add('copied');this.innerHTML='✓ Copiado';setTimeout(()=>{this.classList.remove('copied');this.innerHTML='⧉ Copiar CA';},1400)})">⧉ Copiar CA</button>
           <button class="btn btn-primary btn-sm"
             onclick="window.TgSignalsEngine.openTerminal('${token}','${chainParam}','${sym}',${currentPrice || entryPrice || 0})">
             Abrir →

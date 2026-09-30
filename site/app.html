@@ -65,41 +65,41 @@
   </style>
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script defer src="vendor/lightweight-charts/lightweight-charts.js?v=4.2.0"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260929-4">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-4">
+  <link rel="stylesheet" href="css/catalog.css?v=20260929-5">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-5">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
-  <script type="module" src="js/tg-signals.js?v=20260929-4"></script>
+  <script type="module" src="js/tg-signals.js?v=20260929-5"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260929-4",
-      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-4",
-      "./js/copy.js": "./js/copy.js?v=20260929-4",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-4",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-4",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-4",
-      "./js/discover.js": "./js/discover.js?v=20260929-4",
-      "./js/feed.js": "./js/feed.js?v=20260929-4",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260929-4",
-      "./js/markets.js": "./js/markets.js?v=20260929-4",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260929-4",
-      "./js/rails.js": "./js/rails.js?v=20260929-4",
-      "./js/premium.js": "./js/premium.js?v=20260929-4",
-      "./js/rewards.js": "./js/rewards.js?v=20260929-4",
-      "./js/social.js": "./js/social.js?v=20260929-4",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-4",
-      "./js/app.js": "./js/app.js?v=20260929-4",
-      "./js/trenches.js": "./js/trenches.js?v=20260929-4",
-      "./js/tokens.js": "./js/tokens.js?v=20260929-4",
-      "./js/trading.js": "./js/trading.js?v=20260929-4",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-4",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-4",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-4",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-4",
-      "./js/install.js": "./js/install.js?v=20260929-4",
-      "./js/public-market.js": "./js/public-market.js?v=20260929-4",
-      "./js/pairs.js": "./js/pairs.js?v=20260929-4",
-      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-4",
-      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-4"
+      "./js/api.js": "./js/api.js?v=20260929-5",
+      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-5",
+      "./js/copy.js": "./js/copy.js?v=20260929-5",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-5",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-5",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-5",
+      "./js/discover.js": "./js/discover.js?v=20260929-5",
+      "./js/feed.js": "./js/feed.js?v=20260929-5",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260929-5",
+      "./js/markets.js": "./js/markets.js?v=20260929-5",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260929-5",
+      "./js/rails.js": "./js/rails.js?v=20260929-5",
+      "./js/premium.js": "./js/premium.js?v=20260929-5",
+      "./js/rewards.js": "./js/rewards.js?v=20260929-5",
+      "./js/social.js": "./js/social.js?v=20260929-5",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-5",
+      "./js/app.js": "./js/app.js?v=20260929-5",
+      "./js/trenches.js": "./js/trenches.js?v=20260929-5",
+      "./js/tokens.js": "./js/tokens.js?v=20260929-5",
+      "./js/trading.js": "./js/trading.js?v=20260929-5",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-5",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-5",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-5",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-5",
+      "./js/install.js": "./js/install.js?v=20260929-5",
+      "./js/public-market.js": "./js/public-market.js?v=20260929-5",
+      "./js/pairs.js": "./js/pairs.js?v=20260929-5",
+      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-5",
+      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-5"
     } }
   </script>
 
@@ -432,6 +432,31 @@
     .tg-card-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     .tg-card-sym-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
+    /* Sparkline por call: velas reales del pool a la derecha */
+    .tg-card-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex: 1; min-width: 0; }
+    .tg-spark { position: relative; width: 116px; height: 44px; flex-shrink: 0; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); overflow: hidden; }
+    .tg-spark svg { display: block; }
+    .tg-spark-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 10px; color: var(--text-tertiary); }
+    .tg-spark-state::after { content: ""; width: 12px; height: 12px; border: 1.5px solid rgba(255,255,255,0.15); border-top-color: #f59e0b; border-radius: 50%; animation: tgSparkSpin 0.9s linear infinite; }
+    @keyframes tgSparkSpin { to { transform: rotate(360deg); } }
+    .tg-spark-done .tg-spark-state, .tg-spark-none .tg-spark-state { display: none; }
+    .tg-spark-none::after { content: "—"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-tertiary); opacity: 0.5; }
+    .tg-spark-mult { position: absolute; top: 2px; right: 4px; font-size: 10px; font-weight: 900; font-family: ui-monospace, SFMono-Regular, monospace; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+    .tg-spark-mult.pos { color: #10b981; }
+    .tg-spark-mult.neg { color: #ef4444; }
+
+    /* Botón grande de copiar CA */
+    .tg-copy-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border-radius: 10px; border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.1); color: #f59e0b; font-size: 13px; font-weight: 800; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease; }
+    .tg-copy-btn:hover { background: rgba(245,158,11,0.2); border-color: rgba(245,158,11,0.65); }
+    .tg-copy-btn.copied { color: #10b981; border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.12); }
+    @media (max-width: 560px) {
+      .tg-spark { width: 86px; height: 38px; }
+      .tg-card-main { flex-wrap: wrap; }
+      .tg-card-footer { flex-direction: column-reverse; align-items: stretch; }
+      .tg-copy-btn { flex: 1; }
+      .tg-card-footer .btn-primary { flex: 1; }
+    }
+
     /* Avatar del caller */
     .tg-caller-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.06); }
     .tg-caller-avatar-sm { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1.5px solid rgba(255,255,255,0.1); }
@@ -750,7 +775,7 @@
       .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
     }
   </style>
-<link rel="stylesheet" href="css/workstation.css?v=20260929-4">
+<link rel="stylesheet" href="css/workstation.css?v=20260929-5">
 </head>
 <body>
   <!-- ── Boot loader (first paint; removed on window load) ── -->
@@ -1533,7 +1558,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260929-4"></script>
+  <script type="module" src="js/app.js?v=20260929-5"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1799,6 +1824,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260929-4"></script>
+  <script type="module" src="js/install.js?v=20260929-5"></script>
 </body>
 </html>
