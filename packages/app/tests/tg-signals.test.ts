@@ -438,3 +438,45 @@ describe("API routes /api/tg/*", () => {
     expect(status.signals).toBe(1);
   });
 });
+
+describe("entry backfill — signals without entry snapshot", () => {
+  let db: AppDb;
+  beforeEach(() => { db = new AppDb(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  const row = (over: Partial<Parameters<AppDb["insertTgSignals"]>[0][number]> = {}) => ({
+    chat_id: "-1003686690861", message_id: 1, update_id: 100, token: SOL_MINT,
+    chain: "solana", symbol: "BONK", author_id: "7", author_name: "@vip",
+    text: "CA en el canal", ts: 1700, fetched_at: 1701, ...over,
+  });
+
+  it("lists only signals without entry price, newest first, bounded by limit and dedupable by token", () => {
+    db.insertTgSignals([
+      row({ message_id: 1, ts: 100, entry_price: 0.1 }), // has snapshot
+      row({ message_id: 2, ts: 200 }),
+      row({ message_id: 3, ts: 300, token: EVM_ADDR, chain: "base" }),
+      row({ message_id: 4, ts: 400 }), // same token+chain as message 2 → backfill dedups it
+    ]);
+    const missing = db.listTgSignalsMissingEntry(10);
+    expect(missing.map((m) => m.message_id)).toEqual([4, 3, 2]); // newest first
+    expect(db.listTgSignalsMissingEntry(2)).toHaveLength(2);
+    // Server-side batch selection: first occurrence per chain:token wins
+    const seen = new Set<string>();
+    const batch: typeof missing = [];
+    for (const m of missing) {
+      const key = (m.chain || "") + ":" + m.token.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key); batch.push(m);
+    }
+    expect(batch.map((m) => m.message_id)).toEqual([4, 3]);
+  });
+
+  it("writes the candle open as entry and clears the signal from the missing list", () => {
+    db.insertTgSignals([row({ message_id: 5, ts: 500 })]);
+    const [m] = db.listTgSignalsMissingEntry(5);
+    expect(db.updateTgSignalEntry(m.chat_id, m.message_id, m.token, 0.0123, null)).toBe(true);
+    expect(db.listTgSignalsMissingEntry(5)).toHaveLength(0);
+    const [sig] = db.listTgSignals(5);
+    expect(sig.entry_price).toBe(0.0123);
+  });
+});

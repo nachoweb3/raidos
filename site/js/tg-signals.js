@@ -14,7 +14,7 @@
 
 import { ApiClient } from "./api.js";
 import { DexFeed } from "./dexfeed.js?v=20260928-6";
-import { publicPoolData } from "./public-market.js?v=20260929-6";
+import { publicPoolData } from "./public-market.js?v=20260929-7";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -116,6 +116,26 @@ async function loadSparkline(chain, token, entryTs, entryPrice, stateId) {
   }
 }
 
+/** Multiple-x desde la entrada usando la vela más reciente (en vivo). */
+function liveMultiplier(candles, entryPrice) {
+  if (!(entryPrice > 0) || !candles.length) return null;
+  const last = candles[candles.length - 1].close;
+  if (!(last > 0)) return null;
+  const mult = last / entryPrice;
+  return (mult >= 10 ? String(Math.round(mult)) : (Math.round(mult * 100) / 100).toFixed(2)) + "x";
+}
+
+/** Máximo-x alcanzado desde la entrada: pico de highs/closes reales desde la vela de la llamada. */
+function maxMultiplier(candles, entryTs, entryPrice) {
+  if (!(entryPrice > 0) || !candles.length) return null;
+  const window = entryTs > 0 ? candles.filter((c) => c.time >= entryTs - 900) : candles;
+  if (!window.length) return null;
+  let peak = 0;
+  for (const c of window) peak = Math.max(peak, c.high / entryPrice, c.close / entryPrice);
+  if (!(peak > 0)) return null;
+  return (peak >= 10 ? String(Math.round(peak)) : (Math.round(peak * 100) / 100).toFixed(2)) + "x";
+}
+
 /**
  * Dibuja la serie de cierre REAL con SVG puro:
  * - línea desde la entrada cuando el histórico la cubre (jamás inventa tendencia previa)
@@ -148,19 +168,16 @@ function drawSparkline(host, candles, entryTs, entryPrice) {
     if (idx >= 0) { dotX = x(idx); dotY = y(pts[idx].close); }
   }
 
-  let multText = "";
-  const last = closes[closes.length - 1];
-  if (entryPrice > 0 && last > 0) {
-    const mult = last / entryPrice;
-    multText = (mult >= 10 ? String(Math.round(mult)) : (Math.round(mult * 100) / 100).toFixed(2)) + "x";
-  }
+  const multText = liveMultiplier(pts, entryPrice);
+  const maxText = maxMultiplier(pts, entryTs, entryPrice);
+  const multLabel = multText ? (maxText && maxText !== multText ? `${multText} · máx ${maxText}` : multText) : "";
 
   host.innerHTML = `
     <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución del precio desde la entrada">
       <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/>
       ${dotX != null ? `<line x1="${dotX}" y1="2" x2="${dotX}" y2="${H - 2}" stroke="${stroke}" stroke-width="1" stroke-dasharray="2 3" opacity="0.45"/><circle cx="${dotX}" cy="${dotY}" r="2.5" fill="${stroke}"/>` : ""}
     </svg>
-    ${multText ? `<span class="tg-spark-mult ${up ? "pos" : "neg"}" title="Desde la entrada">${multText}</span>` : ""}`;
+    ${multLabel ? `<span class="tg-spark-mult ${up ? "pos" : "neg"}" title="x en vivo · máximo desde la entrada">${multLabel}</span>` : ""}`;
   host.classList.add("tg-spark-done");
 }
 
@@ -258,8 +275,10 @@ export const TgSignalsEngine = {
   timeFilter: "all", // key de TIME_FILTERS
   auto: true,
   _timer: null,
+  _sparkTick: null,
   _jumpToken: "",
   _loadSeq: 0,
+  _lastSignals: [],
 
   async load() {
     const root = document.getElementById("view-tg");
@@ -346,6 +365,7 @@ export const TgSignalsEngine = {
 
     const signals = data.signals ?? [];
     this._lastTs = signals.length ? Number(signals[0].ts) : 0;
+    this._lastSignals = signals;
 
     if (!signals.length) {
       root.innerHTML = wrap(`
@@ -454,7 +474,9 @@ export const TgSignalsEngine = {
     const isActiveAuthor = this.caller && (this.caller === s.authorName || this.caller === s.authorId);
 
     // Sparkline: velas reales del pool; se resuelve async tras el render
-    const sparkChain = s.chain && !["unknown", "evm"].includes(String(s.chain)) ? String(s.chain) : "";
+    let sparkChain = String(s.chain ?? "");
+    if (!sparkChain || sparkChain === "unknown") sparkChain = /^0x/i.test(s.token) ? "ethereum" : "solana";
+    else if (sparkChain === "evm") sparkChain = "ethereum";
     const sparkStateId = `tg-spark-state-${token}-${Number(s.messageId) || 0}`;
     const sparkTs = Number(s.ts) > 0 ? Number(s.ts) : 0;
     queueMicrotask(() => loadSparkline(sparkChain, s.token, sparkTs, entryPrice, sparkStateId));
@@ -589,10 +611,42 @@ export const TgSignalsEngine = {
   setAuto(on) {
     this.auto = !!on;
     if (this._timer) { clearInterval(this._timer); this._timer = null; }
+    if (this._sparkTick) { clearInterval(this._sparkTick); this._sparkTick = null; }
     if (this.auto && window.App && window.App.currentView === "tg") {
       this._timer = setInterval(() => {
         if (!document.hidden && window.App.currentView === "tg") this.load();
       }, 45_000);
+      // x en tiempo real: refresca la vela más fresca por token visible y re-pinta
+      this._sparkTick = setInterval(() => {
+        if (!document.hidden && window.App.currentView === "tg") this.refreshSparks();
+      }, 30_000);
+    }
+  },
+
+  /** Tick en vivo del ROI: vela 15m más reciente por token visible, re-pinta spark + x + máx. */
+  refreshSparks() {
+    const seen = new Set();
+    for (const s of this._lastSignals ?? []) {
+      if (seen.has(s.token)) continue;
+      seen.add(s.token);
+      const chain = !s.chain || s.chain === "unknown" ? (/^0x/i.test(s.token) ? "ethereum" : "solana")
+        : s.chain === "evm" ? "ethereum" : String(s.chain);
+      const stateId = `tg-spark-state-${esc(s.token)}-${Number(s.messageId) || 0}`;
+      const host = document.getElementById(stateId)?.parentElement;
+      if (!host || host.classList.contains("tg-spark-none")) continue;
+      void (async () => {
+        try {
+          const market = DexFeed.get(s.token, chain);
+          const pool = market?.pairAddress;
+          if (!pool) return;
+          const api = await ApiClient.request("/api/market/candles?chain=" + encodeURIComponent(chain) +
+            "&pool=" + encodeURIComponent(pool) + "&token=" + encodeURIComponent(s.token) + "&aggregate=15");
+          const candles = normalizeApiCandles(api?.candles);
+          if (!candles.length) return;
+          sparkSet(chain, s.token, candles);
+          drawSparkline(host, candles, Number(s.ts) || 0, s.entryPrice != null ? Number(s.entryPrice) : null);
+        } catch { /* el próximo tick reintenta */ }
+      })();
     }
   },
 

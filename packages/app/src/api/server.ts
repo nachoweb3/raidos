@@ -10,7 +10,7 @@
 
 import http from "node:http";
 import { registerTokenMetadataRoutes } from "./token-metadata.js";
-import { MarketDataService } from "../market/data.js";
+import { MarketDataService, NETWORKS } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
 import { MarketIndexer } from "../market/indexer.js";
 import { MarketDiscoveryLoop } from "../market/discovery-loop.js";
@@ -288,8 +288,7 @@ export class ApiServer {
     // it only writes tg_signals rows. Errors are logged, never fatal.
     if (this.telegramSource.enabled) {
       this.tgStopped = false;
-      let backoffMs = 0;
-      const snapshotSignalPrices = async (candidates: TelegramSignalCandidate[]): Promise<void> => {
+      let backoffMs = 0;      const snapshotSignalPrices = async (candidates: TelegramSignalCandidate[]): Promise<void> => {
         for (const c of candidates) {
           try {
             const chain = c.chain === "evm" ? "ethereum" : (c.chain || "solana");
@@ -306,6 +305,47 @@ export class ApiServer {
           }
         }
       };
+      // Backfill: signals whose entry snapshot never landed (e.g. provider down at
+      // ingestion) get their entry price from REAL historical candles — the 15m candle
+      // containing the call timestamp contributes its OPEN (never the current price,
+      // never invented). Bounded to 5 per pass and dedup'd by token.
+      const backfillSignalEntries = async (): Promise<void> => {
+        const missing = this.db.listTgSignalsMissingEntry(20);
+        if (!missing.length) return;
+        const seen = new Set<string>();
+        const batch: typeof missing = [];
+        for (const row of missing) {
+          const key = (row.chain || "") + ":" + row.token.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          batch.push(row);
+          if (batch.length >= 5) break;
+        }
+        for (const row of batch) {
+          try {
+            const chain = row.chain === "evm" ? "ethereum" : (row.chain || "solana");
+            if (chain === "unknown" || !NETWORKS[chain]) continue;
+            const pools = await this.marketData.poolsByToken(chain, row.token);
+            const pool = pools?.data?.[0]?.pairAddress;
+            if (!pool) continue;
+            const candles = await this.marketData.candles(chain, pool, row.token, 15);
+            const rows = candles?.data ?? [];
+            const ts = Math.floor(Number(row.ts));
+            const candle = rows.find((r: any) => r?.time >= ts - 899 && r?.time <= ts) ?? rows[0];
+            if (candle && Number(candle.open) > 0) {
+              this.db.updateTgSignalEntry(row.chat_id, row.message_id, row.token, Number(candle.open), null);
+              console.log(`[telegram] backfilled entry for ${row.token.slice(0, 8)}… @ ${Number(candle.open).toPrecision(3)} USD`);
+            }
+          } catch {
+            // Provider down or token not indexed: the next pass retries up to the window cap.
+          }
+        }
+      };
+      const backfillTimer = setInterval(() => {
+        void backfillSignalEntries().catch(() => {});
+      }, 10 * 60_000);
+      backfillTimer.unref?.();
+      void backfillSignalEntries().catch(() => {});
       const tgPass = async (): Promise<void> => {
         if (this.tgStopped) return;
         const result = await this.telegramSource.poll(

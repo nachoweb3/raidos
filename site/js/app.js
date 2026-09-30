@@ -19,7 +19,7 @@ import { PairsEngine } from "./pairs.js";
 import { TokenMeta } from "./tokens.js";
 import { TerminalView } from "./terminal-view.js?v=20260928-6";
 import { FomoRails } from "./rails.js";
-import { TgSignalsEngine } from "./tg-signals.js?v=20260929-6";
+import { TgSignalsEngine } from "./tg-signals.js?v=20260929-7";
 
 export const App = {
   currentView: "feed",

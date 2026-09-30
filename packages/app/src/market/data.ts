@@ -20,7 +20,7 @@ const HOSTS: Record<Provider, string> = {
   rugcheck: "https://api.rugcheck.xyz",
   goplus: "https://api.gopluslabs.io",
 };
-const NETWORKS: Record<string, string> = {
+export const NETWORKS: Record<string, string> = {
   solana: "solana", ethereum: "eth", base: "base", bsc: "bsc", arc: "arc",
 };
 const reverseNetwork = (network: string) => Object.keys(NETWORKS).find((chain) => NETWORKS[chain] === network) ?? network;
@@ -293,6 +293,17 @@ export class MarketDataService {
     } catch { /* Preserve a valid empty response if there really is no trading history. */ }
     if (empty) return empty;
     throw new Error("Onchain candle history temporarily unavailable");
+  }
+
+  /** Indexed pools for one token (GeckoTerminal), best-liquidity first. */
+  async poolsByToken(chain: string, token: string): Promise<MarketSnapshot<any[]>> {
+    validChain(chain); validAddress(token);
+    const result = await this.onchain("/networks/" + (NETWORKS[chain] ?? chain) +
+      "/tokens/" + encodeURIComponent(token) + "/pools?include=base_token,quote_token,dex", 60000);
+    const wanted = new Set([addressKey(chain, token)]);
+    const data = this.matchingAssets(this.geckoPairs(result.data, chain), wanted, chain)
+      .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0));
+    return { ...result, data };
   }
 
   private async poolCandles(chain: string, pool: string, token: string, aggregate = 5): Promise<MarketSnapshot<any[]>> {

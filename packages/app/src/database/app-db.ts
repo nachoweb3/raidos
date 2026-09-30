@@ -2080,6 +2080,14 @@ export class AppDb {
     return res.changes > 0;
   }
 
+  /** Signals whose entry snapshot never landed (provider down at ingestion time). */
+  listTgSignalsMissingEntry(limit = 40) {
+    return this.db.prepare(
+      `SELECT chat_id, message_id, token, chain, ts FROM tg_signals
+       WHERE entry_price IS NULL AND ts > 0 ORDER BY ts DESC LIMIT ?`
+    ).all(limit) as { chat_id: string; message_id: number; token: string; chain: string; ts: number }[];
+  }
+
   /** Newest calls first; optional chain filter ('evm' | 'solana' | 'unknown'
    *  | specific network like 'bsc'/'base'), caller filter (authorName or authorId),
    *  and since filter (unix timestamp in seconds — only rows with ts >= since). */
