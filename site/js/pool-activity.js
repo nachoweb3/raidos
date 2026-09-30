@@ -64,8 +64,12 @@ export class PoolActivity {
     }
   }
   mark() {
-    this.tools.setMarkers(this.context && this.root.querySelector("[data-markers]").checked
-      ? activityMarkers(this.trades, this.tools.data, this.context.interval, this.wallet) : []);
+    const poolMarkers = this.context && this.root.querySelector("[data-markers]").checked
+      ? activityMarkers(this.trades, this.tools.data, this.context.interval, this.wallet) : [];
+    // Los overlays de token (llamadas TG + fills propios) se fusionan aquí para
+    // que ambos motores convivan sobre el mismo chart sin pisarse.
+    this.tools.setMarkers(window.TokenOverlaysEngine?.merge
+      ? window.TokenOverlaysEngine.merge(poolMarkers) : poolMarkers);
   }
   render() {
     const select = this.root.querySelector("[data-wallet]");

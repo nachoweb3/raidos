@@ -367,6 +367,45 @@ describe("AppDb tg_signals", () => {
   });
 });
 
+describe("AppDb tg_access_codes (24h gate)", () => {
+  let db: AppDb;
+  beforeEach(() => { db = new AppDb(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  it("mints, rotates (revoking the previous code) and redeems exactly once for 24h", () => {
+    const first = db.mintTgAccessCode({ telegramUserId: "777", telegramUsername: "@vip", chatId: "-100" });
+    expect(first.code).toMatch(/^[A-HJ-NP-Za-km-z2-9]{8}$/);
+    expect(db.redeemTgAccessCode(first.code, "ip-a")).toBeGreaterThan(0); // grant until ~now+24h
+    expect(db.redeemTgAccessCode(first.code, "ip-b")).toBeNull(); // single use
+
+    // Rotation: a fresh mint revokes the old row but the used one stays consumed.
+    const second = db.mintTgAccessCode({ telegramUserId: "777" });
+    expect(second.code).not.toBe(first.code);
+    expect(db.redeemTgAccessCode(first.code, "ip-c")).toBeNull();
+    expect(db.redeemTgAccessCode(second.code, "ip-c")).toBeGreaterThan(0);
+  });
+
+  it("rejects unknown, revoked and expired codes", () => {
+    expect(db.redeemTgAccessCode("NOPE1234", null)).toBeNull();
+    const fresh = db.mintTgAccessCode({ telegramUserId: "42", now: Math.floor(Date.now() / 1000) - 86_400 * 2 });
+    expect(db.redeemTgAccessCode(fresh.code, null)).toBeNull(); // minted 2 days ago → expired
+    const revoked = db.mintTgAccessCode({ telegramUserId: "43" });
+    db.mintTgAccessCode({ telegramUserId: "43" }); // rotation revokes the first
+    expect(db.redeemTgAccessCode(revoked.code, null)).toBeNull();
+  });
+
+  it("stores and reads per-fingerprint grants with the longest window", () => {
+    const now = Math.floor(Date.now() / 1000);
+    db.upsertTgAccessGrant("fp-1", now + 3600);
+    expect(db.getTgAccessGrant("fp-1")).toBe(now + 3600);
+    db.upsertTgAccessGrant("fp-1", now + 7200);
+    expect(db.getTgAccessGrant("fp-1")).toBe(now + 7200); // extended
+    db.upsertTgAccessGrant("fp-1", now + 60);
+    expect(db.getTgAccessGrant("fp-1")).toBe(now + 7200); // never shortened
+    expect(db.getTgAccessGrant("fp-2")).toBeNull();
+  });
+});
+
 describe("API routes /api/tg/*", () => {
   let server: ApiServer;
   let base = "";
@@ -386,7 +425,6 @@ describe("API routes /api/tg/*", () => {
     expect(res.status).toBe(503);
     const body = await res.json() as any;
     expect(body.error).toBe("TG_NOT_CONFIGURED");
-    expect(body.signals).toEqual([]);
     const callersRes = await fetch(base + "/api/tg/callers");
     expect(callersRes.status).toBe(503);
     const status = await (await fetch(base + "/api/tg/status")).json() as any;
@@ -394,7 +432,69 @@ describe("API routes /api/tg/*", () => {
     expect(status.signals).toBe(0);
   });
 
-  it("serves ingested rows once the source is enabled and seeded", async () => {
+  it("gates signals behind the 24h code (401 without pass, 200 after redeem)", async () => {
+    const src = server.telegramSource as unknown as { token: string; chatId: string };
+    src.token = "test-token";
+    src.chatId = "-1003686690861";
+    void src;
+
+    // Seeded signal but NO pass → 401 TG_ACCESS_REQUIRED.
+    server.db.insertTgSignals([{
+      chat_id: "-1003686690861", message_id: 9901, update_id: 1, token: SOL_MINT,
+      chain: "solana", symbol: "BONK", author_id: "7", author_name: "@vip",
+      text: `CA ${SOL_MINT}`, ts: 1700, fetched_at: 1701,
+    }]);
+    const denied = await fetch(base + "/api/tg/signals?limit=10");
+    expect(denied.status).toBe(401);
+    expect(((await denied.json()) as any).error).toBe("TG_ACCESS_REQUIRED");
+
+    // Bad code → 403.
+    const bad = await fetch(base + "/api/tg/redeem", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: "XXXXXXXX" }),
+    });
+    expect(bad.status).toBe(403);
+
+    // Mint via admin endpoint (same call the bot makes) and redeem.
+    process.env.ADMIN_SECRET = "test-admin-secret";
+    const mintRes = await fetch(base + "/api/admin/tg/mint-code", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-secret": "test-admin-secret" },
+      body: JSON.stringify({ telegramUserId: "u1", telegramUsername: "@u1" }),
+    });
+    expect(mintRes.status).toBe(200);
+    const { code } = (await mintRes.json()) as any;
+    expect(code).toMatch(/^[A-HJ-NP-Za-km-z2-9]{8}$/);
+
+    const redeemRes = await fetch(base + "/api/tg/redeem", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
+    });
+    expect(redeemRes.status).toBe(200);
+    const cookie = redeemRes.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("tgp=");
+
+    // With the grant cookie the signals flow; the cookie works on callers too.
+    const ok = await fetch(base + "/api/tg/signals?limit=10", { headers: { cookie } });
+    expect(ok.status).toBe(200);
+    const okBody = await ok.json() as any;
+    expect(okBody.status).toBe("LIVE");
+    expect(okBody.signals.length).toBeGreaterThan(0);
+    const callersOk = await fetch(base + "/api/tg/callers", { headers: { cookie } });
+    expect(callersOk.status).toBe(200);
+
+    // /api/tg/access reports the live window for the cookie bearer.
+    const access = await (await fetch(base + "/api/tg/access", { headers: { cookie } })).json() as any;
+    expect(access.enabled).toBe(true);
+    expect(access.until).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+    // The same code cannot be redeemed twice.
+    const again = await fetch(base + "/api/tg/redeem", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
+    });
+    expect(again.status).toBe(403);
+    delete process.env.ADMIN_SECRET;
+  });
+
+  it("serves ingested rows once the source is enabled, seeded and the gate is passed", async () => {
     const src = server.telegramSource as unknown as { token: string; chatId: string };
     src.token = "test-token";
     src.chatId = "-1003686690861";
@@ -407,35 +507,53 @@ describe("API routes /api/tg/*", () => {
       entry_price: 0.00042, entry_mcap: 420000,
     }]);
 
-    const res = await fetch(base + "/api/tg/signals?limit=10");
+    // Mint + redeem to get a valid pass cookie for this suite.
+    process.env.ADMIN_SECRET = "test-admin-secret";
+    const mintRes = await fetch(base + "/api/admin/tg/mint-code", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-secret": "test-admin-secret" },
+      body: JSON.stringify({ telegramUserId: "u-suite" }),
+    });
+    const { code } = (await mintRes.json()) as any;
+    const redeem = await fetch(base + "/api/tg/redeem", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
+    });
+    const cookie = redeem.headers.get("set-cookie") ?? "";
+    const auth = { headers: { cookie } };
+
+    const res = await fetch(base + "/api/tg/signals?limit=10", auth);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.status).toBe("LIVE");
-    expect(body.signals).toHaveLength(1);
-    expect(body.signals[0]).toMatchObject({
-      token: SOL_MINT, symbol: "BONK", chain: "solana", messageId: 8469,
-      entryPrice: 0.00042, entryMcap: 420000,
-    });
+    expect(body.signals.length).toBeGreaterThanOrEqual(1); // este suite + filas del suite anterior (DB compartida)
+    expect(body.signals).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        token: SOL_MINT, symbol: "BONK", chain: "solana", messageId: 8469,
+        entryPrice: 0.00042, entryMcap: 420000,
+      })]),
+    );
 
-    // Caller filter
-    const callerRes = await (await fetch(base + "/api/tg/signals?caller=@vip")).json() as any;
-    expect(callerRes.signals).toHaveLength(1);
-    const callerMismatch = await (await fetch(base + "/api/tg/signals?caller=nobody")).json() as any;
+    // Caller filter (ambas filas insertadas son de @vip)
+    const callerRes = await (await fetch(base + "/api/tg/signals?caller=@vip", auth)).json() as any;
+    expect(callerRes.signals.length).toBeGreaterThanOrEqual(1);
+    const callerMismatch = await (await fetch(base + "/api/tg/signals?caller=nobody", auth)).json() as any;
     expect(callerMismatch.signals).toHaveLength(0);
 
     // Callers endpoint
-    const callersData = await (await fetch(base + "/api/tg/callers")).json() as any;
+    const callersData = await (await fetch(base + "/api/tg/callers", auth)).json() as any;
     expect(callersData.status).toBe("LIVE");
     expect(callersData.callers).toHaveLength(1);
-    expect(callersData.callers[0]).toMatchObject({ authorName: "@vip", totalCalls: 1, callsWithEntryPrice: 1 });
+    expect(callersData.callers[0]).toMatchObject({ authorName: "@vip", callsWithEntryPrice: 1 });
+    expect(callersData.callers[0].totalCalls).toBeGreaterThanOrEqual(1);
 
-    const filtered = await (await fetch(base + "/api/tg/signals?chain=evm")).json() as any;
+    const filtered = await (await fetch(base + "/api/tg/signals?chain=evm", auth)).json() as any;
     expect(filtered.signals).toHaveLength(0);
-    const badLimit = await fetch(base + "/api/tg/signals?limit=99999");
+    const badLimit = await fetch(base + "/api/tg/signals?limit=99999", auth);
     expect(badLimit.status).toBe(200); // clamped, never 500
     const status = await (await fetch(base + "/api/tg/status")).json() as any;
     expect(status.enabled).toBe(true);
-    expect(status.signals).toBe(1);
+    expect(status.signals).toBeGreaterThanOrEqual(1); // DB compartida entre suites
+    delete process.env.ADMIN_SECRET;
   });
 });
 

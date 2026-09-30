@@ -20,6 +20,7 @@ async function loadTrading(api: any = {}, globals: Record<string, unknown> = {},
     "./dexfeed.js": { DexFeed: dex },
     "./chart-tools.js": { ChartTools: class {} },
     "./pool-activity.js": { PoolActivity: class {} },
+    "./overlays.js": { TokenOverlaysEngine: { setToken: () => {}, stop: () => {}, renderLegend: () => {} } },
     "./public-market.js": { publicPoolData: async () => { throw Error("offline"); } },
   };
   await module.link(async (specifier) => {

@@ -15,6 +15,7 @@
 import { ApiClient } from "./api.js";
 import { DexFeed } from "./dexfeed.js?v=20260928-6";
 import { publicPoolData } from "./public-market.js?v=20260929-7";
+import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20260930-3";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -246,7 +247,7 @@ async function fetchAvatar(authorId) {
   if (_avatarCache.has(authorId)) return _avatarCache.get(authorId);
   _avatarCache.set(authorId, null); // optimistic null para evitar dobles llamadas
   try {
-    const res = await ApiClient.request(`/api/tg/avatar/${encodeURIComponent(authorId)}`);
+    const res = await ApiClient.request(`/api/tg/avatar/${encodeURIComponent(authorId)}`, { headers: gateHeaders() });
     const url = res.url ?? null;
     _avatarCache.set(authorId, url);
     return url;
@@ -266,6 +267,77 @@ const TIME_FILTERS = [
   { key: "30d",  label: "30d",     since: 2_592_000 },
 ];
 
+// ─── Gate de acceso: código de 24h de la Academia Elite ────────────────────
+
+// Código de un solo uso minteado por el bot (/code en DM). Al canjearlo, el
+// backend concede 24h de lectura de /api/tg/* (cookie httpOnly + grant por
+// fingerprint). El estado del gate se recuerda en localStorage para pintar la
+// pantalla correcta al volver.
+// El estado del pase (gate 24h) vive en ./gate-state.js — importado arriba para
+// compartirlo con los overlays del terminal.
+
+/**
+ * Pantalla de bloqueo de la pestaña 📡 Señales TG.
+ * Explica el acceso: la membresía se consigue en la Academia de Código Elite
+ * (Whop). Los miembros piden su código temporal al bot con /code y lo canjean
+ * aquí — 24h de acceso por código, un solo uso.
+ */
+function renderGateScreen(root, opts = {}) {
+  const notice = opts.notice
+    ? `<div class="tg-gate-notice" role="status">${esc(opts.notice)}</div>` : "";
+  root.innerHTML = `
+    <div class="tg-gate glass-panel-interactive">
+      <div class="tg-gate-icon" aria-hidden="true">🔐</div>
+      <h2 class="tg-gate-title">Señales TG · Acceso Elite</h2>
+      <p class="tg-gate-lede">
+        Esta pestaña es privada: aquí se publican las llamadas del canal.
+        El acceso entra con la membresía de la
+        <b>Academia de Código Elite</b>.
+      </p>
+      <ol class="tg-gate-steps">
+        <li>Únete a la Academia Elite (acceso al canal VIP de llamadas).</li>
+        <li>Habla con el bot en Telegram: <code>/code</code> — te responderá por DM con tu código personal.</li>
+        <li>Pega el código aquí. Funciona <b>24 horas</b> desde que lo usas.</li>
+      </ol>
+      <form class="tg-gate-form" id="tgGateForm">
+        <input id="tgGateCode" class="tg-gate-input" type="text" inputmode="text" autocomplete="off"
+          placeholder="Pega tu código (ej. K7m2Qx9P)" maxlength="16" required aria-label="Código de acceso">
+        <button type="submit" class="btn btn-primary tg-gate-submit">Desbloquear 24h</button>
+      </form>
+      <div id="tgGateMsg" class="tg-gate-msg" aria-live="polite"></div>
+      ${notice}
+      <div class="tg-gate-cta">
+        <span>¿Aún no estás dentro? Únete al alpha:</span>
+        <a class="btn btn-primary tg-gate-whop" href="https://whop.com/checkout/plan_bqfdlqSaIzb7B" target="_blank" rel="noopener noreferrer">🌟 Únete al Alpha — Whop</a>
+      </div>
+      <p class="tg-gate-foot">Códigos de un solo uso · caducan a las 24h · se piden de nuevo con <code>/code</code></p>
+    </div>`;
+
+  const form = root.querySelector("#tgGateForm");
+  const input = root.querySelector("#tgGateCode");
+  const msg = root.querySelector("#tgGateMsg");
+  form?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (!msg || !input) return;
+    const code = String(input.value ?? "").trim();
+    if (!code) return;
+    msg.textContent = "⏳ Validando código…";
+    msg.classList.remove("err");
+    try {
+      const res = await ApiClient.request("/api/tg/redeem", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      });
+      gateSetState(res?.until ?? null, res?.pass ?? null);
+      msg.textContent = `✅ Acceso concedido — ${res?.hours ?? 24}h. Cargando señales…`;
+      setTimeout(() => TgSignalsEngine.load(), 900);
+    } catch (err) {
+      msg.textContent = `❌ ${err?.message ?? "No se pudo validar el código"}`;
+      msg.classList.add("err");
+    }
+  });
+}
+
 // ─── Motor principal ─────────────────────────────────────────────────────────
 export const TgSignalsEngine = {
   chain: "",
@@ -283,6 +355,40 @@ export const TgSignalsEngine = {
   async load() {
     const root = document.getElementById("view-tg");
     if (!root) return;
+
+    // ── Gate 24h: comprobar el pase antes de pedir señales ──
+    // Fuente de verdad = backend (/api/tg/access). localStorage solo evita
+    // un round-trip cuando ya sabemos que caducó.
+    const cached = gateStorage();
+    if (cached?.until && Date.now() >= cached.until) gateSetState(null);
+    try {
+      const access = await ApiClient.request("/api/tg/access", { headers: gateHeaders() });
+      if (!access?.enabled) {
+        root.innerHTML = `
+          <div class="glass-panel-interactive" style="padding:20px; text-align:center">
+            <div style="font-size:30px; margin-bottom:8px">📡</div>
+            <b>Fuente de Telegram sin configurar</b>
+            <p style="font-size:12px; color:var(--text-tertiary); max-width:520px; margin:8px auto 0">
+              El servidor aún no tiene la credencial del bot (TG_BOT_TOKEN). Sin fuente no hay llamadas.
+            </p>
+          </div>`;
+        return;
+      }
+      if (!access?.until) {
+        gateSetState(null);
+        renderGateScreen(root, { notice: cached?.until ? "Tu acceso de 24h caducó. Pide un código nuevo al bot con /code." : "" });
+        return;
+      }
+      gateSetState(access.until);
+    } catch {
+      // API caída: si el cache local dice que hay pase vigente, seguimos (la
+      // petición de señales lo confirmará); si no, mostramos el gate.
+      if (!cached?.until || Date.now() >= cached.until) {
+        renderGateScreen(root, { notice: "No se pudo verificar tu acceso. Reintenta en unos segundos." });
+        return;
+      }
+    }
+
     if (!root.querySelector(".tg-toolbar")) {
       root.innerHTML = `<div class="tg-loading"><div class="tg-loading-ring"></div><div class="tg-loading-text">📡 Cargando llamadas del canal…</div></div>`;
     } else {
@@ -304,8 +410,8 @@ export const TgSignalsEngine = {
     const withTimeout = (promise, ms, fallback) =>
       Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
     const [signalsData, callersData] = await Promise.all([
-      withTimeout(ApiClient.request(signalsUrl).catch((err) => ({ __error: err })), 20000, { __error: new Error("timeout") }),
-      withTimeout(ApiClient.request("/api/tg/callers?limit=30").catch(() => ({})), 20000, {}),
+      withTimeout(ApiClient.request(signalsUrl, { headers: gateHeaders() }).catch((err) => ({ __error: err })), 20000, { __error: new Error("timeout") }),
+      withTimeout(ApiClient.request("/api/tg/callers?limit=30", { headers: gateHeaders() }).catch(() => ({})), 20000, {}),
     ]);
     if (Array.isArray(callersData?.callers)) this.callers = callersData.callers;
 
@@ -349,6 +455,12 @@ export const TgSignalsEngine = {
     if (signalsData?.__error) {
       const err = signalsData.__error;
       const notConfigured = /TG_NOT_CONFIGURED|not configured/i.test(String(err?.message ?? err));
+      // Pase ausente o caducado (p. ej. tras las 24h): volver al gate.
+      if (/TG_ACCESS_REQUIRED/i.test(String(err?.message ?? err))) {
+        gateSetState(null);
+        renderGateScreen(root, { notice: "Tu acceso de 24h no está activo. Pide un código nuevo al bot con /code." });
+        return;
+      }
       root.innerHTML = wrap(`
         <div class="glass-panel-interactive" style="padding:20px; text-align:center">
           <div style="font-size:30px; margin-bottom:8px">📡</div>

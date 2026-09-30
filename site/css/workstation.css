@@ -28,7 +28,70 @@ body:has(#view-trade:not([style*="display: none"])) {
 .token-terminal #orderAmountInput { min-height: 64px; font-size: 26px !important; background: #252232; }
 .token-terminal .pool-activity { margin-top: 12px; }
 .token-terminal .terminal-navigation button { min-height: 32px; padding: 5px 10px; }
+
+/* Trenches Mobile 3-Column Navigation: Nueva / Completando / Graduada */
+.trenches-mobile-nav { display: none; }
 @media (max-width: 1050px) {
+  .trenches-mobile-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding: 4px;
+    background: #17171d;
+    border: 1px solid #303039;
+    border-radius: 8px;
+    position: sticky;
+    top: 50px;
+    z-index: 15;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .trenches-mobile-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 6px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .trenches-mobile-tab:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .trenches-mobile-tab.active[data-col="new"] {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.35);
+  }
+  .trenches-mobile-tab.active[data-col="soon"] {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+  }
+  .trenches-mobile-tab.active[data-col="migrated"] {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.35);
+  }
+  .t-mob-icon { font-size: 12px; }
+  .t-mob-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    font-family: var(--font-mono, monospace);
+    font-weight: 700;
+  }
   #view-trade .trenches-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
   #view-trade .catalog-column { flex: 0 0 min(420px, 88vw); scroll-snap-align: start; }
   #view-trade .catalog-note { display: none; }

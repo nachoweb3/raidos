@@ -8,6 +8,7 @@ import { PriceWatcher } from "./price.js";
 import { AiEngine, chainContextFor } from "./ai.js";
 import { SmartReplies } from "./replies.js";
 import { AdminPanel } from "./admin.js";
+import { AccessCodeClient, MintRateLimiter } from "./access.js";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) {
@@ -87,6 +88,7 @@ bot.command("start", (ctx) => {
       "$SAUR is the dinosaur-powered Inu meme. Early is a strategy.",
       "",
       "Commands:",
+      "/code — 📡 Signals access code (Academy members · DM)",
       "/saur — what is $SAUR",
       "/price — live on-chain stats",
       "/ath — session all-time high",
@@ -103,6 +105,7 @@ bot.command("start", (ctx) => {
       "/lore — the origin story",
       "/roadmap — what's next",
       "/ai — ask the local AI anything about $SAUR",
+      "/code — access code for the Elite Signals tab (members, DM only)",
     ].join("\n")
   );
 });
@@ -225,6 +228,75 @@ bot.command("website", (ctx) => {
 bot.command("twitter", (ctx) => {
   db.trackCommand("/twitter", ctx.from?.id);
   return ctx.reply(`🐦 Follow the official account: ${LINKS.twitter}`);
+});
+
+// ── 🔐 /code — pase de 24h para la pestaña Señales TG de la web ──────────
+
+const accessCodes = new AccessCodeClient({
+  apiBase: process.env.TRENCHES_API_BASE ?? "https://raidos-api.fly.dev",
+  adminSecret: process.env.ADMIN_SECRET ?? "",
+});
+const mintLimiter = new MintRateLimiter(60_000);
+
+bot.command("code", async (ctx) => {
+  db.trackCommand("/code", ctx.from?.id);
+  if (!ctx.from) return;
+  if (!accessCodes.configured) {
+    return ctx.reply("🔐 Access codes are not configured yet. Ask an admin.");
+  }
+  // Anti-spam: un /code por minuto por usuario.
+  if (!mintLimiter.allow(String(ctx.from.id))) {
+    return ctx.reply("⏳ Ya pediste un código hace poco. Reintenta en un minuto.");
+  }
+  // Solo DM: en grupo se polluciona y el código quedaría expuesto.
+  if (ctx.chat.type !== "private") {
+    const me = await ctx.api.getMe();
+    return ctx.reply(`🔐 Escríbeme por DM para darte tu código: t.me/${me.username}?start=code`);
+  }
+  // Verificación de membresía: hay que estar en el grupo oficial.
+  const gid = config.get().groupId;
+  if (!gid) {
+    return ctx.reply("⚙️ Grupo de miembros no configurado (GROUP_ID). Avisa a un admin.");
+  }
+  try {
+    const member = await ctx.api.getChatMember(gid, ctx.from.id);
+    const status = member.status;
+    if (status === "left" || status === "kicked") {
+      return ctx.reply(
+        `🚫 Este código es para miembros de la Academia Elite.\nÚnete al grupo y vuelve: ${LINKS.website || ""}`
+      );
+    }
+  } catch {
+    return ctx.reply("⚠️ No pude verificar tu membresía ahora mismo. Reintenta en un minuto.");
+  }
+  // Minta vía la API de TRENCHES (rota el código anterior del usuario).
+  await ctx.api.sendChatAction(ctx.chat.id, "typing").catch(() => {});
+  try {
+    const minted = await accessCodes.mint(
+      String(ctx.from.id),
+      ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name ?? "",
+      String(gid),
+    );
+    const exp = new Date(minted.expiresAt * 1000);
+    return ctx.reply(
+      [
+        "🔐 TU CÓDIGO DE ACCESO — Señales TG (24h)",
+        "",
+        `<code>${minted.code}</code>`,
+        "",
+        "Cómo usarlo:",
+        `1. Entra en ${LINKS.website} → pestaña 📡 Señales TG`,
+        "2. Pega el código en el formulario y pulsa «Desbloquear 24h»",
+        "3. El acceso dura 24 horas desde que lo canjeas",
+        "",
+        "⚠️ Un solo uso. Si lo gastas o caduca, vuelve y pide otro con /code.",
+        `⏱️ Este código caduca sin usar el: ${exp.toUTCString()}`,
+      ].join("\n")
+    );
+  } catch (err) {
+    console.error("/code mint failed:", err instanceof Error ? err.message : err);
+    return ctx.reply("❌ No se pudo generar tu código ahora mismo. Reintenta en unos minutos.");
+  }
 });
 
 bot.command("community", (ctx) => {

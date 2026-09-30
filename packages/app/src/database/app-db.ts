@@ -9,6 +9,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateApiKey } from "../api/auth.js";
 import { summarizeSettledTrades } from "../trading/pnl.js";
+import { applySwapToWalletPosition, type WalletPositionState, type WalletPositionMilestone } from "../trading/wallet-positions.js";
 import { MarketCatalog } from "../market/catalog.js";
 
 /** Lifecycle states of a delivered copy signal. `all` is a query-only filter. */
@@ -664,6 +665,121 @@ export class AppDb {
       if (!has) this.db.exec(`ALTER TABLE tg_signals ADD COLUMN ${col} ${decl}`);
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tg_signals_author ON tg_signals(author_name, ts DESC);");
+
+    // ── TG Signals access codes ──
+    // Time-boxed codes minted by the bot (/code) for verified group members.
+    // The web gate redeems them for 24h of read access to /api/tg/*.
+    // Rotation keeps history: a fresh mint marks the previous rows revoked,
+    // so a member effectively holds one live code at a time.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tg_access_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        telegram_user_id TEXT NOT NULL,
+        telegram_username TEXT NOT NULL DEFAULT '',
+        chat_id TEXT NOT NULL DEFAULT '',
+        minted_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        redeemed_at INTEGER DEFAULT NULL,
+        redeemed_ip TEXT DEFAULT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_tg_access_codes_user ON tg_access_codes(telegram_user_id);
+      CREATE INDEX IF NOT EXISTS idx_tg_access_codes_expires ON tg_access_codes(expires_at);
+    `);
+    // Grants: 24h windows per visitor fingerprint (redeemed codes attach here).
+    // The fingerprint is a salted hash — no raw IPs are ever stored.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tg_access_grants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fingerprint TEXT NOT NULL UNIQUE,
+        until INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    // ── Wallet Ingestion (Position Engine V2) ──
+    // tracked_wallets: on-chain wallets worth watching (smart money, whales,
+    // deployers, KOLs). priority 1 = polled first; the poller spends its
+    // per-pass budget top-down so the best wallets refresh most often.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tracked_wallets (
+        chain TEXT NOT NULL,
+        address TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'watch' CHECK(category IN ('smart','whale','dev','kol','internal','watch')),
+        priority INTEGER NOT NULL DEFAULT 5,
+        added_by INTEGER,
+        added_at INTEGER NOT NULL,
+        last_polled_at INTEGER,
+        active INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (chain, address)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tracked_wallets_due ON tracked_wallets(active, last_polled_at);
+    `);
+    // onchain_swaps: observed buy/sell events of tracked wallets. Dedupe by
+    // signature (one row per tx); the token leg is the non-quote side of the
+    // swap relative to the tracked wallet. No PnL invented here — this is the
+    // raw observation layer that positions/aggregators build on later.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS onchain_swaps (
+        signature TEXT PRIMARY KEY,
+        chain TEXT NOT NULL,
+        token TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        side TEXT NOT NULL CHECK(side IN ('buy','sell')),
+        amount_token TEXT NOT NULL DEFAULT '0',
+        amount_usd REAL,
+        price_usd REAL,
+        ts INTEGER NOT NULL,
+        source TEXT NOT NULL DEFAULT 'helius',
+        ingested_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_onchain_swaps_wallet ON onchain_swaps(wallet, ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_onchain_swaps_token ON onchain_swaps(chain, token, ts DESC);
+    `);
+    // wallet_positions: Position Engine V2 mirror of `positions` keyed by the
+    // external WALLET (not user_id). Rebuilt deterministically from
+    // onchain_swaps by rebuildWalletPositions — never hand-edited, so it can
+    // always be dropped and recomputed. USD metrics are NULL when the
+    // provider did not observe prices (honesty rule: no interpolation).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_positions (
+        wallet TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        token TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+        amount_remaining TEXT NOT NULL DEFAULT '0',
+        total_bought TEXT NOT NULL DEFAULT '0',
+        total_sold TEXT NOT NULL DEFAULT '0',
+        avg_entry_usd REAL,
+        net_invested_usd REAL,
+        realized_pnl_usd REAL,
+        max_multiple REAL,
+        opened_at INTEGER NOT NULL,
+        closed_at INTEGER,
+        last_swap_ts INTEGER NOT NULL,
+        PRIMARY KEY (wallet, chain, token)
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_positions_token ON wallet_positions(chain, token, status);
+    `);
+    // Milestones are emitted-once events: signature-keyed idempotency so a
+    // rebuild never duplicates POSITION_2X/5X/10X in the feed.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_position_milestones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signature TEXT NOT NULL UNIQUE,
+        wallet TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        token TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('POSITION_2X','POSITION_5X','POSITION_10X')),
+        multiple REAL NOT NULL,
+        ts INTEGER NOT NULL,
+        emitted INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_wpm_token ON wallet_position_milestones(chain, token, ts DESC);
+    `);
   }
 
   // ── User / auth methods ─────────────────────────────────────────────
@@ -2190,5 +2306,320 @@ export class AppDb {
   setTgOffset(value: number): void {
     if (!Number.isFinite(value) || value <= 0) return;
     this.setAppSetting("tg_poll_offset", String(Math.floor(value)));
+  }
+
+  // ── TG Signals access codes (24h gate) ──────────────────────────────
+
+  /**
+   * Mint (or rotate) the access code of a verified Telegram member.
+   * The previous code of the same user is revoked — a member always has
+   * exactly one live code. Uniqueness of the 8-char alphanumeric space is
+   * asserted with retries; a collision is astronomically unlikely (62^8).
+   */
+  mintTgAccessCode(input: {
+    telegramUserId: string;
+    telegramUsername?: string;
+    chatId?: string;
+    ttlSeconds?: number;
+    now?: number;
+  }): { code: string; expiresAt: number } {
+    const now = Math.floor(input.now ?? Date.now() / 1000);
+    const ttl = Math.floor(input.ttlSeconds ?? 86_400);
+    const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"; // sin 0/O/1/l/I
+    const mk = () =>
+      Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+    // Rotate: previous codes of this user are revoked (one live code per member).
+    this.db.prepare("UPDATE tg_access_codes SET revoked = 1 WHERE telegram_user_id = ? AND revoked = 0").run(input.telegramUserId);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = mk();
+      const expiresAt = now + ttl;
+      try {
+        this.db.prepare(
+          `INSERT INTO tg_access_codes(code, telegram_user_id, telegram_username, chat_id, minted_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(code, input.telegramUserId, input.telegramUsername ?? "", input.chatId ?? "", now, expiresAt);
+        return { code, expiresAt };
+      } catch {
+        // UNIQUE collision on code → retry with a fresh code.
+      }
+    }
+    throw new Error("could not mint access code after retries");
+  }
+
+  /** Latest code row for a Telegram user (any state). */
+  getTgAccessCodeByUser(telegramUserId: string) {
+    return this.db.prepare(
+      "SELECT * FROM tg_access_codes WHERE telegram_user_id = ? ORDER BY id DESC LIMIT 1"
+    ).get(telegramUserId) as any;
+  }
+
+  /**
+   * Redeem a code exactly once for 24h of access. Returns the window end
+   * (unix seconds) or null when the code is unknown/expired/revoked/used.
+   */
+  redeemTgAccessCode(code: string, ip: string | null, ttlSeconds = 86_400, now = Math.floor(Date.now() / 1000)): number | null {
+    const clean = String(code ?? "").trim();
+    if (!clean) return null;
+    const row = this.db.prepare("SELECT * FROM tg_access_codes WHERE code = ?").get(clean) as any;
+    if (!row) return null;
+    if (row.revoked) return null;
+    if (row.redeemed_at != null) return null; // single use — every member mints their own
+    if (now > Number(row.expires_at)) return null; // expired: ask the bot for a fresh one
+    const until = now + ttlSeconds;
+    this.db.prepare(
+      "UPDATE tg_access_codes SET redeemed_at = ?, redeemed_ip = ? WHERE id = ? AND redeemed_at IS NULL"
+    ).run(now, ip, row.id);
+    return until;
+  }
+
+  /** Live grant for a visitor fingerprint (session continuity across reloads). */
+  getTgAccessGrant(fingerprint: string): number | null {
+    const row = this.db.prepare(
+      "SELECT until FROM tg_access_grants WHERE fingerprint = ? AND until > ?"
+    ).get(fingerprint, Math.floor(Date.now() / 1000)) as any;
+    return row ? Number(row.until) : null;
+  }
+
+  /** Create/extend the access window for a visitor fingerprint (keeps the longest window). */
+  upsertTgAccessGrant(fingerprint: string, until: number): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare(
+      `INSERT INTO tg_access_grants(fingerprint, until, created_at, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(fingerprint) DO UPDATE SET until = MAX(until, excluded.until), updated_at = excluded.updated_at`
+    ).run(fingerprint, Math.floor(until), now, now);
+  }
+
+  /** Housekeeping: drop expired codes and grants. Safe to run periodically. */
+  purgeTgAccess(): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare("DELETE FROM tg_access_codes WHERE expires_at < ? - 7 * 86400").run(now); // conservar 7d para auditoría
+    this.db.prepare("DELETE FROM tg_access_grants WHERE until < ?").run(now);
+  }
+
+  // ── Wallet Ingestion (tracked wallets + observed on-chain swaps) ─────
+
+  /** Insert or update a tracked wallet (priority/category editable, cursor untouched). */
+  upsertTrackedWallet(input: {
+    chain: string; address: string; label?: string; category?: string;
+    priority?: number; addedBy?: number | null;
+  }): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare(
+      `INSERT INTO tracked_wallets(chain, address, label, category, priority, added_by, added_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(chain, address) DO UPDATE SET
+         label = excluded.label, category = excluded.category, priority = excluded.priority`
+    ).run(
+      input.chain, input.address, input.label ?? "", input.category ?? "watch",
+      input.priority ?? 5, input.addedBy ?? null, now,
+    );
+  }
+
+  removeTrackedWallet(chain: string, address: string): boolean {
+    const info = this.db.prepare("DELETE FROM tracked_wallets WHERE chain = ? AND address = ?").run(chain, address);
+    return Number(info.changes) > 0;
+  }
+
+  listTrackedWallets(opts: { chain?: string; activeOnly?: boolean; limit?: number } = {}): any[] {
+    const clauses: string[] = [];
+    const values: unknown[] = [];
+    if (opts.chain) { clauses.push("chain = ?"); values.push(opts.chain); }
+    if (opts.activeOnly !== false) clauses.push("active = 1");
+    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+    values.push(Math.min(Math.max(opts.limit ?? 200, 1), 1000));
+    return this.db.prepare(
+      `SELECT * FROM tracked_wallets ${where} ORDER BY priority ASC, added_at DESC LIMIT ?`
+    ).all(...values) as any[];
+  }
+
+  /** Wallets whose poll cursor is older than minIntervalSec — the poller's work list. */
+  walletsDueForPoll(now: number, minIntervalSec: number, limit: number): any[] {
+    return this.db.prepare(
+      `SELECT * FROM tracked_wallets
+       WHERE active = 1 AND (last_polled_at IS NULL OR last_polled_at <= ?)
+       ORDER BY (last_polled_at IS NULL) DESC, priority ASC, last_polled_at ASC
+       LIMIT ?`
+    ).all(now - minIntervalSec, Math.min(Math.max(limit, 1), 100)) as any[];
+  }
+
+  /** Advance a wallet's poll cursor (called after each fetch attempt, ok or not). */
+  touchWalletPolled(chain: string, address: string, now: number): void {
+    this.db.prepare("UPDATE tracked_wallets SET last_polled_at = ? WHERE chain = ? AND address = ?")
+      .run(now, chain, address);
+  }
+
+  /** Dedupe by signature; returns how many rows were actually new. */
+  insertOnchainSwaps(rows: Array<{
+    signature: string; chain: string; token: string; wallet: string; side: "buy" | "sell";
+    amountToken?: string; amountUsd?: number | null; priceUsd?: number | null;
+    ts: number; source?: string;
+  }>): number {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO onchain_swaps(signature, chain, token, wallet, side, amount_token, amount_usd, price_usd, ts, source, ingested_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    let inserted = 0;
+    const tx = this.db.transaction((batch: typeof rows) => {
+      for (const r of batch) {
+        const info = stmt.run(
+          r.signature, r.chain, r.token, r.wallet, r.side,
+          r.amountToken ?? "0", r.amountUsd ?? null, r.priceUsd ?? null,
+          Math.floor(r.ts), r.source ?? "helius", now,
+        );
+        inserted += Number(info.changes);
+      }
+    });
+    tx(rows);
+    return inserted;
+  }
+
+  /** Observed swaps of one token, newest first, with wallet labels attached. */
+  listOnchainSwapsByToken(chain: string, token: string, opts: { limit?: number; since?: number } = {}): any[] {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const since = opts.since && opts.since > 0 ? opts.since : 0;
+    return this.db.prepare(
+      `SELECT s.signature, s.chain, s.token, s.wallet, s.side, s.amount_token AS amountToken,
+              s.amount_usd AS amountUsd, s.price_usd AS priceUsd, s.ts, s.source,
+              tw.category AS walletCategory, tw.label AS walletLabel
+       FROM onchain_swaps s
+       LEFT JOIN tracked_wallets tw ON tw.chain = s.chain AND tw.address = s.wallet
+       WHERE s.chain = ? AND s.token = ? AND s.ts >= ?
+       ORDER BY s.ts DESC LIMIT ?`
+    ).all(chain, token, since, limit) as any[];
+  }
+
+  /** Housekeeping: drop observations older than the retention window. */
+  purgeOnchainSwaps(keepSeconds: number): void {
+    const cutoff = Math.floor(Date.now() / 1000) - keepSeconds;
+    this.db.prepare("DELETE FROM onchain_swaps WHERE ts < ?").run(cutoff);
+  }
+
+  // ── Wallet positions (Position Engine V2: aggregated view of onchain_swaps) ──
+
+  /** Persist one wallet-position state (upsert by wallet+chain+token). */
+  private upsertWalletPosition(p: WalletPositionState): void {
+    this.db.prepare(
+      `INSERT INTO wallet_positions(wallet, chain, token, status, amount_remaining, total_bought,
+         total_sold, avg_entry_usd, net_invested_usd, realized_pnl_usd, max_multiple,
+         opened_at, closed_at, last_swap_ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(wallet, chain, token) DO UPDATE SET
+         status = excluded.status, amount_remaining = excluded.amount_remaining,
+         total_bought = excluded.total_bought, total_sold = excluded.total_sold,
+         avg_entry_usd = excluded.avg_entry_usd, net_invested_usd = excluded.net_invested_usd,
+         realized_pnl_usd = excluded.realized_pnl_usd, max_multiple = excluded.max_multiple,
+         opened_at = excluded.opened_at, closed_at = excluded.closed_at,
+         last_swap_ts = excluded.last_swap_ts`
+    ).run(
+      p.wallet, p.chain, p.token, p.status, p.amount_remaining, p.total_bought, p.total_sold,
+      p.avg_entry_usd, p.net_invested_usd, p.realized_pnl_usd, p.max_multiple,
+      p.opened_at, p.closed_at, p.last_swap_ts,
+    );
+  }
+
+  /** Open/any positions for one token, newest activity first (UI: token workspace). */
+  listWalletPositionsByToken(chain: string, token: string, opts: { openOnly?: boolean; limit?: number } = {}): any[] {
+    const clauses = ["chain = ?", "token = ?"];
+    if (opts.openOnly !== false) clauses.push("status = 'open'");
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    return this.db.prepare(
+      `SELECT * FROM wallet_positions WHERE ${clauses.join(" AND ")} ORDER BY last_swap_ts DESC LIMIT ?`
+    ).all(chain, token, limit) as any[];
+  }
+
+  /** Positions of one wallet across tokens, newest activity first (UI: wallet card). */
+  listWalletPositionsByWallet(wallet: string, opts: { chain?: string; status?: "open" | "closed"; limit?: number } = {}): any[] {
+    const clauses = ["wallet = ?"];
+    const values: unknown[] = [wallet];
+    if (opts.chain) { clauses.push("chain = ?"); values.push(opts.chain); }
+    if (opts.status) { clauses.push("status = ?"); values.push(opts.status); }
+    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+    values.push(limit);
+    return this.db.prepare(
+      `SELECT * FROM wallet_positions WHERE ${clauses.join(" AND ")} ORDER BY last_swap_ts DESC LIMIT ?`
+    ).all(...values) as any[];
+  }
+
+  /** Insert milestones that were never seen before; returns how many are new. */
+  private insertWalletPositionMilestones(ms: WalletPositionMilestone[], key: { wallet: string; chain: string; token: string; signature: string }): number {
+    if (!ms.length) return 0;
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO wallet_position_milestones(signature, wallet, chain, token, kind, multiple, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    let inserted = 0;
+    const tx = this.db.transaction((rows: WalletPositionMilestone[]) => {
+      for (const m of rows) {
+        const info = stmt.run(`${key.signature}:${m.kind}`, key.wallet, key.chain, key.token, m.kind, m.multiple, m.ts);
+        inserted += Number(info.changes);
+      }
+    });
+    tx(ms);
+    return inserted;
+  }
+
+  /** Milestones not yet written to the feed (emitted = 0), oldest first. */
+  listPendingWalletMilestones(limit = 100): any[] {
+    return this.db.prepare(
+      "SELECT * FROM wallet_position_milestones WHERE emitted = 0 ORDER BY ts ASC, id ASC LIMIT ?"
+    ).all(Math.min(Math.max(limit, 1), 500)) as any[];
+  }
+
+  /** Mark milestones as published to the feed (exactly-once). */
+  markWalletMilestonesEmitted(ids: number[]): void {
+    if (!ids.length) return;
+    const stmt = this.db.prepare("UPDATE wallet_position_milestones SET emitted = 1 WHERE id = ?");
+    const tx = this.db.transaction((rowIds: number[]) => {
+      for (const id of rowIds) stmt.run(id);
+    });
+    tx(ids);
+  }
+
+  /** Milestones for one token, newest first (UI: smart-money timeline). */
+  listWalletMilestonesByToken(chain: string, token: string, opts: { limit?: number } = {}): any[] {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    return this.db.prepare(
+      "SELECT * FROM wallet_position_milestones WHERE chain = ? AND token = ? ORDER BY ts DESC, id DESC LIMIT ?"
+    ).all(chain, token, limit) as any[];
+  }
+
+  /**
+   * Rebuild ALL wallet positions deterministically from the observation layer
+   * (onchain_swaps), collecting milestone candidates as it goes. Deterministic
+   * + idempotent: same observations → same positions, milestones deduped by
+   * signature. Unaccountable observations (orphan sells, oversells, zero
+   * amounts, unpriced-basis splits) are skipped, never guessed.
+   */
+  rebuildWalletPositions(): { positions: number; unaccountable: number } {
+    const swaps = this.db.prepare(
+      "SELECT signature, chain, token, wallet, side, amount_token, price_usd, ts FROM onchain_swaps ORDER BY wallet, chain, token, ts ASC, signature ASC"
+    ).all() as any[];
+    type State = WalletPositionState;
+    const states = new Map<string, State>();
+    const milestones: Array<WalletPositionMilestone & { wallet: string; chain: string; token: string; signature: string }> = [];
+    let unaccountable = 0;
+    for (const s of swaps) {
+      const key = `${s.wallet}|${s.chain}|${s.token}`;
+      const input = { side: s.side as "buy" | "sell", amountToken: String(s.amount_token ?? "0"), priceUsd: s.price_usd ?? null, ts: Number(s.ts) };
+      try {
+        const next = applySwapToWalletPosition(states.get(key), input);
+        const { milestones: ms, ...state } = next;
+        // The pure engine only does accounting — the aggregator owns identity
+        // (key of the map) and stamps it on every iteration.
+        states.set(key, { ...state, wallet: s.wallet, chain: s.chain, token: s.token });
+        for (const m of ms) milestones.push({ ...m, wallet: s.wallet, chain: s.chain, token: s.token, signature: s.signature });
+      } catch {
+        unaccountable += 1; // orphan sell / oversell / bad amount — skip, never invent
+      }
+    }
+    const tx = this.db.transaction(() => {
+      for (const p of states.values()) this.upsertWalletPosition(p);
+      for (const m of milestones) {
+        this.insertWalletPositionMilestones([m], { wallet: m.wallet, chain: m.chain, token: m.token, signature: m.signature });
+      }
+    });
+    tx();
+    return { positions: states.size, unaccountable };
   }
 }

@@ -6,6 +6,7 @@ import { TokenMeta } from "./tokens.js";
 import { DexFeed } from "./dexfeed.js?v=20260928-6";
 import { ChartTools } from "./chart-tools.js?v=20260928-6";
 import { PoolActivity } from "./pool-activity.js";
+import { TokenOverlaysEngine } from "./overlays.js?v=20260930-3";
 import { publicPoolData } from "./public-market.js?v=20260928-6";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -378,8 +379,9 @@ export const TradingEngine = {
       wickDownColor: "#ef4444",
     });
 
-    this.chartTools = new ChartTools(this.chart, this.candleSeries, window.LightweightCharts);
-    this.poolActivity = new PoolActivity(this.chartTools);
+    this.chartTools = new ChartTools(this.chart, this.candleSeries, window.LightweightCharts);      this.poolActivity = new PoolActivity(this.chartTools);
+      this.overlays = TokenOverlaysEngine;
+      TokenOverlaysEngine.renderLegend();
     this._chartResizeObserver = new ResizeObserver(() => {
       if (container.clientWidth && container.clientHeight) this.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
     });
@@ -401,7 +403,7 @@ export const TradingEngine = {
     this._chartAbort?.abort();
     this._chartAbort = typeof AbortController !== "undefined" ? new AbortController() : null;
     const options = this._chartAbort ? { signal: this._chartAbort.signal } : {};
-    if (!refresh) { this.setChartData([]); this.poolActivity?.stop(); }
+    if (!refresh) { this.setChartData([]); this.poolActivity?.stop(); this.overlays?.stop(); }
     const label = document.getElementById("chartDataStatus");
     if (label) label.textContent = "Cargando historial real...";
     try {
@@ -443,6 +445,8 @@ export const TradingEngine = {
       if (!refresh) this.chart?.timeScale().fitContent();
       if (reference) this.poolActivity?.stop();
       else this.poolActivity?.mark();
+      if (token) TokenOverlaysEngine.setToken(chain, token);
+      else TokenOverlaysEngine.stop();
       this.lastCandleFetch = result.asOf;
       if (label) label.textContent = `${reference ? "Referencia 30m (sin pool)" : "Pool " + pair.pairAddress + " · " + aggregate + "m"} · ${result.source} · ${result.status === "DEGRADED" ? "Caché · " : ""}${new Date(result.asOf).toLocaleTimeString()}`;
       return data;

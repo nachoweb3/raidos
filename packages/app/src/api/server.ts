@@ -50,10 +50,11 @@ import { applySwapToPosition } from "../trading/positions.js";
 import { RewardsEngine } from "../trading/rewards.js";
 import { BalanceScanner } from "../wallets/balances.js";
 import { BlockscoutHoldersProvider, MockHoldersProvider, pickHoldersProvider, type HoldersProvider } from "../market/holders.js";
+import { HeliusWalletActivityProvider, MockWalletActivityProvider, type WalletActivityProvider } from "../market/wallet-activity.js";
 import { fetchPredictionEvents, fetchPredictionEventCached, PREDICTION_CATEGORIES } from "../market/prediction.js";
 import { TelegramSignalSource, type TelegramSignalCandidate } from "../telegram/source.js";
 import { hashExecutionRequest } from "../trading/lifecycle.js";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual, createHash, createHmac } from "node:crypto";
 import { isUsdc as isChainUsdc, toMicroUsdc } from "../trading/pnl.js";
 import { ExecutionReconciler, RpcReceiptProvider, type ReceiptFill, type ReceiptProvider } from "../trading/reconciler.js";
 
@@ -76,6 +77,8 @@ export interface ServerOptions {
   gmgn?: GmgnService;
   /** Explicit receipt provider injection for isolated integration tests. */
   receiptProvider?: ReceiptProvider;
+  /** Explicit wallet-activity provider injection (wallet ingestion tests). Default: env-keyed Helius or none. */
+  walletActivity?: WalletActivityProvider | null;
   /** Explicit Solana Connection factory for isolated integration tests
    *  (LaunchLab / factory / AMM). Default: SOLANA_RPC_URL or none. */
   solanaConnectionFactory?: () => Connection;
@@ -152,6 +155,7 @@ export class ApiServer {
   /** Read-only Telegram call scraper (disabled without TG_BOT_TOKEN). */
   private readonly telegramSource: TelegramSignalSource;
   private tgTimer: NodeJS.Timeout | null = null;
+  private tgPurgeTimer: NodeJS.Timeout | null = null;
   private tgStopped = false;
 
   /** Bundle + creator analytics (Solana). Null without HELIUS_RPC_URL → endpoint answers 503 honestly. */
@@ -171,6 +175,11 @@ export class ApiServer {
   private readonly siteDir: string | null;
   private readonly bootstrapSecret?: string;
   private readonly holdersProviders: HoldersProvider[];
+  /** Observed on-chain swaps of tracked wallets (null without HELIUS_API_KEY → 503 honest). */
+  private readonly walletActivity: WalletActivityProvider | null;
+  private walletTimer: NodeJS.Timeout | null = null;
+  private walletPurgeTimer: NodeJS.Timeout | null = null;
+  private walletStopped = false;
   private server: http.Server | null = null;
   private readonly port: number;
   private reconcileTimer: NodeJS.Timeout | null = null;
@@ -208,6 +217,20 @@ export class ApiServer {
     // Holders providers: Blockscout (keyless) where available, mock fallback.
     // LIVE_HOLDER_DATA=1 forces live providers even in mock mode (read-only).
     this.holdersProviders = [new BlockscoutHoldersProvider(), new MockHoldersProvider()];
+
+    // Wallet activity (observed swaps of tracked wallets): Helius Enhanced
+    // Transactions with HELIUS_API_KEY/HELIUS_RPC_URL; without it the loop
+    // simply never starts and the endpoint answers 503 honestly. Explicit
+    // injection wins (tests); WALLET_ACTIVITY=off disables the loop.
+    this.walletActivity = options.walletActivity !== undefined
+      ? options.walletActivity
+      : (() => {
+          const key = process.env.HELIUS_API_KEY?.trim()
+            || (/api-key=([A-Za-z0-9_-]+)/.exec(process.env.HELIUS_RPC_URL ?? "")?.[1] ?? "");
+          if (!key) return null;
+          const off = /^(off|0|false)$/i.test(process.env.WALLET_ACTIVITY ?? "");
+          return off ? null : new HeliusWalletActivityProvider(key);
+        })();
 
     this.auth = new AuthService(this.db);
     this.wallets = new WalletManager(this.db);
@@ -384,6 +407,82 @@ export class ApiServer {
         }
       };
       void tgPass();
+      // Housekeeping del gate: códigos/grants caducados fuera cada 6h.
+      this.tgPurgeTimer = setInterval(() => {
+        try { this.db.purgeTgAccess(); } catch { /* nunca fatal */ }
+      }, 6 * 60 * 60_000);
+      this.tgPurgeTimer.unref?.();
+    }
+
+    // Wallet ingestion: budgeted poll of tracked wallets (Position Engine V2).
+    // Top-down by priority, one pass at a time, chained; WALLET_ACTIVITY=off or
+    // no provider → the loop never starts and the endpoint answers 503 honest.
+    if (this.walletActivity) {
+      this.walletStopped = false;
+      const POLL_INTERVAL_MS = 60_000;
+      const MAX_WALLETS_PER_PASS = 10;
+      const MAX_POLLS_PER_PASS = 20; // credit budget: ~20 × 100 = 2k credits/min ≈ 86M/mes cap
+      const WALLET_MIN_INTERVAL_SEC = 5 * 60; // per-wallet poll cursor
+      const walletPass = async (): Promise<void> => {
+        if (this.walletStopped) return;
+        const now = Math.floor(Date.now() / 1000);
+        const due = this.db.walletsDueForPoll(now, WALLET_MIN_INTERVAL_SEC, MAX_WALLETS_PER_PASS)
+          .filter((w) => this.walletActivity!.supportsChain(w.chain))
+          .slice(0, MAX_POLLS_PER_PASS);
+        let insertedTotal = 0;
+        for (const w of due) {
+          try {
+            const result = await this.walletActivity!.getWalletActivity(w.chain, w.address, 20);
+            const inserted = this.db.insertOnchainSwaps(result.swaps.map((s) => ({
+              signature: s.signature, chain: w.chain, token: s.token, wallet: s.wallet,
+              side: s.side, amountToken: s.amountToken, amountUsd: s.amountUsd,
+              priceUsd: s.priceUsd, ts: s.ts, source: s.source,
+            })));
+            insertedTotal += inserted;
+            if (inserted > 0) {
+              console.log(`[wallet-ingest] ${w.label || w.address.slice(0, 8)}: +${inserted} swaps (${w.chain})`);
+            }
+          } catch (err) {
+            console.warn("[wallet-ingest] poll failed:", err instanceof Error ? err.message : "unknown error");
+          } finally {
+            this.db.touchWalletPolled(w.chain, w.address, Math.floor(Date.now() / 1000));
+          }
+        }
+        // Position aggregation runs only when new observations landed. Full
+        // deterministic rebuild from onchain_swaps (bounded by the 30d
+        // retention) — same reasoning as the user-position engine: one writer
+        // loop, WAL-safe, no merge logic to get wrong.
+        if (insertedTotal > 0) {
+          try {
+            const rebuilt = this.db.rebuildWalletPositions();
+            const pending = this.db.listPendingWalletMilestones(100);
+            for (const m of pending) {
+              this.db.addFeedEvent({
+                type: m.kind, actor_id: 0, chain: m.chain, token: m.token, token_symbol: "",
+                payload: { wallet: m.wallet, multiple: m.multiple, source: this.walletActivity?.id ?? null },
+                ts: m.ts,
+              });
+            }
+            this.db.markWalletMilestonesEmitted(pending.map((m: any) => m.id));
+            if (pending.length) console.log(`[wallet-ingest] positions: ${rebuilt.positions} (+${pending.length} milestones emitted)`);
+          } catch (err) {
+            console.warn("[wallet-ingest] position rebuild failed:", err instanceof Error ? err.message : "unknown error");
+          }
+        }
+        if (!this.walletStopped) {
+          this.walletTimer = setTimeout(() => { void walletPass(); }, POLL_INTERVAL_MS);
+          this.walletTimer.unref?.();
+        }
+      };
+      // First pass shortly after boot (2s) so wallets registered at startup get
+      // ingested quickly; subsequent passes chain every POLL_INTERVAL_MS.
+      this.walletTimer = setTimeout(() => { void walletPass(); }, 2_000);
+      this.walletTimer.unref?.();
+      // Retención de observaciones: 30 días.
+      this.walletPurgeTimer = setInterval(() => {
+        try { this.db.purgeOnchainSwaps(30 * 86400); } catch { /* nunca fatal */ }
+      }, 24 * 60 * 60_000);
+      this.walletPurgeTimer.unref?.();
     }
     this.marketDiscovery?.start();
     return this.portNumber;
@@ -407,6 +506,19 @@ export class ApiServer {
       this.tgStopped = true;
       clearTimeout(this.tgTimer);
       this.tgTimer = null;
+    }
+    if (this.tgPurgeTimer) {
+      clearInterval(this.tgPurgeTimer);
+      this.tgPurgeTimer = null;
+    }
+    if (this.walletTimer) {
+      this.walletStopped = true;
+      clearTimeout(this.walletTimer);
+      this.walletTimer = null;
+    }
+    if (this.walletPurgeTimer) {
+      clearInterval(this.walletPurgeTimer);
+      this.walletPurgeTimer = null;
     }
     if (this.server) {
       await new Promise<void>((resolvePromise) => this.server!.close(() => resolvePromise()));
@@ -476,7 +588,7 @@ export class ApiServer {
     const allowed = requestOrigin && (configured.length === 0 ? requestOrigin === `http://${req.headers.host}` : configured.includes(requestOrigin));
     if (allowed) res.setHeader("Access-Control-Allow-Origin", requestOrigin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, x-tg-pass");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
@@ -958,14 +1070,122 @@ export class ApiServer {
       }
     });
 
-    // ── Telegram calls (public read-only log of the configured chat) ──
-    // The scraper must be enabled server-side (TG_BOT_TOKEN + TG_CHAT_ID);
-    // otherwise the API answers 503 honestly instead of inventing data.
-    this.router.publicRoute("GET", "/api/tg/signals", (ctx) => {
-      if (!this.telegramSource.enabled) {
-        sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "TG_NOT_CONFIGURED", signals: [] });
-        return;
+    // ── Telegram calls (gated read-only log of the observed chats) ──
+    // Access requires a 24h pass: the bot mints a code via /code for verified
+    // group members, the member redeems it once on the web and the grant lives
+    // in tg_access_grants keyed by a salted fingerprint (no raw IPs stored).
+    // The scraper must be enabled server-side (TG_BOT_TOKEN); otherwise the
+    // API answers 503 honestly instead of inventing data.
+    // Accepts BOTH shapes: raw fingerprint (dev, cookie channel) and the signed
+    // pass "fp.HMAC" (production header channel) — the dot would otherwise make
+    // every production pass fail validation and lock the web out of the gate.
+    const TG_PASS_RE = /^[A-Za-z0-9_-]{43,64}(\.[A-Za-z0-9_-]{43,100})?$/;
+    /** Signed pass (fp.HMAC) when TG_GATE_SECRET is set; raw fingerprint otherwise (dev). */
+    const tgSignPass = (fp: string): string => {
+      const secret = process.env.TG_GATE_SECRET;
+      return secret ? `${fp}.${createHmac("sha256", secret).update(fp).digest("base64url")}` : fp;
+    };
+    /** Fingerprint portion of a pass (strips the .HMAC suffix when present). */
+    const parseTgPass = (pass: string): string | null => {
+      if (!TG_PASS_RE.test(pass)) return null;
+      const idx = pass.lastIndexOf(".");
+      return idx > 0 ? pass.slice(0, idx) : pass;
+    };
+    /** Server-side fallback fingerprint (no client header): salted IP hash. */
+    const tgFingerprintFor = (ctx: RequestContext): string => {
+      const clientFp = String(ctx.req.headers["x-tg-pass"] ?? "");
+      const parsed = parseTgPass(clientFp);
+      return parsed
+        ? parsed
+        : createHash("sha256").update(`${ctx.req.socket?.remoteAddress ?? ""}|${process.env.TG_GATE_SECRET ?? ""}`).digest("hex");
+    };
+    const tgHasAccess = (ctx: RequestContext): { ok: boolean; until: number | null } => {
+      // 1) Cookie channel (same-origin dev): tgp=<fingerprint>.
+      const cookie = String(ctx.req.headers.cookie ?? "");
+      if (cookie) {
+        for (const part of cookie.split(";")) {
+          const [k, ...rest] = part.trim().split("=");
+          if (k === "tgp" && rest.length) {
+            const until = this.db.getTgAccessGrant(rest.join("="));
+            if (until != null) return { ok: true, until };
+          }
+        }
       }
+      // 2) Header channel (cross-origin production): x-tg-pass=<fp>.<hmac>.
+      const pass = String(ctx.req.headers["x-tg-pass"] ?? "");
+      const parsedFp = parseTgPass(pass);
+      if (parsedFp) {
+        const secret = process.env.TG_GATE_SECRET;
+        if (secret) {
+          const idx = pass.lastIndexOf(".");
+          const sig = idx > 0 ? pass.slice(idx + 1) : "";
+          const expected = createHmac("sha256", secret).update(parsedFp).digest("base64url");
+          if (!sig || sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+            return { ok: false, until: null };
+          }
+        }
+        const until = this.db.getTgAccessGrant(parsedFp);
+        if (until != null) return { ok: true, until };
+      }
+      return { ok: false, until: null };
+    };
+    /** Store the grant and stamp the httpOnly cookie (secondary channel). Returns the fingerprint used. */
+    const tgGrantAccess = (ctx: RequestContext, until: number): string => {
+      const fp = tgFingerprintFor(ctx);
+      this.db.upsertTgAccessGrant(fp, until);
+      const cookie = `tgp=${fp}; Path=/; Max-Age=${Math.max(0, until - Math.floor(Date.now() / 1000))}; HttpOnly; SameSite=Lax`;
+      const prev = ctx.res.getHeader("Set-Cookie");
+      const list = Array.isArray(prev) ? [...prev, cookie] : prev ? [String(prev), cookie] : [cookie];
+      ctx.res.setHeader("Set-Cookie", list);
+      return fp;
+    };
+    const requireTgAccess = (ctx: RequestContext): void => {
+      if (!this.telegramSource.enabled) {
+        throw new HttpError(503, "TG_NOT_CONFIGURED");
+      }
+      if (!tgHasAccess(ctx).ok) throw new HttpError(401, "TG_ACCESS_REQUIRED");
+    };
+
+    // Redeem a /code from the bot: single-use → 24h grant.
+    // The response carries a signed pass (x-tg-pass header) so cross-origin
+    // clients (inusaur.online → raidos-api.fly.dev) keep access without cookies.
+    this.router.publicRoute("POST", "/api/tg/redeem", (ctx) => {
+      if (!this.telegramSource.enabled) throw new HttpError(503, "TG_NOT_CONFIGURED");
+      const code = this.str(ctx, "code");
+      if (!code) throw new HttpError(400, "code required");
+      const until = this.db.redeemTgAccessCode(code, null);
+      if (until == null) throw new HttpError(403, "código inválido, ya usado o expirado — pide uno nuevo al bot con /code");
+      const fp = tgGrantAccess(ctx, until);
+      sendJson(ctx.res, 200, {
+        ok: true,
+        until,
+        hours: Math.max(1, Math.round((until - Date.now() / 1000) / 3600)),
+        pass: tgSignPass(fp),
+      });
+    });
+
+    // Check the current grant (used by the web gate to show the countdown).
+    this.router.publicRoute("GET", "/api/tg/access", (ctx) => {
+      const access = tgHasAccess(ctx);
+      sendJson(ctx.res, 200, { enabled: this.telegramSource.enabled, until: access.until });
+    });
+
+    // Operator / saur-bot: mint a code manually (same shape the bot uses).
+    // Server-to-server auth: ADMIN_SECRET header (constant-time check).
+    this.router.publicRoute("POST", "/api/admin/tg/mint-code", (ctx) => {
+      this.requireAdminSecret(ctx);
+      const telegramUserId = this.str(ctx, "telegramUserId");
+      if (!telegramUserId) throw new HttpError(400, "telegramUserId required");
+      const out = this.db.mintTgAccessCode({
+        telegramUserId,
+        telegramUsername: this.str(ctx, "telegramUsername", false) || "",
+        chatId: this.str(ctx, "chatId", false) || "",
+      });
+      sendJson(ctx.res, 200, { ...out });
+    });
+
+    this.router.publicRoute("GET", "/api/tg/signals", (ctx) => {
+      requireTgAccess(ctx);
       // `since` = unix timestamp (seconds); when present, fetch all rows in the window (up to 500).
       const sinceRaw = ctx.query.get("since");
       const since = sinceRaw ? Number(sinceRaw) : undefined;
@@ -1009,6 +1229,11 @@ export class ApiServer {
         sendJson(ctx.res, 200, { url: null });
         return;
       }
+      // Avatars leak member identities: they sit behind the same 24h gate.
+      if (!tgHasAccess(ctx)) {
+        sendJson(ctx.res, 200, { url: null });
+        return;
+      }
       const cached = (this as any)._tgAvatarCache?.get(authorId);
       if (cached !== undefined) {
         sendJson(ctx.res, 200, { url: cached });
@@ -1041,10 +1266,7 @@ export class ApiServer {
     });
 
     this.router.publicRoute("GET", "/api/tg/callers", (ctx) => {
-      if (!this.telegramSource.enabled) {
-        sendJson(ctx.res, 503, { status: "UNAVAILABLE", error: "TG_NOT_CONFIGURED", callers: [] });
-        return;
-      }
+      requireTgAccess(ctx);
       const limitRaw = Number(ctx.query.get("limit") ?? 50);
       const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
       const callers = this.db.getTgCallerStats(limit);
@@ -1062,6 +1284,76 @@ export class ApiServer {
         lastSuccessAt: this.telegramSource.lastSuccessAt || null,
         lastError: this.telegramSource.lastError,
         mode: this.appMode,
+      });
+    });
+
+    // ── Wallet ingestion (Position Engine V2) ──
+    // Operator CRUD for tracked on-chain wallets (smart money, whales, dev, KOL).
+    // Server-to-server auth like /api/admin/tg/mint-code (ADMIN_SECRET header).
+    this.router.publicRoute("GET", "/api/admin/wallets", (ctx) => {
+      this.requireAdminSecret(ctx);
+      sendJson(ctx.res, 200, {
+        wallets: this.db.listTrackedWallets({ chain: ctx.query.get("chain") || undefined, activeOnly: true }),
+        ingestionEnabled: this.walletActivity !== null,
+        source: this.walletActivity?.id ?? null,
+      });
+    });
+
+    this.router.publicRoute("POST", "/api/admin/wallets", (ctx) => {
+      this.requireAdminSecret(ctx);
+      const chain = this.str(ctx, "chain");
+      const address = this.str(ctx, "address");
+      if (!getChain(chain)) throw new HttpError(400, `unknown chain: ${chain}`);
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) && !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+        throw new HttpError(400, "address must be a solana or EVM address");
+      }
+      const category = this.str(ctx, "category", false) || "watch";
+      if (!["smart", "whale", "dev", "kol", "internal", "watch"].includes(category)) {
+        throw new HttpError(400, "invalid category");
+      }
+      const priorityRaw = ctx.body.priority;
+      const priority = priorityRaw === undefined ? 5 : Number(priorityRaw);
+      if (!Number.isInteger(priority) || priority < 1 || priority > 10) throw new HttpError(400, "priority must be an integer 1-10");
+      this.db.upsertTrackedWallet({ chain, address, label: this.str(ctx, "label", false) || "", category, priority, addedBy: null });
+      sendJson(ctx.res, 201, { ok: true, chain, address, category, priority });
+    });
+
+    this.router.publicRoute("DELETE", "/api/admin/wallets/:chain/:address", (ctx) => {
+      this.requireAdminSecret(ctx);
+      const removed = this.db.removeTrackedWallet(ctx.params.chain ?? "", ctx.params.address ?? "");
+      if (!removed) throw new HttpError(404, "wallet not tracked");
+      sendJson(ctx.res, 200, { ok: true });
+    });
+
+    // Public, gated read of observed swaps for one token (smart money / dev
+    // overlays on the terminal chart). Behind the same 24h gate as the
+    // signals: wallet intel is Elite value.
+    this.router.publicRoute("GET", "/api/tokens/:chain/:address/onchain-activity", async (ctx) => {
+      requireTgAccess(ctx);
+      const chain = ctx.params.chain ?? "";
+      const address = ctx.params.address ?? "";
+      if (!chain || !address || !getChain(chain)) throw new HttpError(400, `unknown chain: ${chain}`);
+      const since = Number(ctx.query.get("since") ?? 0);
+      const swaps = this.db.listOnchainSwapsByToken(chain, address, {
+        limit: Math.min(Number(ctx.query.get("limit") ?? 50), 200),
+        since: Number.isFinite(since) ? since : 0,
+      });
+      // Aggregated positions + milestones of tracked wallets on this token
+      // (Position Engine V2). Null metrics = provider did not observe prices.
+      const positions = this.db.listWalletPositionsByToken(chain, address, {
+        openOnly: ctx.query.get("openOnly") === "false",
+        limit: Math.min(Number(ctx.query.get("positionsLimit") ?? 50), 200),
+      });
+      const milestones = this.db.listWalletMilestonesByToken(chain, address, {
+        limit: Math.min(Number(ctx.query.get("milestonesLimit") ?? 50), 200),
+      });
+      sendJson(ctx.res, 200, {
+        status: this.walletActivity ? "LIVE" : "NO_INGESTION",
+        swaps,
+        count: swaps.length,
+        positions,
+        milestones,
+        source: this.walletActivity?.id ?? null,
       });
     });
 

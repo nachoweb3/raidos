@@ -23,6 +23,18 @@ body { background:radial-gradient(ellipse at 80% 0%,#14274088,transparent 60%),v
 #chartTools select,#chartTools button,#chartTools input[type=number] { background:#14243a; color:#dce9f7; border-color:#3c5570; border-radius:7px; }
 #chartTools summary { color:#b0c1d6; }
 #chartTools input[type=checkbox] { accent-color:#87dded; }
+/* ── Overlays del token: leyenda de eventos sobre el chart (llamadas TG + fills propios + on-chain) ── */
+.overlays-legend { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; font-size:11px; color:#b0c1d6; }
+.overlays-title { font-family:var(--font-mono, monospace); font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#7d90a8; }
+.overlays-legend .tk { border-radius:999px; padding:3px 9px; background:#14243a; border:1px solid #3c5570; }
+.overlays-legend .tk-signal { border-color:#bba3e955; color:#cdb9ee; }
+.overlays-legend .tk-buy { border-color:#87dded55; color:#a9e7f4; }
+.overlays-legend .tk-sell { border-color:#f38c9a55; color:#f6b3bc; }
+.overlays-legend .tk-smart { border-color:#4ade8055; color:#8ff0b0; }
+.overlays-legend .tk-dev { border-color:#facc1555; color:#fbe38a; }
+.overlays-legend .overlays-empty { color:#5c6b80; }
+.overlays-toggle { margin-left:auto; display:flex; align-items:center; gap:6px; cursor:pointer; }
+.overlays-toggle input { accent-color:#bba3e9; }
 .pool-activity { border-top:1px solid #7dacc22c; padding-top:18px; margin-top:18px; }
 .pool-activity header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .pool-activity h3 { font-size:17px; font-weight:650; letter-spacing:-.025em; }
