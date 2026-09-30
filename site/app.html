@@ -65,41 +65,41 @@
   </style>
   <!-- Rails/ticker/portfolio-FOMO CSS lives inline below (no external file) -->
   <script defer src="vendor/lightweight-charts/lightweight-charts.js?v=4.2.0"></script>
-  <link rel="stylesheet" href="css/catalog.css?v=20260929-5">
-<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-5">
+  <link rel="stylesheet" href="css/catalog.css?v=20260929-6">
+<link rel="stylesheet" href="css/terminal-premium.css?v=20260929-6">
   <script type="module" src="js/atmosphere.js?v=20260920-1"></script>
-  <script type="module" src="js/tg-signals.js?v=20260929-5"></script>
+  <script type="module" src="js/tg-signals.js?v=20260929-6"></script>
   <script type="importmap">
     { "imports": {
-      "./js/api.js": "./js/api.js?v=20260929-5",
-      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-5",
-      "./js/copy.js": "./js/copy.js?v=20260929-5",
-      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-5",
-      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-5",
-      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-5",
-      "./js/discover.js": "./js/discover.js?v=20260929-5",
-      "./js/feed.js": "./js/feed.js?v=20260929-5",
-      "./js/intelligence.js": "./js/intelligence.js?v=20260929-5",
-      "./js/markets.js": "./js/markets.js?v=20260929-5",
-      "./js/portfolio.js": "./js/portfolio.js?v=20260929-5",
-      "./js/rails.js": "./js/rails.js?v=20260929-5",
-      "./js/premium.js": "./js/premium.js?v=20260929-5",
-      "./js/rewards.js": "./js/rewards.js?v=20260929-5",
-      "./js/social.js": "./js/social.js?v=20260929-5",
-      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-5",
-      "./js/app.js": "./js/app.js?v=20260929-5",
-      "./js/trenches.js": "./js/trenches.js?v=20260929-5",
-      "./js/tokens.js": "./js/tokens.js?v=20260929-5",
-      "./js/trading.js": "./js/trading.js?v=20260929-5",
-      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-5",
-      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-5",
-      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-5",
-      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-5",
-      "./js/install.js": "./js/install.js?v=20260929-5",
-      "./js/public-market.js": "./js/public-market.js?v=20260929-5",
-      "./js/pairs.js": "./js/pairs.js?v=20260929-5",
-      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-5",
-      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-5"
+      "./js/api.js": "./js/api.js?v=20260929-6",
+      "./js/bubblemaps.js": "./js/bubblemaps.js?v=20260929-6",
+      "./js/copy.js": "./js/copy.js?v=20260929-6",
+      "./js/catalog-board.js": "./js/catalog-board.js?v=20260929-6",
+      "./js/gmgn-board.js": "./js/gmgn-board.js?v=20260929-6",
+      "./js/dexfeed.js": "./js/dexfeed.js?v=20260929-6",
+      "./js/discover.js": "./js/discover.js?v=20260929-6",
+      "./js/feed.js": "./js/feed.js?v=20260929-6",
+      "./js/intelligence.js": "./js/intelligence.js?v=20260929-6",
+      "./js/markets.js": "./js/markets.js?v=20260929-6",
+      "./js/portfolio.js": "./js/portfolio.js?v=20260929-6",
+      "./js/rails.js": "./js/rails.js?v=20260929-6",
+      "./js/premium.js": "./js/premium.js?v=20260929-6",
+      "./js/rewards.js": "./js/rewards.js?v=20260929-6",
+      "./js/social.js": "./js/social.js?v=20260929-6",
+      "./js/terminal-view.js": "./js/terminal-view.js?v=20260929-6",
+      "./js/app.js": "./js/app.js?v=20260929-6",
+      "./js/trenches.js": "./js/trenches.js?v=20260929-6",
+      "./js/tokens.js": "./js/tokens.js?v=20260929-6",
+      "./js/trading.js": "./js/trading.js?v=20260929-6",
+      "./js/chart-indicators.js": "./js/chart-indicators.js?v=20260929-6",
+      "./js/chart-tools.js": "./js/chart-tools.js?v=20260929-6",
+      "./js/pool-activity.js": "./js/pool-activity.js?v=20260929-6",
+      "./js/atmosphere.js": "./js/atmosphere.js?v=20260929-6",
+      "./js/install.js": "./js/install.js?v=20260929-6",
+      "./js/public-market.js": "./js/public-market.js?v=20260929-6",
+      "./js/pairs.js": "./js/pairs.js?v=20260929-6",
+      "./js/tg-signals.js": "./js/tg-signals.js?v=20260929-6",
+      "./js/token-risk-panel.js": "./js/token-risk-panel.js?v=20260929-6"
     } }
   </script>
 
@@ -513,7 +513,13 @@
     .tg-caller-card:hover { border-color: rgba(255,255,255,0.15); }
     .tg-caller-card.active { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); }
 
-    .tg-loading { text-align: center; padding: 40px 0; color: var(--text-tertiary); font-size: 13px; }
+    .tg-loading { text-align: center; padding: 48px 0; color: var(--text-tertiary); font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .tg-loading-ring { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(245,158,11,0.15); border-top-color: #f59e0b; animation: tgSparkSpin 0.9s linear infinite; }
+    .tg-loading-text { font-weight: 600; letter-spacing: 0.02em; }
+    .tg-refresh-bar { position: relative; height: 3px; margin: -8px 0 12px; border-radius: 2px; background: rgba(255,255,255,0.05); overflow: hidden; }
+    .tg-refresh-bar::after { content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, transparent, #f59e0b, transparent); animation: tgRefreshScan 1.1s ease-in-out infinite; }
+    @keyframes tgRefreshScan { to { left: 100%; } }
+    @media (prefers-reduced-motion: reduce) { .tg-loading-ring, .tg-refresh-bar::after { animation: none; } .tg-refresh-bar::after { left: 30%; width: 40%; opacity: 0.6; } }
 
 
     .pill-tab {
@@ -775,7 +781,7 @@
       .pf-pos-head .pos-col-2, .pf-pos-head .pos-col-4 { display: none; }
     }
   </style>
-<link rel="stylesheet" href="css/workstation.css?v=20260929-5">
+<link rel="stylesheet" href="css/workstation.css?v=20260929-6">
 </head>
 <body>
   <!-- ── Boot loader (first paint; removed on window load) ── -->
@@ -1558,7 +1564,7 @@
   </div>
 
   <!-- ── APP SCRIPT MODULES ── -->
-  <script type="module" src="js/app.js?v=20260929-5"></script>
+  <script type="module" src="js/app.js?v=20260929-6"></script>
 
   <script>
     // Launchpad modal helpers
@@ -1824,6 +1830,6 @@
       <div id="operatorError" style="font-size:11.5px; color:var(--delta-red); margin-top:10px; display:none"></div>
     </div>
   </div>
-  <script type="module" src="js/install.js?v=20260929-5"></script>
+  <script type="module" src="js/install.js?v=20260929-6"></script>
 </body>
 </html>

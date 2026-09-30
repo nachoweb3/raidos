@@ -14,7 +14,7 @@
 
 import { ApiClient } from "./api.js";
 import { DexFeed } from "./dexfeed.js?v=20260928-6";
-import { publicPoolData } from "./public-market.js?v=20260929-5";
+import { publicPoolData } from "./public-market.js?v=20260929-6";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -259,24 +259,36 @@ export const TgSignalsEngine = {
   auto: true,
   _timer: null,
   _jumpToken: "",
+  _loadSeq: 0,
 
   async load() {
     const root = document.getElementById("view-tg");
     if (!root) return;
     if (!root.querySelector(".tg-toolbar")) {
-      root.innerHTML = `<div class="tg-loading">📡 Cargando llamadas del canal…</div>`;
-    }
-
-    // Callers analytics en paralelo
-    try {
-      const callersRes = await ApiClient.request("/api/tg/callers?limit=30");
-      this.callers = callersRes.callers ?? [];
-    } catch {
-      this.callers = [];
+      root.innerHTML = `<div class="tg-loading"><div class="tg-loading-ring"></div><div class="tg-loading-text">📡 Cargando llamadas del canal…</div></div>`;
+    } else {
+      // Recarga (filtro/refresh): barra fina de progreso sin borrar el contenido actual
+      root.querySelector(".tg-toolbar")?.insertAdjacentHTML("afterend", `<div class="tg-refresh-bar" role="status" aria-label="Actualizando llamadas"></div>`);
     }
 
     const tf = TIME_FILTERS.find((f) => f.key === this.timeFilter) ?? TIME_FILTERS[0];
     const since = tf.since > 0 ? Math.floor(Date.now() / 1000) - tf.since : 0;
+
+    // Fetchs en PARALELO con tope de tiempo: ningún await colga la vista;
+    // errores/timeout degradan a estado honesto sin romper el render.
+    let signalsUrl = `/api/tg/signals`;
+    const params = new URLSearchParams();
+    if (since > 0) params.set("since", String(since));
+    if (this.chain) params.set("chain", this.chain);
+    if (this.caller) params.set("caller", this.caller);
+    if (params.toString()) signalsUrl += "?" + params.toString();
+    const withTimeout = (promise, ms, fallback) =>
+      Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
+    const [signalsData, callersData] = await Promise.all([
+      withTimeout(ApiClient.request(signalsUrl).catch((err) => ({ __error: err })), 20000, { __error: new Error("timeout") }),
+      withTimeout(ApiClient.request("/api/tg/callers?limit=30").catch(() => ({})), 20000, {}),
+    ]);
+    if (Array.isArray(callersData?.callers)) this.callers = callersData.callers;
 
     const wrap = (html) => `
       <div class="tg-toolbar">
@@ -315,16 +327,8 @@ export const TgSignalsEngine = {
       ${this.showCallers ? this.renderCallersPanel() : ""}
       <div id="tgSignalsList">${html}</div>`;
 
-    let data;
-    try {
-      let url = `/api/tg/signals`;
-      const params = new URLSearchParams();
-      if (since > 0) params.set("since", String(since));
-      if (this.chain) params.set("chain", this.chain);
-      if (this.caller) params.set("caller", this.caller);
-      if (params.toString()) url += "?" + params.toString();
-      data = await ApiClient.request(url);
-    } catch (err) {
+    if (signalsData?.__error) {
+      const err = signalsData.__error;
       const notConfigured = /TG_NOT_CONFIGURED|not configured/i.test(String(err?.message ?? err));
       root.innerHTML = wrap(`
         <div class="glass-panel-interactive" style="padding:20px; text-align:center">
@@ -338,6 +342,7 @@ export const TgSignalsEngine = {
         </div>`);
       return;
     }
+    const data = signalsData;
 
     const signals = data.signals ?? [];
     this._lastTs = signals.length ? Number(signals[0].ts) : 0;
@@ -359,20 +364,10 @@ export const TgSignalsEngine = {
       return;
     }
 
-    // Enrich con datos de mercado vía DexFeed
-    if (typeof DexFeed?.ensureTokens === "function") {
-      const refs = signals.map((s) => {
-        let ch = s.chain;
-        if (!ch || ch === "unknown") ch = /^0x/i.test(s.token) ? "ethereum" : "solana";
-        else if (ch === "evm") ch = "ethereum";
-        return { chain: ch, address: s.token };
-      });
-      try { await DexFeed.ensureTokens(refs); } catch {}
-    }
-
     // Contar por período para mostrar el badge
     const periodLabel = tf.key !== "all" ? `${signals.length} calls · ${tf.label}` : `${signals.length} calls`;
 
+    const seq = ++this._loadSeq;
     root.innerHTML = wrap(`
       <div class="tg-count-bar">
         <span class="tg-count-badge">📊 ${periodLabel}</span>
@@ -382,6 +377,27 @@ export const TgSignalsEngine = {
     `);
 
     // Cargar avatares de manera lazy después del render
+    this._loadAvatarsLazy(signals);
+
+    // Enriquecimiento en vivo SIN bloquear: cuando DexFeed resuelva, re-pinta
+    // precios/ROI/sparklines. El guard de seq evita pisar una vista más nueva.
+    this._enrichWhenReady(signals, seq);
+  },
+
+  /** Re-pinta la lista cuando lleguen los datos de mercado (tras el render inmediato). */
+  async _enrichWhenReady(signals, seq) {
+    if (typeof DexFeed?.ensureTokens !== "function") return;
+    const refs = signals.map((s) => {
+      let ch = s.chain;
+      if (!ch || ch === "unknown") ch = /^0x/i.test(s.token) ? "ethereum" : "solana";
+      else if (ch === "evm") ch = "ethereum";
+      return { chain: ch, address: s.token };
+    });
+    try { await DexFeed.ensureTokens(refs); } catch { return; }
+    if (seq !== this._loadSeq) return; // llegó tarde: el usuario ya cambió de filtro/vista
+    const list = document.getElementById("tgSignalsList");
+    if (!list) return;
+    list.innerHTML = signals.map((s) => this._renderCard(s)).join("");
     this._loadAvatarsLazy(signals);
   },
 
