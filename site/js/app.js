@@ -6,20 +6,20 @@
 import { ApiClient } from "./api.js";
 import { FeedEngine } from "./feed.js";
 import { DiscoverEngine, PriceFeed } from "./discover.js";
-import { TradingEngine } from "./trading.js?v=20261001-4";
+import { TradingEngine } from "./trading.js?v=20261001-5";
 import { SocialEngine } from "./social.js";
 import { PortfolioEngine } from "./portfolio.js";
-import { TrenchesEngine } from "./trenches.js?v=20261001-4";
+import { TrenchesEngine } from "./trenches.js?v=20261001-5";
 import { RewardsEngine } from "./rewards.js";
 import { CopyEngine } from "./copy.js";
 import { PremiumEngine } from "./premium.js";
-import { DexFeed } from "./dexfeed.js?v=20261001-4";
+import { DexFeed } from "./dexfeed.js?v=20261001-5";
 import { MarketsEngine } from "./markets.js";
 import { PairsEngine } from "./pairs.js";
 import { TokenMeta } from "./tokens.js";
-import { TerminalView } from "./terminal-view.js?v=20261001-4";
+import { TerminalView } from "./terminal-view.js?v=20261001-5";
 import { FomoRails } from "./rails.js";
-import { TgSignalsEngine } from "./tg-signals.js?v=20261001-4";
+import { TgSignalsEngine } from "./tg-signals.js?v=20261001-5";
 
 export const App = {
   currentView: "feed",

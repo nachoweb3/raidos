@@ -13,7 +13,7 @@
 import { EliteScoreEngine } from "./intelligence.js";
 import { ApiClient } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20261001-4";
+import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20261001-5";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const jsArg = (value) => esc(JSON.stringify(value ?? ""));

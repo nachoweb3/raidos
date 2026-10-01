@@ -18,9 +18,9 @@
  */
 
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20261001-4";
-import { publicPoolData } from "./public-market.js?v=20261001-4";
-import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20261001-4";
+import { DexFeed } from "./dexfeed.js?v=20261001-5";
+import { publicPoolData } from "./public-market.js?v=20261001-5";
+import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20261001-5";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -636,8 +636,8 @@ export const TgSignalsEngine = {
     ]);
     if (Array.isArray(callersData?.callers)) this.callers = callersData.callers;
 
-    const wrap = (html) => `
-      <div class="tg-toolbar">
+  const wrap = (head, cards = "") => `
+    <div class="tg-toolbar">
         <div class="tg-toolbar-row">
           <span class="tg-toolbar-label">📡 Señales TG · ROI en vivo</span>
           <span style="display:flex; gap:6px; align-items:center">
@@ -671,7 +671,8 @@ export const TgSignalsEngine = {
           <button class="btn btn-ghost btn-xs" onclick="window.TgSignalsEngine.setCaller('')">✕ Ver todas</button>
         </div>` : ""}
       ${this.showCallers ? this.renderCallersPanel() : ""}
-      <div id="tgCards">${html}</div>`;
+      <div id="tgSignalsHead">${head}</div>
+      <div id="tgCards">${cards}</div>`;
 
     if (signalsData?.__error) {
       const err = signalsData.__error;
@@ -728,9 +729,7 @@ export const TgSignalsEngine = {
         <span class="tg-count-badge">📊 ${periodLabel}</span>
         ${since > 0 ? `<span style="font-size:11px;color:var(--text-tertiary)">desde ${new Date(since * 1000).toLocaleString()}</span>` : ""}
       </div>
-      ${renderPerformanceBar(perf)}
-      ${signals.map((s) => this._renderCard(s)).join("")}
-    `);
+      ${renderPerformanceBar(perf)}`, signals.map((s) => this._renderCard(s)).join(""));
 
     // Cargar avatares de manera lazy después del render
     this._loadAvatarsLazy(signals);

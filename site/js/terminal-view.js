@@ -1,6 +1,6 @@
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20261001-4";
-import { BubbleMaps } from "./bubblemaps.js?v=20261001-4";
+import { DexFeed } from "./dexfeed.js?v=20261001-5";
+import { BubbleMaps } from "./bubblemaps.js?v=20261001-5";
 
 // Keep the board mounted: opening a token never replaces its lists or scroll.
 export const TerminalView = {
