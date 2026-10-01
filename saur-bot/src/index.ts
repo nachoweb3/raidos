@@ -51,7 +51,12 @@ async function postToGroup(text: string): Promise<void> {
     console.log("📢 (no GROUP_ID set) would post:", text.split("\n")[0]);
     return;
   }
-  await bot.api.sendMessage(gid, text);
+  // Nunca lanza: un grupo expulsado/stale no debe tumbar el proceso (crash del 2026-09-02).
+  try {
+    await bot.api.sendMessage(gid, text);
+  } catch (err) {
+    console.warn("📢 postToGroup failed:", err instanceof Error ? err.message : err);
+  }
 }
 
 const hype = new HypeEngine(db, config, postToGroup, price, ai);
