@@ -290,12 +290,12 @@ export function computeCallPerformance(signals) {
  */
 function callerAchievements(st) {
   const out = [];
-  if (st.bestMult >= 10) out.push({ icon: "🚀", label: "call 10x+" });
-  else if (st.bestMult >= 5) out.push({ icon: "🌙", label: "call 5x+" });
-  else if (st.bestMult >= 2) out.push({ icon: "🎯", label: "call 2x+" });
-  if (st.calls >= 2 && st.winners === st.calls) out.push({ icon: "💎", label: "100% acierto" });
-  if (st.avgWinnerX != null && st.avgWinnerX >= 2) out.push({ icon: "🔥", label: "x medio ≥2" });
-  if (st.calls >= 3) out.push({ icon: "🔁", label: `${st.calls} calls` });
+  if (st.bestMult >= 10) out.push({ icon: "🚀", label: "10x", text: `mejor call 10x+` });
+  else if (st.bestMult >= 5) out.push({ icon: "🌙", label: "5x", text: `mejor call 5x+` });
+  else if (st.bestMult >= 2) out.push({ icon: "🎯", label: "2x", text: `mejor call 2x+` });
+  if (st.calls >= 2 && st.winners === st.calls) out.push({ icon: "💎", label: "100%", text: "100% de acierto (≥2 calls)" });
+  if (st.avgWinnerX != null && st.avgWinnerX >= 2) out.push({ icon: "🔥", label: "x≥2", text: "x medio de ganadoras ≥ 2" });
+  if (st.calls >= 3) out.push({ icon: "🔁", label: `${st.calls}×`, text: `prolífico: ${st.calls} calls evaluadas` });
   return out;
 }
 
@@ -321,11 +321,12 @@ function renderPerformanceBar(p) {
  * Modal de performance: PODIO visual de las mejores calls del período +
  * ranking de callers con logros derivados. Solo con entrada + precio vivo;
  * nada inferido ni inventado.
- */
-function renderPerformanceModal(p) {
+ */function renderPerformanceModal(p, periodKey = "all") {
   const fmtX = (n) => (n >= 10 ? String(Math.round(n)) : n.toFixed(2)) + "x";
   const ranked = [...p.rows].sort((a, b) => b.mult - a.mult);
-  // ── Podio de mejores calls (top 3) ──
+  const topMult = ranked.length ? ranked[0].mult : 0;
+  const period = TIME_FILTERS.find((f) => f.key === periodKey)?.label ?? TIME_FILTERS[0].label;
+  // ── Podio de mejores calls (top 3): escalón real + glow por metal ──
   const podium = ranked.length ? `
     <div class="tg-podium">
       ${ranked.slice(0, 3).map((r, i) => {
@@ -338,10 +339,11 @@ function renderPerformanceModal(p) {
           <div class="tg-podium-x ${r.mult >= 1 ? "tg-pos" : "tg-neg"}">${fmtX(r.mult)}</div>
           <div class="tg-podium-pct">${r.pct >= 0 ? "+" : ""}${r.pct.toFixed(1)}%</div>
           ${r.author ? `<div class="tg-podium-author" title="Caller">👤 ${esc(r.author)}</div>` : ""}
+          <div class="tg-podium-base tg-podium-base-${i + 1}"><span>${fmtX(r.mult)}</span></div>
         </div>`;
       }).join("")}
     </div>` : "";
-  // ── Resto del ranking (4º en adelante) ──
+  // ── Resto del ranking (4º en adelante): fila + barra proporcional al mejor del período ──
   const rows = ranked.slice(3).map((r) => `
     <div class="tg-perf-row">
       <div class="tg-perf-row-main">
@@ -354,14 +356,17 @@ function renderPerformanceModal(p) {
         <span class="tg-perf-pct ${r.mult >= 1 ? "tg-pos" : "tg-neg"}">${r.pct >= 0 ? "+" : ""}${r.pct.toFixed(1)}%</span>
         <span class="tg-perf-entry" title="Precio de entrada registrado en la llamada">entrada ${formatPrice(r.entry)}</span>
       </div>
+      <div class="tg-perf-rowbar" aria-hidden="true">
+        <span class="tg-perf-rowbar-fill ${r.mult >= 1 ? "is-win" : "is-lose"}" style="width:${Math.max(4, Math.min(100, (r.mult / topMult) * 100)).toFixed(1)}%"></span>
+      </div>
     </div>`).join("");
-  // ── Ranking de callers con logros ──
+  // ── Ranking de callers con logros: anillo de acierto + chip de logros con texto ──
   const callers = (p.callerStats ?? []).map((c, i) => `
     <div class="tg-caller-rank ${i === 0 ? "top1" : ""}">
       <div class="tg-caller-rank-main">
         <span class="tg-caller-medal">${["🥇", "🥈", "🥉"][i] ?? `#${i + 1}`}</span>
-        <img class="tg-caller-avatar-sm" src="${_avatarCache.get(c.author) || initialsAvatar(c.author)}" alt="${esc(c.author)}"
-          onerror="this.src='${initialsAvatar(c.author)}'"/>
+        <div class="tg-caller-ava" style="--wr:${Math.max(0, Math.min(100, c.winRate)).toFixed(0)}"><img class="tg-caller-avatar-sm" src="${_avatarCache.get(c.author) || initialsAvatar(c.author)}" alt="${esc(c.author)}"
+          onerror="this.src='${initialsAvatar(c.author)}'"/></div>
         <div class="tg-caller-rank-id">
           <span class="tg-caller-name">${esc(c.author)}</span>
           <span class="tg-caller-line">${c.winners}/${c.calls} ganadoras · mejor ${c.bestMult >= 1 ? fmtX(c.bestMult) : "—"}${c.avgWinnerX != null ? ` · x medio ${fmtX(c.avgWinnerX)}` : ""}</span>
@@ -369,16 +374,14 @@ function renderPerformanceModal(p) {
       </div>
       <div class="tg-caller-rank-side">
         <span class="tg-caller-wr ${c.winRate >= 50 ? "tg-pos" : "tg-neg"}">${c.winRate.toFixed(0)}%</span>
-        <div class="tg-caller-achv">
-          ${c.achievements.map((a) => `<span class="tg-achv" title="${esc(a.label)}">${a.icon}</span>`).join("")}
-        </div>
+        ${c.achievements.length ? `<div class="tg-caller-achv">${c.achievements.map((a) => `<span class="tg-achv tg-achv-${esc(a.label)}" title="${esc(a.text ?? a.label)}"><b>${a.icon}</b><i>${esc(a.label)}</i></span>`).join("")}</div>` : ""}
       </div>
     </div>`).join("");
   return `
     <div class="tg-perf-overlay" id="tgPerfOverlay" role="dialog" aria-modal="true" aria-label="Performance y ranking de llamadas">
       <div class="tg-perf-modal glass-panel-interactive">
         <div class="tg-perf-head">
-          <b>📈 Performance & Ranking</b>
+          <b>📈 Performance & Ranking${period && period !== "Todas" ? ` · ${period}` : ""}</b>
           <button class="btn btn-ghost btn-xs" onclick="window.TgSignalsEngine.closePerformance()" aria-label="Cerrar">✕</button>
         </div>
         <div class="tg-perf-grid">
@@ -541,7 +544,7 @@ export const TgSignalsEngine = {
     const root = document.getElementById("view-tg");
     if (!root || !this._lastPerf) return;
     root.querySelector(".tg-perf-overlay")?.remove();
-    root.insertAdjacentHTML("beforeend", renderPerformanceModal(this._lastPerf));
+    root.insertAdjacentHTML("beforeend", renderPerformanceModal(this._lastPerf, this.timeFilter));
   },
 
   closePerformance() {
