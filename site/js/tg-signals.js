@@ -18,9 +18,9 @@
  */
 
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20261001-3";
-import { publicPoolData } from "./public-market.js?v=20261001-3";
-import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20261001-3";
+import { DexFeed } from "./dexfeed.js?v=20261001-4";
+import { publicPoolData } from "./public-market.js?v=20261001-4";
+import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20261001-4";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 
@@ -671,7 +671,7 @@ export const TgSignalsEngine = {
           <button class="btn btn-ghost btn-xs" onclick="window.TgSignalsEngine.setCaller('')">✕ Ver todas</button>
         </div>` : ""}
       ${this.showCallers ? this.renderCallersPanel() : ""}
-      <div id="tgSignalsList">${html}</div>`;
+      <div id="tgCards">${html}</div>`;
 
     if (signalsData?.__error) {
       const err = signalsData.__error;
@@ -751,7 +751,7 @@ export const TgSignalsEngine = {
     });
     try { await DexFeed.ensureTokens(refs); } catch { return; }
     if (seq !== this._loadSeq) return; // llegó tarde: el usuario ya cambió de filtro/vista
-    const list = document.getElementById("tgSignalsList");
+    const list = document.getElementById("tgCards");
     if (!list) return;
     list.innerHTML = signals.map((s) => this._renderCard(s)).join("");
     this._loadAvatarsLazy(signals);

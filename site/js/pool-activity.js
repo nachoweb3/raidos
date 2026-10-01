@@ -1,5 +1,5 @@
 import { ApiClient } from "./api.js";
-import { publicPoolData } from "./public-market.js?v=20261001-3";
+import { publicPoolData } from "./public-market.js?v=20261001-4";
 
 const short = value => value.slice(0, 5) + "…" + value.slice(-4);
 const money = value => new Intl.NumberFormat("es", { style: "currency", currency: "USD", maximumSignificantDigits: 6 }).format(value);

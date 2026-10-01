@@ -3,11 +3,11 @@
 import { ApiClient } from "./api.js";
 import { PriceFeed } from "./discover.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed } from "./dexfeed.js?v=20261001-3";
-import { ChartTools } from "./chart-tools.js?v=20261001-3";
+import { DexFeed } from "./dexfeed.js?v=20261001-4";
+import { ChartTools } from "./chart-tools.js?v=20261001-4";
 import { PoolActivity } from "./pool-activity.js";
-import { TokenOverlaysEngine } from "./overlays.js?v=20261001-3";
-import { publicPoolData } from "./public-market.js?v=20261001-3";
+import { TokenOverlaysEngine } from "./overlays.js?v=20261001-4";
+import { publicPoolData } from "./public-market.js?v=20261001-4";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 

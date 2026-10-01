@@ -16,7 +16,7 @@
  */
 
 import { ApiClient } from "./api.js";
-import { gateHeaders } from "./gate-state.js?v=20261001-3";
+import { gateHeaders } from "./gate-state.js?v=20261001-4";
 
 const LS_KEY = "trenches_chart_overlays_v1";
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>

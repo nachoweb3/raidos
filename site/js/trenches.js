@@ -18,8 +18,8 @@
 
 import { ApiClient, API_BASE } from "./api.js";
 import { TokenMeta } from "./tokens.js";
-import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20261001-3";
-import { CatalogBoard } from "./catalog-board.js?v=20261001-3";
+import { DexFeed, SecurityFeed } from "./dexfeed.js?v=20261001-4";
+import { CatalogBoard } from "./catalog-board.js?v=20261001-4";
 
 const COLUMNS = [
   { id: "new", title: "Nuevas Creaciones", icon: "+", hint: "Pools de menos de 48 h" },
