@@ -430,6 +430,7 @@ export class ApiServer {
           .filter((w) => this.walletActivity!.supportsChain(w.chain))
           .slice(0, MAX_POLLS_PER_PASS);
         let insertedTotal = 0;
+        const affectedGroups = new Map<string, { wallet: string; chain: string; token: string }>();
         for (const w of due) {
           try {
             const result = await this.walletActivity!.getWalletActivity(w.chain, w.address, 20);
@@ -440,6 +441,12 @@ export class ApiServer {
             })));
             insertedTotal += inserted;
             if (inserted > 0) {
+              // Groups touched by this pass: the incremental position rebuild only
+              // re-aggregates these (full-table rebuilds starve the 1x shared CPU).
+              for (const s of result.swaps) {
+                if (!s?.wallet || !s?.token) continue;
+                affectedGroups.set(`${s.wallet}|${w.chain}|${s.token}`, { wallet: s.wallet, chain: w.chain, token: s.token });
+              }
               console.log(`[wallet-ingest] ${w.label || w.address.slice(0, 8)}: +${inserted} swaps (${w.chain})`);
             }
           } catch (err) {
@@ -454,7 +461,7 @@ export class ApiServer {
         // loop, WAL-safe, no merge logic to get wrong.
         if (insertedTotal > 0) {
           try {
-            const rebuilt = this.db.rebuildWalletPositions();
+            const rebuilt = this.db.rebuildWalletPositionsForGroups([...affectedGroups.values()]);
             const pending = this.db.listPendingWalletMilestones(100);
             for (const m of pending) {
               this.db.addFeedEvent({

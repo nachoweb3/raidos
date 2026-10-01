@@ -131,6 +131,63 @@ describe("wallet positions db (rebuild from onchain_swaps)", () => {
     expect(db.listWalletPositionsByWallet(OTHER)).toHaveLength(0); // orphan never fabricated one
     db.close();
   });
+
+  it("rebuildWalletPositionsForGroups re-aggregates only affected groups with identical semantics", () => {
+    const db = new AppDb(":memory:");
+    const swap = (over: Record<string, unknown>) => ({
+      signature: "sig", chain: "solana", token: TOKEN, wallet: WALLET, side: "buy" as const,
+      amountToken: "1000", amountUsd: null, priceUsd: null, ts: 0, source: "mock", ...over,
+    });
+    db.insertOnchainSwaps([
+      swap({ signature: "g1", side: "buy", amountToken: "1000", priceUsd: 0.001, ts: 100 }),
+      swap({ signature: "g2", side: "buy", amountToken: "1000", priceUsd: 0.003, ts: 200 }),
+      swap({ signature: "g3", side: "sell", amountToken: "500", priceUsd: 0.01, ts: 300 }),
+      // A different group (other wallet) that must stay untouched by group rebuilds.
+      swap({ signature: "g4", wallet: OTHER, side: "buy", amountToken: "42", priceUsd: 2, ts: 350 }),
+    ]);
+
+    const full = db.rebuildWalletPositions();
+    expect(full).toEqual({ positions: 2, unaccountable: 0 });
+
+    const before = db.listWalletPositionsByToken("solana", TOKEN, { openOnly: false })[0];
+
+    // Incremental rebuild of the SAME group → identical result, milestones not duplicated.
+    const again = db.rebuildWalletPositionsForGroups([{ wallet: WALLET, chain: "solana", token: TOKEN }]);
+    expect(again).toEqual({ positions: 1, unaccountable: 0 });
+    const after = db.listWalletPositionsByToken("solana", TOKEN, { openOnly: false })[0];
+    expect(after).toEqual(before);
+    expect(db.listWalletMilestonesByToken("solana", TOKEN)).toHaveLength(2); // POSITION_2X + POSITION_5X, deduped
+
+    // New observation lands → the incremental pass reproduces the full rebuild exactly.
+    db.insertOnchainSwaps([swap({ signature: "g5", side: "sell", amountToken: "500", priceUsd: 0.008, ts: 400 })]);
+    db.rebuildWalletPositions(); // full baseline with the new swap
+    const fullRow = db.listWalletPositionsByToken("solana", TOKEN, { openOnly: false })[0];
+    const incremental = db.rebuildWalletPositionsForGroups([{ wallet: WALLET, chain: "solana", token: TOKEN }]);
+    const incrementalRow = db.listWalletPositionsByToken("solana", TOKEN, { openOnly: false })[0];
+    expect(incremental).toEqual({ positions: 1, unaccountable: 0 });
+    expect(incrementalRow).toEqual(fullRow);
+    // 1500 remaining after g3, g5 sells 500 @0.008 (4x < prevMax 5x) → still open, +3 realized.
+    expect(incrementalRow).toMatchObject({ status: "open", amount_remaining: "1000" });
+    expect(incrementalRow.realized_pnl_usd).toBeCloseTo(7, 10);
+    expect(db.listWalletMilestonesByToken("solana", TOKEN)).toHaveLength(2); // 4x < prevMax 5x → no new milestones
+
+    // OTHER has a valid buy (g4) → its group rebuild yields its own row.
+    const other = db.rebuildWalletPositionsForGroups([{ wallet: OTHER, chain: "solana", token: TOKEN }]);
+    expect(other).toEqual({ positions: 1, unaccountable: 0 });
+    expect(db.listWalletPositionsByWallet(OTHER)).toHaveLength(1);
+
+    // A group with ONLY unaccountable observations (orphan sell) yields no position row.
+    const ONLY_SELLS = "8xGroup11111111111111111111111111111111111";
+    db.insertOnchainSwaps([swap({ signature: "g6", wallet: ONLY_SELLS, side: "sell", amountToken: "10", priceUsd: 0.01, ts: 500 })]);
+    const orphan = db.rebuildWalletPositionsForGroups([{ wallet: ONLY_SELLS, chain: "solana", token: TOKEN }]);
+    expect(orphan).toEqual({ positions: 0, unaccountable: 1 });
+    expect(db.listWalletPositionsByWallet(ONLY_SELLS)).toHaveLength(0);
+
+    // Empty input is a cheap no-op.
+    expect(db.rebuildWalletPositionsForGroups([])).toEqual({ positions: 0, unaccountable: 0 });
+
+    db.close();
+  });
 });
 
 describe("wallet positions E2E (ingest → aggregate → feed)", () => {

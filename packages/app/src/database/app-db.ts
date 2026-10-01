@@ -2622,4 +2622,54 @@ export class AppDb {
     tx();
     return { positions: states.size, unaccountable };
   }
+
+  /**
+   * Re-aggregate ONLY the given wallet|chain|token groups from onchain_swaps.
+   * Incremental variant of rebuildWalletPositions with the exact same engine and
+   * semantics (same state derivation, same milestone dedup by signature:KIND,
+   * same honesty rules): each affected group is fully recomputed from its own
+   * observations — O(swaps of the group), never a full-table scan. A group with
+   * no account swaps (e.g. only orphan sells) yields no position row.
+   */
+  rebuildWalletPositionsForGroups(groups: Array<{ wallet: string; chain: string; token: string }>): { positions: number; unaccountable: number } {
+    if (!groups.length) return { positions: 0, unaccountable: 0 };
+    const selectGroup = this.db.prepare(
+      "SELECT signature, chain, token, wallet, side, amount_token, price_usd, ts FROM onchain_swaps WHERE wallet = ? AND chain = ? AND token = ? ORDER BY ts ASC, signature ASC"
+    );
+    const deletePosition = this.db.prepare("DELETE FROM wallet_positions WHERE wallet = ? AND chain = ? AND token = ?");
+    type State = WalletPositionState;
+    const states = new Map<string, State>();
+    const milestones: Array<WalletPositionMilestone & { wallet: string; chain: string; token: string; signature: string }> = [];
+    let unaccountable = 0;
+    const tx = this.db.transaction(() => {
+      for (const g of groups) {
+        // Deterministic recompute: the group's position is derived entirely from
+        // its own observation history, so dropping the row and re-deriving is
+        // exact (no merge logic, no stale columns).
+        deletePosition.run(g.wallet, g.chain, g.token);
+        let state: State | undefined;
+        for (const s of selectGroup.all(g.wallet, g.chain, g.token) as any[]) {
+          const input = { side: s.side as "buy" | "sell", amountToken: String(s.amount_token ?? "0"), priceUsd: s.price_usd ?? null, ts: Number(s.ts) };
+          try {
+            const next = applySwapToWalletPosition(state, input);
+            const { milestones: ms, ...rest } = next;
+            state = rest;
+            for (const m of ms) milestones.push({ ...m, wallet: g.wallet, chain: g.chain, token: g.token, signature: s.signature });
+          } catch {
+            unaccountable += 1; // orphan sell / oversell / bad amount — skip, never invent
+          }
+        }
+        if (state) {
+          // The pure engine only does accounting — the aggregator owns identity.
+          states.set(`${g.wallet}|${g.chain}|${g.token}`, { ...state, wallet: g.wallet, chain: g.chain, token: g.token });
+        }
+      }
+      for (const p of states.values()) this.upsertWalletPosition(p);
+      for (const m of milestones) {
+        this.insertWalletPositionMilestones([m], { wallet: m.wallet, chain: m.chain, token: m.token, signature: m.signature });
+      }
+    });
+    tx();
+    return { positions: states.size, unaccountable };
+  }
 }
