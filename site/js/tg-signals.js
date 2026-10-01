@@ -325,7 +325,6 @@ function renderPerformanceBar(p) {
   const fmtX = (n) => (n >= 10 ? String(Math.round(n)) : n.toFixed(2)) + "x";
   const ranked = [...p.rows].sort((a, b) => b.mult - a.mult);
   const topMult = ranked.length ? ranked[0].mult : 0;
-  const period = TIME_FILTERS.find((f) => f.key === periodKey)?.label ?? TIME_FILTERS[0].label;
   // ── Podio de mejores calls (top 3): escalón real + glow por metal ──
   const podium = ranked.length ? `
     <div class="tg-podium">
@@ -381,8 +380,11 @@ function renderPerformanceBar(p) {
     <div class="tg-perf-overlay" id="tgPerfOverlay" role="dialog" aria-modal="true" aria-label="Performance y ranking de llamadas">
       <div class="tg-perf-modal glass-panel-interactive">
         <div class="tg-perf-head">
-          <b>📈 Performance & Ranking${period && period !== "Todas" ? ` · ${period}` : ""}</b>
+          <b>📈 Performance & Ranking</b>
           <button class="btn btn-ghost btn-xs" onclick="window.TgSignalsEngine.closePerformance()" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="tg-perf-periods" role="tablist" aria-label="Período del ranking">
+          ${TIME_FILTERS.map((f) => `<button class="tg-perf-period ${f.key === periodKey ? "active" : ""}" role="tab" aria-selected="${f.key === periodKey}" onclick="window.TgSignalsEngine.showPerformance('${f.key}')">${f.label}</button>`).join("")}
         </div>
         <div class="tg-perf-grid">
           <div><span class="tg-perf-num">${p.total}</span><span class="tg-perf-lbl">calls listadas</span></div>
@@ -539,12 +541,32 @@ export const TgSignalsEngine = {
   _lastSignals: [],
   _lastPerf: null,
 
-  /** Modal 📈 con el ranking de performance del período (siempre honesto: solo prices observados). */
-  showPerformance() {
+  /**
+   * Modal 📈 con el ranking de performance (siempre honesto: solo prices observados).
+   * Acepta un período opcional (key de TIME_FILTERS). Los chips del modal cambian
+   * el período REAL: la fuente de verdad es el servidor, así que recargan la
+   * lista de ese período y reabren el modal con el ranking ya recalculado —
+   * nunca re-etiquetan los datos del período anterior.
+   */
+  showPerformance(periodKey) {
     const root = document.getElementById("view-tg");
-    if (!root || !this._lastPerf) return;
+    if (!root) return;
+    const tf = TIME_FILTERS.find((f) => f.key === periodKey);
+    if (periodKey && !tf) return; // período desconocido → ignora, no rompe
+    if (tf && periodKey !== this.timeFilter) {
+      this.timeFilter = periodKey;
+      void this.load().then(() => {
+        // Reabre solo si load terminó en vista de señales (no en gate/error).
+        const view = document.getElementById("view-tg");
+        if (view?.querySelector(".tg-count-bar")) this.showPerformance();
+      });
+      return;
+    }
+    if (!this._lastPerf) return;
+    const prevScroll = root.querySelector(".tg-perf-modal")?.scrollTop ?? 0;
     root.querySelector(".tg-perf-overlay")?.remove();
     root.insertAdjacentHTML("beforeend", renderPerformanceModal(this._lastPerf, this.timeFilter));
+    root.querySelector(".tg-perf-modal").scrollTop = prevScroll; // re-render del mismo período no te tira arriba
   },
 
   closePerformance() {

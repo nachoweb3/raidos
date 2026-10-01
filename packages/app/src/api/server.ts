@@ -9,6 +9,7 @@
  */
 
 import http from "node:http";
+import os from "node:os";
 import { registerTokenMetadataRoutes } from "./token-metadata.js";
 import { MarketDataService, NETWORKS } from "../market/data.js";
 import { registerMarketCatalogRoutes } from "../market/routes.js";
@@ -180,8 +181,12 @@ export class ApiServer {
   private walletTimer: NodeJS.Timeout | null = null;
   private walletPurgeTimer: NodeJS.Timeout | null = null;
   private walletStopped = false;
+  /** Observabilidad del ingest para el health profundo (última pasada wallet). */
+  private walletLastPassAt: number | null = null;
+  private walletLastInserted = 0;
   private server: http.Server | null = null;
   private readonly port: number;
+  private readonly dbPath: string;
   private reconcileTimer: NodeJS.Timeout | null = null;
   private socialTimer: NodeJS.Timeout | null = null;
   /** Solana connection factory (LaunchLab/factory/AMM); returns null without RPC. */
@@ -205,6 +210,7 @@ export class ApiServer {
     }
     this.receiptProvider = options.receiptProvider ?? null;
     this.port = options.port ?? Number(process.env.PORT ?? 8787);
+    this.dbPath = options.dbPath;
     this.bootstrapSecret = options.bootstrapSecret ?? process.env.BOOTSTRAP_SECRET;
     this.solanaConnectionFactory =
       options.solanaConnectionFactory ??
@@ -459,6 +465,8 @@ export class ApiServer {
         // deterministic rebuild from onchain_swaps (bounded by the 30d
         // retention) — same reasoning as the user-position engine: one writer
         // loop, WAL-safe, no merge logic to get wrong.
+        this.walletLastPassAt = now;
+        this.walletLastInserted = insertedTotal;
         if (insertedTotal > 0) {
           try {
             const rebuilt = this.db.rebuildWalletPositionsForGroups([...affectedGroups.values()]);
@@ -537,6 +545,16 @@ export class ApiServer {
   get portNumber(): number {
     const addr = this.server?.address();
     return typeof addr === "object" && addr ? addr.port : this.port;
+  }
+
+  /** Tamaño del archivo SQLite principal en MB (a 0.1); null con ":memory:" o si el stat falla. */
+  private dbSizeMb(): number | null {
+    try {
+      if (!this.dbPath || this.dbPath === ":memory:") return null;
+      return Math.round((statSync(this.dbPath).size / (1024 * 1024)) * 10) / 10;
+    } catch {
+      return null;
+    }
   }
 
   // ── Request handling ──────────────────────────────────────────────────
@@ -950,8 +968,39 @@ export class ApiServer {
     });
 
     // ── Health ──
+    // Sonda de saturación: load normalizado por núcleo, RSS del proceso,
+    // tamaño del archivo SQLite y estado del ingest wallet. Todo barato
+    // (os.loadavg + stat + process.memoryUsage, sin scans de tablas) para que
+    // el endpoint responda rápido incluso con la máquina asfixiada — fue
+    // precisamente cómo se detectó el incidente del 2026-10-01.
     this.router.publicRoute("GET", "/api/health", (ctx) => {
-      sendJson(ctx.res, 200, { ok: true, mode: this.appMode });
+      const load1 = os.loadavg()[0] ?? 0;
+      const cores = os.cpus().length || 1;
+      const mem = process.memoryUsage();
+      const rssMb = Math.round(mem.rss / (1024 * 1024));
+      const dbSizeMb = this.dbSizeMb();
+      const underPressure = load1 / cores >= 1 || rssMb >= 440 || (dbSizeMb != null && dbSizeMb >= 1024);
+      sendJson(ctx.res, 200, {
+        ok: true,
+        mode: this.appMode,
+        // load1 ≥ cores → la vCPU compartida está asfixiada.
+        load1: Number(load1.toFixed(2)),
+        cores,
+        loadNorm: Number((load1 / cores).toFixed(2)),
+        rssMb,
+        heapUsedMb: Math.round(mem.heapUsed / (1024 * 1024)),
+        // /data/raidos.db crece sin tope: alerta temprana de disco. Con
+        // ":memory:" (tests) la clave se OMITE: "no aplica" ≠ "0 MB".
+        ...(dbSizeMb != null ? { dbSizeMb } : {}),
+        uptimeSec: Math.floor(process.uptime()),
+        ingest: {
+          walletActivity: this.walletActivity !== null,
+          lastPassAt: this.walletLastPassAt, // epoch s de la última pasada wallet
+          lastInserted: this.walletLastInserted, // swaps insertados en esa pasada
+        },
+        ts: Math.floor(Date.now() / 1000),
+        ...(underPressure ? { pressure: "high" } : {}),
+      });
     });
 
     // ── Waitlist (landing page email capture) ──

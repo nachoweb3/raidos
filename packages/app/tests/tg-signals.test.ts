@@ -432,6 +432,24 @@ describe("API routes /api/tg/*", () => {
     expect(status.signals).toBe(0);
   });
 
+  it("/api/health exposes cheap saturation telemetry (load, rss, db size, ingest state)", async () => {
+    const res = await fetch(base + "/api/health");
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.mode).toBe("mock");
+    expect(typeof body.load1).toBe("number");
+    expect(body.cores).toBeGreaterThan(0);
+    expect(body.loadNorm).toBeCloseTo(body.load1 / body.cores, 2);
+    expect(body.rssMb).toBeGreaterThan(0);
+    expect(body.heapUsedMb).toBeGreaterThan(0);
+    // :memory: en tests → tamaño de DB no aplicable, se omite en vez de mentir.
+    expect(body.dbSizeMb).toBeUndefined();
+    expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
+    expect(body.ingest).toEqual({ walletActivity: false, lastPassAt: null, lastInserted: 0 });
+    expect(typeof body.ts).toBe("number");
+  });
+
   it("gates signals behind the 24h code (401 without pass, 200 after redeem)", async () => {
     const src = server.telegramSource as unknown as { token: string; chatId: string };
     src.token = "test-token";
@@ -608,12 +626,12 @@ describe("entry backfill — signals without entry snapshot", () => {
  * message link). These tests run the REAL frontend module in a VM context.
  */
 describe("tg-signals frontend (privacy + performance UI)", () => {
-  async function loadTgSignals() {
+  async function loadTgSignals(rootOverride?: unknown) {
     const { readFileSync } = await import("node:fs");
     const { SourceTextModule, SyntheticModule, createContext } = await import("node:vm");
     const { fileURLToPath } = await import("node:url");
     const context = createContext({
-      document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] },
+      document: { getElementById: () => rootOverride ?? null, querySelector: () => null, querySelectorAll: () => [] },
       window: {},
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       navigator: { clipboard: { writeText: async () => {} } },
@@ -704,5 +722,45 @@ describe("tg-signals frontend (privacy + performance UI)", () => {
     expect(beta.calls).toBe(1); // the unpriced call never counts
     expect(beta.winners).toBe(0);
     expect(beta.achievements).toEqual([]); // nothing invented for a losing caller
+  });
+
+  it("perf modal: period chips switch the real period via load, same-period re-render keeps scroll", async () => {
+    const modalEl: any = { scrollTop: 120 };
+    const inserted: string[] = [];
+    const rootStub = {
+      querySelector: (sel: string) => (sel === ".tg-perf-modal" ? modalEl : null),
+      insertAdjacentHTML: (_pos: string, html: string) => inserted.push(html),
+    };
+    const { engine, namespace } = await loadTgSignals(rootStub);
+    const perf = namespace.computeCallPerformance([]); // período sin calls evaluables → vacío honesto
+    engine._lastPerf = perf;
+    engine.timeFilter = "all";
+    const loadCalls: string[] = [];
+    engine.load = function () { loadCalls.push(this.timeFilter); return Promise.resolve(); };
+
+    // Período desconocido → ignorado sin tocar estado ni recargar.
+    engine.showPerformance("5h");
+    expect(engine.timeFilter).toBe("all");
+    expect(loadCalls).toEqual([]);
+
+    // Chip de otro período → cambia el período REAL y recarga la lista (fuente de verdad = servidor).
+    engine.showPerformance("24h");
+    expect(engine.timeFilter).toBe("24h");
+    expect(loadCalls).toEqual(["24h"]);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // drena la reapertura post-load (sin .tg-count-bar → no re-abre)
+
+    // Chip del período activo / botón 📈 → re-render del mismo período sin recargar, conserva el scroll.
+    engine.showPerformance();
+    expect(loadCalls).toEqual(["24h"]);
+    expect(inserted).toHaveLength(1);
+    const html = inserted[0];
+    expect(html).toContain("tg-perf-overlay");
+    for (const key of ["all", "1h", "6h", "12h", "24h", "7d", "30d"]) {
+      expect(html).toContain(`showPerformance('${key}')`);
+    }
+    expect(html).toMatch(/tg-perf-period active[^>]*'24h'/);
+    expect(html).not.toContain("Performance & Ranking ·"); // el período vive en los chips, no duplicado en el título
+    expect(html).toContain("Sin calls evaluables en este período"); // vacío honesto, sin podio inventado
+    expect(modalEl.scrollTop).toBe(120); // re-render no te tira arriba
   });
 });
