@@ -18,9 +18,9 @@
  */
 
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20260928-6";
-import { publicPoolData } from "./public-market.js?v=20260929-7";
-import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20260930-3";
+import { DexFeed } from "./dexfeed.js?v=20261001-3";
+import { publicPoolData } from "./public-market.js?v=20261001-3";
+import { gateStorage, gateSetState, gateHeaders, gateCountdown } from "./gate-state.js?v=20261001-3";
 
 // ─── Helpers de formato ─────────────────────────────────────────────────────
 

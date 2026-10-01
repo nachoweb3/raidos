@@ -1,5 +1,5 @@
 import { ApiClient } from "./api.js";
-import { DexFeed } from "./dexfeed.js?v=20260928-6";
+import { DexFeed } from "./dexfeed.js?v=20261001-3";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const definitions = [
